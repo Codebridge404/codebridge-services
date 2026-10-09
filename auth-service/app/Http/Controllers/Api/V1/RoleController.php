@@ -13,8 +13,16 @@ class RoleController extends Controller
      */
     public function index(Request $request)
     {
-        $roles = DB::table('roles')
-            ->orderBy('is_system', 'desc')
+        $currentUser = $request->user();
+        $query = DB::table('roles');
+
+        if ($currentUser && $currentUser->role !== 'super_admin' && !empty($currentUser->tenant_id)) {
+            $query->where(function ($q) use ($currentUser) {
+                $q->whereNull('company_id')->orWhere('company_id', $currentUser->tenant_id);
+            });
+        }
+
+        $roles = $query->orderBy('is_system', 'desc')
             ->orderBy('name', 'asc')
             ->get();
 
@@ -44,10 +52,12 @@ class RoleController extends Controller
         $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'parent_role' => 'nullable|string',
             'permission_ids' => 'nullable|array',
             'permission_ids.*' => 'string',
         ]);
 
+        $currentUser = $request->user();
         $slug = \Illuminate\Support\Str::slug($request->name, '_');
 
         // Ensure unique slug
@@ -56,15 +66,23 @@ class RoleController extends Controller
             $slug .= '_' . substr(md5(microtime()), 0, 4);
         }
 
-        $id = DB::table('roles')->insertGetId([
-            'company_id' => $request->company_id ?? null,
+        $companyId = $request->company_id ?? ($currentUser?->tenant_id ?? null);
+        $parentRole = $request->parent_role ?? 'employee';
+
+        $insertData = [
+            'company_id' => $companyId,
             'name' => $request->name,
             'slug' => $slug,
             'description' => $request->description,
             'is_system' => false,
             'created_at' => now(),
             'updated_at' => now(),
-        ]);
+        ];
+        if (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'parent_role')) {
+            $insertData['parent_role'] = $parentRole;
+        }
+
+        $id = DB::table('roles')->insertGetId($insertData);
 
         if ($request->has('permission_ids') && is_array($request->permission_ids)) {
             foreach ($request->permission_ids as $permId) {

@@ -45,6 +45,34 @@ class TableController extends Controller
         ]);
     }
 
+    /**
+     * Create New Restaurant Table
+     */
+    public function store(Request $request)
+    {
+        $validated = $request->validate([
+            'name' => 'required|string|max:50',
+            'zone' => 'nullable|string|max:50',
+            'capacity' => 'nullable|integer|min:1|max:50',
+        ]);
+
+        $id = DB::table('restaurant_tables')->insertGetId([
+            'name' => $validated['name'],
+            'zone' => $validated['zone'] ?? 'Main Dining',
+            'capacity' => $validated['capacity'] ?? 4,
+            'status' => 'vacant',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $table = DB::table('restaurant_tables')->where('id', $id)->first();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $table,
+        ], 201);
+    }
+
     protected function ensureDefaultTablesSeeded()
     {
         if (DB::table('restaurant_tables')->count() === 0) {

@@ -112,11 +112,35 @@ class CheckoutService
             $seqStr = str_pad($todayCount + 1, 5, '0', STR_PAD_LEFT);
             $receiptNumber = "REC-{$outletCode}-" . date('Ymd') . "-{$seqStr}";
 
+            $customerId = $data['customer_id'] ?? null;
+            $customerName = $data['customer_name'] ?? null;
+            if ($customerId && empty($customerName)) {
+                $custRow = DB::table('customers')->where('id', $customerId)->first();
+                if ($custRow) {
+                    $customerName = $custRow->name;
+                }
+            }
+
+            $tableId = $data['table_id'] ?? null;
+            $tableName = $data['table_name'] ?? null;
+            if ($tableId && empty($tableName)) {
+                $tableRow = DB::table('restaurant_tables')->where('id', $tableId)->first();
+                if ($tableRow) {
+                    $tableName = $tableRow->name;
+                }
+            }
+            $orderType = $data['order_type'] ?? ($tableId ? 'dine_in' : 'takeaway');
+
             $saleId = DB::table('sales')->insertGetId([
                 'outlet_id' => $data['outlet_id'],
                 'register_id' => $data['register_id'],
                 'shift_id' => $data['shift_id'] ?? null,
                 'user_id' => $cashierId,
+                'customer_id' => $customerId,
+                'customer_name' => $customerName,
+                'table_id' => $tableId,
+                'table_name' => $tableName,
+                'order_type' => $orderType,
                 'receipt_number' => $receiptNumber,
                 'idempotency_key' => $data['idempotency_key'],
                 'subtotal' => $subtotal,
@@ -175,15 +199,63 @@ class CheckoutService
             }
 
             // 5. Record Payment
+            $tenderType = $data['tender_type'] ?? 'cash';
             DB::table('payments')->insert([
                 'sale_id' => $saleId,
-                'tender_type' => $data['tender_type'] ?? 'cash',
+                'tender_type' => $tenderType,
                 'amount' => $grandTotal,
                 'currency' => $data['currency'] ?? 'USD',
                 'status' => 'paid',
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
+
+            // 6. Customer Loyalty & Store Credit Mutation
+            if ($customerId) {
+                try {
+                    if ($tenderType === 'store_credit') {
+                        DB::table('customers')->where('id', $customerId)->decrement('store_credit', $grandTotal);
+                    } else {
+                        $earnedPoints = (int) floor($grandTotal);
+                        if ($earnedPoints > 0) {
+                            DB::table('customers')->where('id', $customerId)->increment('loyalty_points', $earnedPoints);
+                        }
+                    }
+                    DB::table('customers')->where('id', $customerId)->increment('total_spent', $grandTotal);
+                } catch (\Exception $custErr) {
+                    // Non-fatal if customer update fails
+                }
+            }
+
+            // 7. Update Table Occupancy
+            if ($tableId) {
+                try {
+                    DB::table('restaurant_tables')->where('id', $tableId)->update([
+                        'status' => 'occupied',
+                        'active_sale_id' => $saleId,
+                        'updated_at' => now(),
+                    ]);
+                } catch (\Exception $tableErr) {
+                    // Non-fatal
+                }
+            }
+
+            // 8. Auto-create KDS Ticket for Kitchen Display
+            try {
+                DB::table('kds_tickets')->insert([
+                    'sale_id' => $saleId,
+                    'ticket_number' => 'TKT-' . substr($receiptNumber, -5),
+                    'order_type' => $orderType,
+                    'table_name' => $tableName ?? ($orderType === 'dine_in' ? 'Table Order' : 'Takeaway Counter'),
+                    'items' => json_encode(array_map(fn($l) => ['name' => $l['product_name'], 'quantity' => $l['quantity']], $saleLines)),
+                    'status' => 'pending',
+                    'prep_time_minutes' => 0,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            } catch (\Exception $kdsErr) {
+                // Non-fatal
+            }
 
             $sale = DB::table('sales')->where('id', $saleId)->first();
 

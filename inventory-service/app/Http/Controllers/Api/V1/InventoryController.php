@@ -62,7 +62,7 @@ class InventoryController extends Controller
         }
 
         if ($status === 'low_stock') {
-            $query->whereRaw('COALESCE(ib.on_hand, 0) <= COALESCE(p.min_reorder_point, 5)');
+            $query->whereRaw('COALESCE(p.min_reorder_point, 0) > 0 AND COALESCE(ib.on_hand, 0) <= p.min_reorder_point');
         } elseif ($status === 'out_of_stock') {
             $query->whereRaw('COALESCE(ib.on_hand, 0) <= 0');
         } elseif ($status === 'in_stock') {
@@ -87,7 +87,7 @@ class InventoryController extends Controller
                 DB::raw('COALESCE(ib.on_hand, 0) as on_hand'),
                 DB::raw('COALESCE(ib.reserved, 0) as reserved'),
                 DB::raw('(COALESCE(ib.on_hand, 0) - COALESCE(ib.reserved, 0)) as available'),
-                DB::raw('CASE WHEN COALESCE(ib.on_hand, 0) <= COALESCE(p.min_reorder_point, 5) THEN 1 ELSE 0 END as is_low_stock')
+                DB::raw('CASE WHEN COALESCE(p.min_reorder_point, 0) > 0 AND COALESCE(ib.on_hand, 0) <= p.min_reorder_point THEN 1 ELSE 0 END as is_low_stock')
             )
             ->orderBy('p.name', 'asc')
             ->get();

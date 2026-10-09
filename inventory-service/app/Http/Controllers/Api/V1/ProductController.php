@@ -80,7 +80,7 @@ class ProductController extends Controller
                     'description' => $item['description'] ?? null,
                     'cost_price' => $item['cost_price'] ?? 0.00,
                     'selling_price' => $item['selling_price'],
-                    'min_reorder_point' => $item['min_reorder_point'] ?? 5,
+                    'min_reorder_point' => isset($item['min_reorder_point']) ? (int)$item['min_reorder_point'] : 0,
                     'is_active' => true,
                     'created_at' => now(),
                     'updated_at' => now(),
@@ -122,6 +122,7 @@ class ProductController extends Controller
 
         $query = DB::table('products as p')
             ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
+            ->leftJoin('brands as b', 'p.brand_id', '=', 'b.id')
             ->leftJoin('inventory_balances as ib', function ($join) use ($outletId) {
                 $join->on('p.id', '=', 'ib.product_id')
                     ->where('ib.outlet_id', '=', $outletId);
@@ -161,8 +162,9 @@ class ProductController extends Controller
         if ($stockStatus === 'in_stock') {
             $query->where(DB::raw('COALESCE(ib.on_hand, 0)'), '>', 0);
         } elseif ($stockStatus === 'low_stock') {
-            $query->where(DB::raw('COALESCE(ib.on_hand, 0)'), '<=', DB::raw('COALESCE(p.min_reorder_point, 5)'))
-                  ->where(DB::raw('COALESCE(ib.on_hand, 0)'), '>', 0);
+            $query->whereRaw('COALESCE(p.min_reorder_point, 0) > 0')
+                  ->whereRaw('COALESCE(ib.on_hand, 0) <= p.min_reorder_point')
+                  ->whereRaw('COALESCE(ib.on_hand, 0) > 0');
         } elseif ($stockStatus === 'out_of_stock') {
             $query->where(DB::raw('COALESCE(ib.on_hand, 0)'), '<=', 0);
         }
@@ -185,12 +187,18 @@ class ProductController extends Controller
                 'p.sku',
                 'p.barcode',
                 'p.description',
+                'p.selling_price',
                 'p.selling_price as price',
                 'p.cost_price',
                 'p.image_url',
                 'p.min_reorder_point',
                 'p.category_id',
                 'c.name as category',
+                'c.name as category_name',
+                'p.brand_id',
+                'b.name as brand_name',
+                'p.expiry_date',
+                'p.is_active',
                 DB::raw('COALESCE(ib.on_hand, 0) as stock_on_hand')
             )
             ->get();
@@ -255,11 +263,15 @@ class ProductController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'sku' => 'required|string|max:100',
+            'barcode' => 'nullable|string|max:100',
             'selling_price' => 'required|numeric|min:0',
             'cost_price' => 'nullable|numeric|min:0',
             'category_id' => 'nullable|string|max:36',
+            'brand_id' => 'nullable|string|max:36',
+            'expiry_date' => 'nullable|date',
+            'min_reorder_point' => 'nullable|integer|min:0',
             'description' => 'nullable|string',
-            'initial_stock' => 'nullable|integer|min:0',
+            'initial_stock' => 'nullable|numeric|min:0',
         ]);
 
         // Check if SKU exists for this tenant
@@ -281,16 +293,20 @@ class ProductController extends Controller
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
             'sku' => $validated['sku'],
+            'barcode' => $validated['barcode'] ?? null,
             'selling_price' => $validated['selling_price'],
             'cost_price' => $validated['cost_price'] ?? 0.00,
             'category_id' => $validated['category_id'] ?? null,
+            'brand_id' => $validated['brand_id'] ?? null,
+            'expiry_date' => $validated['expiry_date'] ?? null,
+            'min_reorder_point' => isset($validated['min_reorder_point']) ? (int)$validated['min_reorder_point'] : 0,
             'description' => $validated['description'] ?? null,
             'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
-        $initialStock = $validated['initial_stock'] ?? 100;
+        $initialStock = isset($validated['initial_stock']) ? (float)$validated['initial_stock'] : 0;
         DB::table('inventory_balances')->insert([
             'tenant_id' => $tenantId,
             'outlet_id' => $outletId,
@@ -319,9 +335,14 @@ class ProductController extends Controller
         $tenantId = $this->getTenantId($request);
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
+            'sku' => 'sometimes|string|max:100',
+            'barcode' => 'sometimes|nullable|string|max:100',
             'selling_price' => 'sometimes|numeric|min:0',
             'cost_price' => 'sometimes|numeric|min:0',
             'category_id' => 'sometimes|nullable|string|max:36',
+            'brand_id' => 'sometimes|nullable|string|max:36',
+            'expiry_date' => 'sometimes|nullable|date',
+            'min_reorder_point' => 'sometimes|nullable|integer|min:0',
             'description' => 'sometimes|nullable|string',
         ]);
 

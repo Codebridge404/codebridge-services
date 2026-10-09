@@ -67,7 +67,7 @@ class ProductExportController extends Controller
         if ($stockStatus === 'in_stock') {
             $query->where(DB::raw('COALESCE(ib.on_hand, 0)'), '>', 0);
         } elseif ($stockStatus === 'low_stock') {
-            $query->where(DB::raw('COALESCE(ib.on_hand, 0)'), '<=', DB::raw('COALESCE(p.min_reorder_point, 5)'))
+            $query->whereRaw('COALESCE(p.min_reorder_point, 0) > 0 AND COALESCE(ib.on_hand, 0) <= p.min_reorder_point')
                   ->where(DB::raw('COALESCE(ib.on_hand, 0)'), '>', 0);
         } elseif ($stockStatus === 'out_of_stock') {
             $query->where(DB::raw('COALESCE(ib.on_hand, 0)'), '<=', 0);
@@ -127,7 +127,7 @@ class ProductExportController extends Controller
                         number_format((float)($p->selling_price ?? 0), 2, '.', ''),
                         number_format((float)($p->cost_price ?? 0), 2, '.', ''),
                         (int)($p->stock_on_hand ?? 0),
-                        (int)($p->min_reorder_point ?? 5),
+                        (int)($p->min_reorder_point ?? 0),
                         $p->expiry_date ? explode(' ', (string)$p->expiry_date)[0] : '',
                         $p->is_active ? 'Active' : 'Inactive',
                         $p->description ?? '',

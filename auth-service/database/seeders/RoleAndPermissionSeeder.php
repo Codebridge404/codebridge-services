@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class RoleAndPermissionSeeder extends Seeder
 {
@@ -38,6 +39,12 @@ class RoleAndPermissionSeeder extends Seeder
                 'finance.expenses' => 'Create and review company expense and income ledgers',
                 'finance.bank_accounts' => 'Manage company bank accounts and settlement targets',
             ],
+            'Meetings' => [
+                'meetings.view' => 'View workspace calendar and scheduled meetings',
+                'meetings.manage' => 'Create, edit, and cancel meetings and agendas',
+                'meetings.rooms' => 'Manage and reserve meeting rooms and equipment',
+                'meetings.minutes' => 'Record and approve official meeting minutes & action items',
+            ],
             'Reports' => [
                 'reports.sales' => 'View executive sales revenue & cashier shift analytics',
                 'reports.financial' => 'View profit & loss, tax summaries, and gross margin reports',
@@ -51,7 +58,6 @@ class RoleAndPermissionSeeder extends Seeder
         ];
 
         $permissionIdsMap = [];
-
         foreach ($permissionsByGroup as $group => $perms) {
             foreach ($perms as $permName => $description) {
                 $existing = DB::table('permissions')->where('name', $permName)->first();
@@ -70,122 +76,116 @@ class RoleAndPermissionSeeder extends Seeder
             }
         }
 
-        // 2. Define 8 Default Role Templates
+        $hasParentRoleCol = Schema::hasTable('roles') && Schema::hasColumn('roles', 'parent_role');
+
+        // 2. Define 3 Parent System Roles + Organization Sub-Role Templates
         $rolesData = [
+            // --- 3 MAIN PARENT SYSTEM ROLES ---
             [
                 'name' => 'Super Admin',
                 'slug' => 'super_admin',
-                'description' => 'Platform / Organization Owner with complete administrative control over all multi-tenant features and databases.',
+                'parent_role' => 'super_admin',
+                'description' => 'Platform Root / Owner with complete authority over all multi-tenant organizations, databases, and global subscriptions.',
                 'is_system' => true,
                 'permissions' => array_keys($permissionIdsMap), // All permissions
             ],
             [
-                'name' => 'Company Administrator',
-                'slug' => 'admin',
-                'description' => 'Company Owner with full operational authority over store outlets, products, stock, staff, and financial reconciliation.',
+                'name' => 'Organization',
+                'slug' => 'organization',
+                'parent_role' => 'organization',
+                'description' => 'Tenant Workspace Owner & Administrator. Manages company settings, outlets, module subscriptions, and team staff.',
                 'is_system' => true,
-                'permissions' => [
-                    'pos.checkout', 'pos.cart.hold', 'pos.discount.apply', 'pos.void', 'pos.shift.manage',
-                    'catalog.view', 'catalog.manage', 'catalog.pricing',
-                    'inventory.view', 'inventory.adjust', 'inventory.transfer', 'inventory.po',
-                    'hrm.employees.view', 'hrm.employees.manage',
-                    'finance.reconciliation', 'finance.expenses', 'finance.bank_accounts',
-                    'reports.sales', 'reports.financial',
-                    'security.roles.manage', 'security.users.manage', 'security.outlets.manage',
-                ],
+                'permissions' => array_keys($permissionIdsMap), // Full workspace authority
             ],
             [
-                'name' => 'Outlet Manager',
-                'slug' => 'outlet_manager',
-                'description' => 'Store Operations Manager overseeing local store inventory, cashier shift audits, and local store staff.',
+                'name' => 'Employees',
+                'slug' => 'employee',
+                'parent_role' => 'employee',
+                'description' => 'Operational Workforce Parent Role for all organization staff members across active business modules.',
                 'is_system' => true,
-                'permissions' => [
-                    'pos.checkout', 'pos.cart.hold', 'pos.discount.apply', 'pos.void', 'pos.shift.manage',
-                    'catalog.view',
-                    'inventory.view', 'inventory.adjust', 'inventory.transfer', 'inventory.po',
-                    'hrm.employees.view',
-                    'reports.sales',
-                ],
+                'permissions' => ['catalog.view', 'hrm.employees.view', 'meetings.view'],
             ],
-            [
-                'name' => 'Store Supervisor',
-                'slug' => 'supervisor',
-                'description' => 'Floor Supervisor authorizing void sales, discount overrides, return quotes, and shift float variances.',
-                'is_system' => true,
-                'permissions' => [
-                    'pos.checkout', 'pos.cart.hold', 'pos.discount.apply', 'pos.void', 'pos.shift.manage',
-                    'catalog.view', 'inventory.view',
-                ],
-            ],
+
+            // --- DEFAULT SUB-ROLE TEMPLATES (Under Parent 'employee') ---
             [
                 'name' => 'Cashier',
                 'slug' => 'cashier',
-                'description' => 'POS Terminal Operator executing fast customer checkouts, barcode scanning, split tender, and shift open/close.',
+                'parent_role' => 'employee',
+                'description' => 'POS Terminal Operator executing checkouts, barcode scanning, shift floats, and instant KHQR payments.',
                 'is_system' => true,
-                'permissions' => [
-                    'pos.checkout', 'pos.cart.hold', 'pos.shift.manage', 'catalog.view',
-                ],
+                'permissions' => ['pos.checkout', 'pos.cart.hold', 'pos.discount.apply', 'pos.shift.manage', 'catalog.view'],
             ],
             [
                 'name' => 'Stock Clerk',
                 'slug' => 'inventory_clerk',
-                'description' => 'Warehouse Clerk handling PO stock receiving, manual stock count adjustments, and inter-outlet stock transfers.',
+                'parent_role' => 'employee',
+                'description' => 'Warehouse specialist handling PO stock receiving, manual stock count adjustments, and inter-outlet stock transfers.',
                 'is_system' => true,
-                'permissions' => [
-                    'catalog.view',
-                    'inventory.view', 'inventory.adjust', 'inventory.transfer', 'inventory.po',
-                ],
+                'permissions' => ['catalog.view', 'inventory.view', 'inventory.adjust', 'inventory.transfer', 'inventory.po'],
             ],
             [
                 'name' => 'Finance Accountant',
                 'slug' => 'accountant',
-                'description' => 'Finance Specialist performing daily ABA Bakong settlement reconciliation, expenses, and margin reports.',
+                'parent_role' => 'employee',
+                'description' => 'Finance Specialist performing daily Bakong settlement reconciliation, expense ledgers, and margin analytics.',
+                'is_system' => true,
+                'permissions' => ['finance.reconciliation', 'finance.expenses', 'finance.bank_accounts', 'reports.sales', 'reports.financial'],
+            ],
+            [
+                'name' => 'Meeting Coordinator',
+                'slug' => 'meeting_organizer',
+                'parent_role' => 'employee',
+                'description' => 'Meeting Coordinator scheduling conference rooms, agendas, participant notifications, and minutes of meeting.',
+                'is_system' => true,
+                'permissions' => ['meetings.view', 'meetings.manage', 'meetings.rooms', 'meetings.minutes'],
+            ],
+            [
+                'name' => 'Store Manager',
+                'slug' => 'outlet_manager',
+                'parent_role' => 'employee',
+                'description' => 'Store Operations Manager overseeing local store inventory, cashier shift audits, and local store staff.',
                 'is_system' => true,
                 'permissions' => [
-                    'finance.reconciliation', 'finance.expenses', 'finance.bank_accounts',
-                    'reports.sales', 'reports.financial',
+                    'pos.checkout', 'pos.cart.hold', 'pos.discount.apply', 'pos.void', 'pos.shift.manage',
+                    'catalog.view', 'inventory.view', 'inventory.adjust', 'inventory.transfer', 'inventory.po',
+                    'hrm.employees.view', 'reports.sales', 'meetings.view',
                 ],
             ],
             [
-                'name' => 'User',
-                'slug' => 'user',
-                'description' => 'Registered general user with access to public platform features and personal profile.',
+                'name' => 'Company Administrator',
+                'slug' => 'admin',
+                'parent_role' => 'organization',
+                'description' => 'Backward-compatible alias for Organization Administrator.',
                 'is_system' => true,
-                'permissions' => [
-                    'catalog.view',
-                ],
-            ],
-            [
-                'name' => 'Customer',
-                'slug' => 'customer',
-                'description' => 'Retail End-Consumer browsing public online catalog and paying via instant KHQR.',
-                'is_system' => true,
-                'permissions' => [
-                    'catalog.view',
-                ],
+                'permissions' => array_keys($permissionIdsMap),
             ],
         ];
 
         foreach ($rolesData as $roleInfo) {
             $existingRole = DB::table('roles')->where('slug', $roleInfo['slug'])->first();
 
+            $insertData = [
+                'name' => $roleInfo['name'],
+                'slug' => $roleInfo['slug'],
+                'description' => $roleInfo['description'],
+                'is_system' => $roleInfo['is_system'],
+                'updated_at' => now(),
+            ];
+            if ($hasParentRoleCol) {
+                $insertData['parent_role'] = $roleInfo['parent_role'];
+            }
+
             if (!$existingRole) {
-                $roleId = DB::table('roles')->insertGetId([
-                    'company_id' => null,
-                    'name' => $roleInfo['name'],
-                    'slug' => $roleInfo['slug'],
-                    'description' => $roleInfo['description'],
-                    'is_system' => $roleInfo['is_system'],
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                $insertData['company_id'] = null;
+                $insertData['created_at'] = now();
+                $roleId = DB::table('roles')->insertGetId($insertData);
             } else {
                 $roleId = $existingRole->id;
+                DB::table('roles')->where('id', $roleId)->update($insertData);
             }
 
             // Sync Role Permissions in pivot table
             DB::table('role_permissions')->where('role_id', $roleId)->delete();
-
             foreach ($roleInfo['permissions'] as $pName) {
                 if (isset($permissionIdsMap[$pName])) {
                     DB::table('role_permissions')->insert([
@@ -194,9 +194,26 @@ class RoleAndPermissionSeeder extends Seeder
                     ]);
                 }
             }
+        }
 
-            // Associate users with matching role slug to this role_id
-            DB::table('users')->where('role', $roleInfo['slug'])->update(['role_id' => $roleId]);
+        // 3. Reconcile Existing Users to 3 Parent Roles & map their role_id
+        $roleRecordMap = DB::table('roles')->pluck('id', 'slug')->toArray();
+
+        // Map Admin/Owner users to parent role 'organization'
+        $orgRoleId = $roleRecordMap['organization'] ?? ($roleRecordMap['admin'] ?? null);
+        DB::table('users')->whereIn('role', ['admin', 'administrator', 'owner'])->update([
+            'role' => 'organization',
+            'role_id' => $orgRoleId,
+        ]);
+
+        // Map Staff users to parent role 'employee' and attach sub-role ID
+        $staffSubRoles = ['cashier', 'inventory_clerk', 'accountant', 'meeting_organizer', 'outlet_manager', 'supervisor', 'user', 'customer'];
+        foreach ($staffSubRoles as $subSlug) {
+            $matchedRoleId = $roleRecordMap[$subSlug] ?? ($roleRecordMap['employee'] ?? null);
+            DB::table('users')->where('role', $subSlug)->update([
+                'role' => 'employee',
+                'role_id' => $matchedRoleId,
+            ]);
         }
     }
 }

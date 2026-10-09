@@ -53,7 +53,8 @@ Route::prefix('v1')->group(function () {
 
         // Payments & Digital KHQR Processing
         Route::post('/payments/khqr/generate', [PaymentController::class, 'generateKhqr']);
-        Route::get('/payments/{id}/status', [PaymentController::class, 'checkStatus']);
+        Route::match(['get', 'post'], '/payments/{id}/status', [PaymentController::class, 'checkStatus']);
+        Route::post('/payments/{id}/confirm-hash', [PaymentController::class, 'confirmHash']);
         Route::post('/payments/{id}/simulate-pay', [PaymentController::class, 'simulatePay']);
 
         // Payment Reconciliation & Exception Auditing
@@ -82,6 +83,7 @@ Route::prefix('v1')->group(function () {
             Route::get('/kds/tickets', [KdsController::class, 'index']);
             Route::patch('/kds/tickets/{id}/status', [KdsController::class, 'updateStatus']);
             Route::get('/tables', [TableController::class, 'index']);
+            Route::post('/tables', [TableController::class, 'store']);
             Route::patch('/tables/{id}/status', [TableController::class, 'updateStatus']);
 
             // Online Order Fulfillment Dashboard

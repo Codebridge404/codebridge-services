@@ -18,13 +18,21 @@ class UserController extends Controller
         $search = $request->query('q') ?? $request->query('search');
         $scope = $request->query('scope', 'staff');
 
-        $query = DB::table('users as u')->leftJoin('outlets as o', 'u.outlet_id', '=', 'o.id');
+        $query = DB::table('users as u')
+            ->leftJoin('outlets as o', 'u.outlet_id', '=', 'o.id')
+            ->leftJoin('roles as r', 'u.role_id', '=', 'r.id');
 
         if ($currentUser && $currentUser->role !== 'super_admin' && !empty($currentUser->tenant_id)) {
             $query->where('u.tenant_id', $currentUser->tenant_id);
         }
-        if (!empty($role) && $role !== 'all') $query->where('u.role', $role);
-        if ($scope !== 'all' && !$request->has('include_customers')) $query->whereNotIn('u.role', ['customer', 'client', 'guest']);
+        if (!empty($role) && $role !== 'all') {
+            $query->where(function ($rq) use ($role) {
+                $rq->where('u.role', $role)->orWhere('r.slug', $role);
+            });
+        }
+        if ($scope !== 'all' && !$request->has('include_customers')) {
+            $query->whereNotIn('u.role', ['customer', 'client', 'guest']);
+        }
         if (!empty($search)) {
             $query->where(function ($q) use ($search) {
                 $q->where('u.name', 'like', "%{$search}%")->orWhere('u.email', 'like', "%{$search}%");
@@ -33,7 +41,8 @@ class UserController extends Controller
 
         $users = $query->select(
             'u.id', 'u.tenant_id', 'u.name', 'u.email', 'u.phone',
-            'u.role', 'u.outlet_id', 'u.pin_code', 'u.is_active',
+            'u.role', 'u.role_id', 'r.name as role_name', 'r.slug as role_slug',
+            'u.outlet_id', 'u.pin_code', 'u.is_active',
             'u.created_at', 'o.name as outlet_name'
         )->orderBy('u.created_at', 'desc')->get();
 
@@ -43,15 +52,14 @@ class UserController extends Controller
     public function permissions()
     {
         return response()->json(['status' => 'success', 'data' => [
-            'super_admin' => ['name' => 'Super Admin', 'capabilities' => ['sales.create', 'sales.discount', 'sales.void', 'sales.refund', 'catalog.manage', 'inventory.adjust', 'reports.view', 'users.manage', 'settings.manage']],
-            'admin' => ['name' => 'Administrator', 'capabilities' => ['sales.create', 'sales.discount', 'sales.void', 'sales.refund', 'catalog.manage', 'inventory.adjust', 'reports.view', 'users.manage']],
-            'outlet_manager' => ['name' => 'Outlet Manager', 'capabilities' => ['sales.create', 'sales.discount', 'sales.void', 'sales.refund', 'catalog.view', 'inventory.adjust', 'reports.view']],
-            'supervisor' => ['name' => 'Supervisor', 'capabilities' => ['sales.create', 'sales.discount', 'sales.void', 'sales.refund', 'catalog.view', 'inventory.count']],
+            'super_admin' => ['name' => 'Super Admin', 'capabilities' => ['sales.create', 'sales.discount', 'sales.void', 'sales.refund', 'catalog.manage', 'inventory.adjust', 'reports.view', 'users.manage', 'settings.manage', 'meetings.manage']],
+            'organization' => ['name' => 'Organization Admin', 'capabilities' => ['sales.create', 'sales.discount', 'sales.void', 'sales.refund', 'catalog.manage', 'inventory.adjust', 'reports.view', 'users.manage', 'meetings.manage', 'hrm.manage']],
+            'employee' => ['name' => 'Employees', 'capabilities' => ['catalog.view', 'meetings.view', 'profile.manage']],
             'cashier' => ['name' => 'Cashier', 'capabilities' => ['sales.create', 'receipts.print', 'shifts.manage']],
-            'inventory_clerk' => ['name' => 'Inventory Clerk', 'capabilities' => ['catalog.manage', 'inventory.adjust', 'inventory.transfer', 'inventory.count']],
-            'accountant' => ['name' => 'Accountant', 'capabilities' => ['reports.view', 'reconciliation.manage', 'expenses.view']],
-            'user' => ['name' => 'User', 'capabilities' => ['catalog.view', 'profile.manage']],
-            'customer' => ['name' => 'Customer', 'capabilities' => ['catalog.view', 'orders.place', 'profile.manage']],
+            'inventory_clerk' => ['name' => 'Stock Clerk', 'capabilities' => ['catalog.manage', 'inventory.adjust', 'inventory.transfer', 'inventory.count']],
+            'accountant' => ['name' => 'Finance Accountant', 'capabilities' => ['reports.view', 'reconciliation.manage', 'expenses.view']],
+            'meeting_organizer' => ['name' => 'Meeting Coordinator', 'capabilities' => ['meetings.view', 'meetings.manage', 'meetings.rooms', 'meetings.minutes']],
+            'outlet_manager' => ['name' => 'Store Manager', 'capabilities' => ['sales.create', 'sales.discount', 'sales.void', 'catalog.view', 'inventory.adjust', 'reports.view']],
         ]]);
     }
 
@@ -59,9 +67,23 @@ class UserController extends Controller
     {
         $dynamic = DB::table('roles')->pluck('slug')->toArray();
         return array_unique(array_merge([
-            'super_admin', 'admin', 'administrator', 'outlet_manager', 'supervisor',
-            'cashier', 'inventory_clerk', 'accountant', 'user', 'customer'
+            'super_admin', 'organization', 'employee', 'admin', 'administrator', 'outlet_manager',
+            'cashier', 'inventory_clerk', 'accountant', 'meeting_organizer', 'supervisor', 'user'
         ], $dynamic));
+    }
+
+    private function resolveRoleAndId($role, $roleId = null): array
+    {
+        if (in_array($role, ['admin', 'organization', 'administrator', 'owner'])) {
+            $rId = $roleId ?? DB::table('roles')->whereIn('slug', ['organization', 'admin'])->value('id');
+            return ['organization', $rId];
+        }
+        if ($role === 'super_admin') {
+            $rId = $roleId ?? DB::table('roles')->where('slug', 'super_admin')->value('id');
+            return ['super_admin', $rId];
+        }
+        $rId = $roleId ?: (DB::table('roles')->where('slug', $role)->value('id') ?? DB::table('roles')->where('slug', 'employee')->value('id'));
+        return ['employee', $rId];
     }
 
     private function checkQuota($currentUser, $tenantId): ?string
@@ -112,6 +134,7 @@ class UserController extends Controller
             'user_id' => 'nullable|integer',
             'email' => 'nullable|email',
             'role' => ['required', 'string', Rule::in($this->getAllowedRoles())],
+            'role_id' => 'nullable|integer',
             'outlet_id' => 'nullable|string',
             'pin_code' => 'nullable|string|max:10',
         ]);
@@ -139,11 +162,14 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'code' => 'QUOTA_EXCEEDED', 'message' => $quotaErr], 403);
         }
 
+        [$parentRole, $subRoleId] = $this->resolveRoleAndId($validated['role'], $validated['role_id'] ?? null);
+
         DB::table('users')->where('id', $targetUser->id)->update([
             'tenant_id' => $tenantId,
-            'role' => $validated['role'],
+            'role' => $parentRole,
+            'role_id' => $subRoleId,
             'outlet_id' => $validated['outlet_id'] ?? null,
-            'pin_code' => $validated['role'] === 'cashier' ? ($validated['pin_code'] ?? '1234') : null,
+            'pin_code' => $validated['pin_code'] ?? null,
             'is_active' => true,
             'updated_at' => now(),
         ]);
@@ -162,6 +188,7 @@ class UserController extends Controller
             'email' => 'required|email|max:255|unique:users,email',
             'password' => 'required|string|min:6',
             'role' => ['required', 'string', Rule::in($this->getAllowedRoles())],
+            'role_id' => 'nullable|integer',
             'outlet_id' => 'nullable|string',
             'pin_code' => 'nullable|string|max:10',
             'phone' => 'nullable|string|max:30',
@@ -174,14 +201,17 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'code' => 'QUOTA_EXCEEDED', 'message' => $quotaErr], 403);
         }
 
+        [$parentRole, $subRoleId] = $this->resolveRoleAndId($validated['role'], $validated['role_id'] ?? null);
+
         $userId = DB::table('users')->insertGetId([
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
             'email' => $validated['email'],
             'phone' => $validated['phone'] ?? null,
             'password' => Hash::make($validated['password']),
-            'pin_code' => $validated['role'] === 'cashier' ? ($validated['pin_code'] ?? '1234') : null,
-            'role' => $validated['role'],
+            'pin_code' => $validated['pin_code'] ?? null,
+            'role' => $parentRole,
+            'role_id' => $subRoleId,
             'outlet_id' => $validated['outlet_id'] ?? null,
             'is_active' => true,
             'created_at' => now(),
@@ -248,14 +278,20 @@ class UserController extends Controller
             'phone' => 'sometimes|nullable|string|max:30',
             'password' => 'nullable|string|min:6',
             'role' => ['sometimes', 'string', Rule::in($this->getAllowedRoles())],
+            'role_id' => 'sometimes|nullable|integer',
             'outlet_id' => 'sometimes|nullable|string',
             'pin_code' => 'sometimes|nullable|string|max:10',
             'is_active' => 'sometimes|boolean',
         ]);
 
         $updateData = [];
-        foreach (['name', 'email', 'phone', 'role', 'outlet_id', 'pin_code', 'is_active'] as $field) {
+        foreach (['name', 'email', 'phone', 'role', 'role_id', 'outlet_id', 'pin_code', 'is_active'] as $field) {
             if (array_key_exists($field, $validated)) $updateData[$field] = $validated[$field];
+        }
+        if (!empty($updateData['role']) || !empty($updateData['role_id'])) {
+            [$pRole, $rId] = $this->resolveRoleAndId($updateData['role'] ?? 'employee', $updateData['role_id'] ?? null);
+            $updateData['role'] = $pRole;
+            if ($rId) $updateData['role_id'] = $rId;
         }
         if (!empty($validated['password'])) $updateData['password'] = Hash::make($validated['password']);
         $updateData['updated_at'] = now();
@@ -275,7 +311,7 @@ class UserController extends Controller
     {
         $validated = $request->validate(['pin_code' => 'required|string']);
         $supervisor = DB::table('users')->where('pin_code', $validated['pin_code'])->where('is_active', true)
-            ->whereIn('role', ['super_admin', 'admin', 'outlet_manager', 'supervisor'])->first();
+            ->whereIn('role', ['super_admin', 'organization', 'admin', 'outlet_manager', 'supervisor'])->first();
 
         if (!$supervisor) {
             return response()->json(['status' => 'error', 'message' => 'Invalid authorization PIN code or unauthorized role.'], 403);

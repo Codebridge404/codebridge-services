@@ -95,6 +95,8 @@ class AuthController extends Controller
             if ($tenant) {
                 $user->tenant_name = $tenant->name;
                 $user->company_name = $tenant->name;
+                $user->tenant_logo_url = $tenant->logo_url ?? null;
+                $user->logo_url = $tenant->logo_url ?? null;
             }
         }
 
@@ -169,6 +171,8 @@ class AuthController extends Controller
             if ($tenant) {
                 $user->tenant_name = $tenant->name;
                 $user->company_name = $tenant->name;
+                $user->tenant_logo_url = $tenant->logo_url ?? null;
+                $user->logo_url = $tenant->logo_url ?? null;
             }
         }
 
@@ -455,6 +459,10 @@ class AuthController extends Controller
         ], 201);
     }
 
+    /**
+     * Get currently authenticated user details.
+     * GET /api/v1/me
+     */
     public function me(Request $request)
     {
         $user = $request->user();
@@ -463,12 +471,132 @@ class AuthController extends Controller
             if ($tenant) {
                 $user->tenant_name = $tenant->name;
                 $user->company_name = $tenant->name;
+                $user->tenant_logo_url = $tenant->logo_url ?? null;
+                $user->logo_url = $tenant->logo_url ?? null;
             }
         }
 
         return response()->json([
             'status' => 'success',
             'user' => $user,
+        ]);
+    }
+
+    /**
+     * Update user profile attributes and avatar.
+     * PUT|POST /api/v1/auth/profile
+     */
+    public function updateProfile(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $validated = $request->validate([
+            'name'          => 'sometimes|string|max:255',
+            'phone'         => 'sometimes|nullable|string|max:30',
+            'pin_code'      => 'sometimes|nullable|string|max:10',
+            'avatar_url'    => 'sometimes|nullable|string',
+            'remove_avatar' => 'sometimes|nullable|boolean',
+            'avatar'        => 'sometimes|nullable|file|mimes:jpeg,png,jpg,webp,gif,svg|max:10240',
+        ]);
+
+        $updateData = [];
+        if (isset($validated['name'])) $updateData['name'] = trim($validated['name']);
+        if (array_key_exists('phone', $validated)) $updateData['phone'] = $validated['phone'];
+        if (array_key_exists('pin_code', $validated)) $updateData['pin_code'] = $validated['pin_code'];
+
+        // Profile Image CRUD
+        // 1. Delete / Remove Avatar
+        if ($request->boolean('remove_avatar') || ($request->has('avatar_url') && empty($request->avatar_url) && !$request->hasFile('avatar'))) {
+            $updateData['avatar_url'] = null;
+        }
+        // 2. Create / Update Avatar from File Upload
+        elseif ($request->hasFile('avatar')) {
+            $file = $request->file('avatar');
+            $uploadedUrl = null;
+
+            if (class_exists(\App\Services\CloudinaryService::class)) {
+                $cloudinary = new \App\Services\CloudinaryService();
+                if ($cloudinary->isConfigured()) {
+                    $uploadedUrl = $cloudinary->upload($file, 'codebridges/avatars');
+                }
+            }
+
+            if (!$uploadedUrl) {
+                $ext = $file->getClientOriginalExtension() ?: 'png';
+                $filename = 'avatar_' . $user->id . '_' . time() . '.' . $ext;
+                $file->storeAs('avatars', $filename, 'public');
+                $uploadedUrl = '/storage/avatars/' . $filename;
+            }
+
+            $updateData['avatar_url'] = $uploadedUrl;
+        }
+        // 3. Create / Update Avatar from Direct URL or Base64
+        elseif ($request->has('avatar_url') && !empty($request->avatar_url)) {
+            $url = $request->avatar_url;
+            if (str_starts_with($url, 'data:image/') && class_exists(\App\Services\CloudinaryService::class)) {
+                $cloudinary = new \App\Services\CloudinaryService();
+                if ($cloudinary->isConfigured()) {
+                    $cloudUrl = $cloudinary->upload($url, 'codebridges/avatars');
+                    if ($cloudUrl) {
+                        $url = $cloudUrl;
+                    }
+                }
+            }
+            $updateData['avatar_url'] = $url;
+        }
+
+        $updateData['updated_at'] = now();
+
+        DB::table('users')->where('id', $user->id)->update($updateData);
+
+        $freshUser = User::find($user->id);
+        if ($freshUser && $freshUser->tenant_id) {
+            $tenant = DB::table('tenants')->where('id', $freshUser->tenant_id)->first();
+            if ($tenant) {
+                $freshUser->tenant_name = $tenant->name;
+                $freshUser->company_name = $tenant->name;
+                $freshUser->tenant_logo_url = $tenant->logo_url ?? null;
+                $freshUser->logo_url = $tenant->logo_url ?? null;
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Profile updated successfully.',
+            'user' => $freshUser,
+        ]);
+    }
+
+    public function updatePassword(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $validated = $request->validate([
+            'current_password' => 'required|string',
+            'new_password' => 'required|string|min:6',
+        ]);
+
+        if (!Hash::check($validated['current_password'], $user->password)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'The current password you provided is incorrect.',
+            ], 422);
+        }
+
+        DB::table('users')->where('id', $user->id)->update([
+            'password' => Hash::make($validated['new_password']),
+            'updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Account password updated successfully.',
         ]);
     }
 

@@ -44,49 +44,57 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
-        // 2. Seed Users across all 8 RBAC Roles
+        // 2. Seed Users across 3 Parent Roles (Super Admin, Organization, Employees)
+        $roleMap = DB::table('roles')->pluck('id', 'slug')->toArray();
+
         $users = [
             [
                 'email' => 'vibolsen2002@gmail.com',
-                'name' => 'Vibol',
+                'name' => 'Vibol (Platform Super Admin)',
                 'role' => 'super_admin',
+                'role_id' => $roleMap['super_admin'] ?? null,
                 'password' => Hash::make('Vibol@2020'),
+                'pin_code' => null,
             ],
             [
-                'email' => 'manager@pos.com',
-                'name' => 'Outlet Manager',
-                'role' => 'outlet_manager',
+                'email' => 'admin@pos.com',
+                'name' => 'Company Organization Admin',
+                'role' => 'organization',
+                'role_id' => $roleMap['organization'] ?? ($roleMap['admin'] ?? null),
                 'password' => Hash::make('password'),
-            ],
-            [
-                'email' => 'supervisor@pos.com',
-                'name' => 'Store Supervisor',
-                'role' => 'supervisor',
-                'password' => Hash::make('password'),
+                'pin_code' => null,
             ],
             [
                 'email' => 'cashier@pos.com',
                 'name' => 'John Cashier',
-                'role' => 'cashier',
+                'role' => 'employee',
+                'role_id' => $roleMap['cashier'] ?? null,
                 'password' => Hash::make('password'),
+                'pin_code' => '1234',
             ],
             [
                 'email' => 'inventory@pos.com',
                 'name' => 'Stock Clerk',
-                'role' => 'inventory_clerk',
+                'role' => 'employee',
+                'role_id' => $roleMap['inventory_clerk'] ?? null,
                 'password' => Hash::make('password'),
+                'pin_code' => null,
             ],
             [
                 'email' => 'accountant@pos.com',
                 'name' => 'Finance Accountant',
-                'role' => 'accountant',
+                'role' => 'employee',
+                'role_id' => $roleMap['accountant'] ?? null,
                 'password' => Hash::make('password'),
+                'pin_code' => null,
             ],
             [
-                'email' => 'customer@pos.com',
-                'name' => 'Demo Customer',
-                'role' => 'customer',
+                'email' => 'manager@pos.com',
+                'name' => 'Store Operations Manager',
+                'role' => 'employee',
+                'role_id' => $roleMap['outlet_manager'] ?? null,
                 'password' => Hash::make('password'),
+                'pin_code' => null,
             ],
         ];
 
@@ -97,7 +105,9 @@ class DatabaseSeeder extends Seeder
                 [
                     'name' => $userData['name'],
                     'role' => $userData['role'],
+                    'role_id' => $userData['role_id'],
                     'outlet_id' => $outletId,
+                    'pin_code' => $userData['pin_code'],
                     'password' => $userData['password'],
                 ]
             );

@@ -17,6 +17,15 @@ use App\Http\Controllers\Api\V1\PermissionController;
 use App\Http\Controllers\Api\V1\TenantController;
 use App\Http\Controllers\Api\V1\ApiKeyController;
 use App\Http\Controllers\Api\V1\CrmController;
+use App\Http\Controllers\Api\V1\AttendanceController;
+use App\Http\Controllers\Api\V1\MeetingController;
+use App\Http\Controllers\Api\V1\MeetingRoomController;
+use App\Http\Controllers\Api\V1\MeetingMinutesController;
+use App\Http\Controllers\Api\V1\MeetingTelegramController;
+use App\Http\Controllers\Api\V1\TelemetryController;
+use App\Http\Controllers\Api\V1\SupportController;
+use App\Http\Controllers\Api\V1\TenantModuleController;
+use App\Http\Controllers\Api\V1\PlatformModuleController;
 
 Route::prefix('v1')->group(function () {
     // Health Check Endpoint for Auth Microservice
@@ -42,9 +51,15 @@ Route::prefix('v1')->group(function () {
     // Public Tenant Self-Registration
     Route::post('/tenants/register', [TenantController::class, 'register']);
 
+    // Public Platform Modules Catalog
+    Route::get('/platform-modules', [PlatformModuleController::class, 'index']);
+    Route::get('/platform-modules/{id}', [PlatformModuleController::class, 'show']);
+
     // Protected Auth & Management API Routes
     Route::middleware('auth:sanctum')->group(function () {
         Route::get('/me', [AuthController::class, 'me']);
+        Route::match(['put', 'post'], '/auth/profile', [AuthController::class, 'updateProfile']);
+        Route::put('/auth/password', [AuthController::class, 'updatePassword']);
         Route::post('/auth/logout', [AuthController::class, 'logout']);
 
         // Active Devices & Session Management
@@ -55,8 +70,10 @@ Route::prefix('v1')->group(function () {
 
         // Subscription Quota Usage & Module Management
         Route::get('/tenants/quota-usage', [TenantController::class, 'quotaUsage']);
-        Route::get('/tenants/modules', [TenantController::class, 'getModules']);
-        Route::put('/tenants/modules', [TenantController::class, 'updateModules']);
+        Route::get('/tenants/profile', [TenantController::class, 'getProfile']);
+        Route::match(['put', 'post'], '/tenants/profile', [TenantController::class, 'updateProfile']);
+        Route::get('/tenants/modules', [TenantModuleController::class, 'index']);
+        Route::put('/tenants/modules', [TenantModuleController::class, 'update']);
 
         // Developer / Merchant API Keys
         Route::get('/api-keys', [ApiKeyController::class, 'index']);
@@ -82,7 +99,7 @@ Route::prefix('v1')->group(function () {
         Route::get('/crm/kpis', [CrmController::class, 'kpis']);
 
         // User & Staff Dynamic RBAC Management
-        Route::middleware('role:admin,super_admin,outlet_manager')->group(function () {
+        Route::middleware('role:organization,admin,super_admin,outlet_manager')->group(function () {
             Route::get('/roles', [RoleController::class, 'index']);
             Route::post('/roles', [RoleController::class, 'store']);
             Route::get('/roles/{id}', [RoleController::class, 'show']);
@@ -137,6 +154,33 @@ Route::prefix('v1')->group(function () {
             Route::delete('/employees/{id}', [EmployeeController::class, 'destroy']);
         });
 
+        // Attendance & Clock-In/Clock-Out Tracking
+        Route::get('/attendance', [AttendanceController::class, 'index']);
+        Route::post('/attendance/clock-in', [AttendanceController::class, 'clockIn']);
+        Route::post('/attendance/clock-out', [AttendanceController::class, 'clockOut']);
+
+        // Meeting Management Systems (MMS) Routes
+        Route::get('/meetings/stats', [MeetingController::class, 'stats']);
+        Route::get('/meetings', [MeetingController::class, 'index']);
+        Route::post('/meetings', [MeetingController::class, 'store']);
+        Route::get('/meetings/{id}', [MeetingController::class, 'show']);
+        Route::put('/meetings/{id}', [MeetingController::class, 'update']);
+        Route::delete('/meetings/{id}', [MeetingController::class, 'destroy']);
+        Route::post('/meetings/{id}/check-in', [MeetingController::class, 'checkIn']);
+        Route::get('/meetings/{id}/ics', [MeetingController::class, 'exportIcs']);
+
+        Route::get('/meeting-rooms', [MeetingRoomController::class, 'index']);
+        Route::post('/meeting-rooms', [MeetingRoomController::class, 'store']);
+        Route::put('/meeting-rooms/{id}', [MeetingRoomController::class, 'update']);
+        Route::delete('/meeting-rooms/{id}', [MeetingRoomController::class, 'destroy']);
+
+        Route::get('/meetings/{id}/minutes', [MeetingMinutesController::class, 'show']);
+        Route::post('/meetings/{id}/minutes', [MeetingMinutesController::class, 'storeOrUpdate']);
+
+        Route::get('/meetings/telegram/config', [MeetingTelegramController::class, 'show']);
+        Route::put('/meetings/telegram/config', [MeetingTelegramController::class, 'update']);
+        Route::post('/meetings/telegram/test', [MeetingTelegramController::class, 'testNotification']);
+
 
         // Supervisor PIN Verification Override
         Route::post('/auth/verify-pin', [UserController::class, 'verifyPin']);
@@ -151,6 +195,24 @@ Route::prefix('v1')->group(function () {
             Route::put('/tenants/{id}/subscription', [TenantController::class, 'updateSubscription']);
             Route::post('/tenants/{id}/suspend', [TenantController::class, 'suspend']);
             Route::delete('/tenants/{id}', [TenantController::class, 'destroy']);
+
+            // Infrastructure Telemetry
+            Route::get('/infrastructure/telemetry', [TelemetryController::class, 'index']);
+
+            // Platform Support Desk & Broadcast Announcements
+            Route::get('/support/tickets', [SupportController::class, 'tickets']);
+            Route::post('/support/tickets', [SupportController::class, 'storeTicket']);
+            Route::put('/support/tickets/{id}', [SupportController::class, 'updateTicket']);
+            Route::get('/support/announcements', [SupportController::class, 'announcements']);
+            Route::post('/support/announcements', [SupportController::class, 'storeAnnouncement']);
+            Route::patch('/support/announcements/{id}/toggle', [SupportController::class, 'toggleAnnouncement']);
+            Route::delete('/support/announcements/{id}', [SupportController::class, 'destroyAnnouncement']);
+
+            // Platform Modules Master CRUD Management
+            Route::get('/platform-modules', [PlatformModuleController::class, 'index']);
+            Route::post('/platform-modules', [PlatformModuleController::class, 'store']);
+            Route::put('/platform-modules/{id}', [PlatformModuleController::class, 'update']);
+            Route::delete('/platform-modules/{id}', [PlatformModuleController::class, 'destroy']);
         });
     });
 });

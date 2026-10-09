@@ -50,6 +50,11 @@ Route::prefix('v1')->group(function () {
             Route::post('/inventory/transfers', [TransferController::class, 'store']);
             Route::post('/inventory/transfers/{id}/receive', [TransferController::class, 'receive']);
 
+            // Purchase Orders Workflow Mutations
+            Route::post('/purchase-orders', [PurchaseController::class, 'store']);
+            Route::patch('/purchase-orders/{id}/status', [PurchaseController::class, 'updateStatus']);
+            Route::post('/purchase-orders/{id}/receive', [PurchaseController::class, 'receive']);
+
             // Product Management Mutations
             Route::post('/products', [ProductController::class, 'store']);
             Route::post('/products/bulk', [ProductController::class, 'bulkStore']);

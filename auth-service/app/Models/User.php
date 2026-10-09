@@ -27,6 +27,7 @@ class User extends Authenticatable
         'outlet_id',
         'phone',
         'pin_code',
+        'avatar_url',
         'is_active',
         'failed_login_attempts',
         'lockout_until',

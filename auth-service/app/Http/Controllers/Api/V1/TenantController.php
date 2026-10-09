@@ -114,7 +114,7 @@ class TenantController extends Controller
         $updatedUser = null;
         if ($authUser) {
             $currentRole = $authUser->role;
-            $newRole = in_array($currentRole, ['super_admin', 'admin', 'administrator']) ? $currentRole : 'admin';
+            $newRole = in_array($currentRole, ['super_admin', 'organization', 'admin']) ? $currentRole : 'organization';
             DB::table('users')->where('id', $authUser->id)->update([
                 'tenant_id' => $id,
                 'outlet_id' => $outletId,
@@ -176,7 +176,7 @@ class TenantController extends Controller
 
             $tenant->owner = DB::table('users')
                 ->where('tenant_id', $tenant->id)
-                ->whereIn('role', ['admin', 'administrator', 'owner'])
+                ->whereIn('role', ['organization', 'admin', 'administrator', 'owner'])
                 ->select('id', 'name', 'email', 'phone', 'role', 'is_active', 'created_at')
                 ->first();
 
@@ -249,7 +249,7 @@ class TenantController extends Controller
 
         $tenant->owner = DB::table('users')
             ->where('tenant_id', $id)
-            ->whereIn('role', ['admin', 'administrator', 'owner'])
+            ->whereIn('role', ['organization', 'admin', 'administrator', 'owner'])
             ->select('id', 'name', 'email', 'phone', 'role', 'is_active', 'created_at')
             ->first()
             ?? DB::table('users')->where('tenant_id', $id)->select('id', 'name', 'email', 'phone', 'role', 'is_active', 'created_at')->first();
@@ -309,13 +309,13 @@ class TenantController extends Controller
         if ($request->filled('owner_id')) {
             DB::table('users')->where('id', $request->owner_id)->update([
                 'tenant_id' => $id,
-                'role'      => 'admin',
+                'role'      => 'organization',
                 'updated_at'=> now(),
             ]);
         } elseif ($request->filled('owner_name') || $request->filled('owner_email') || $request->filled('owner_phone')) {
             $owner = DB::table('users')
                 ->where('tenant_id', $id)
-                ->whereIn('role', ['admin', 'administrator', 'owner'])
+                ->whereIn('role', ['organization', 'admin', 'administrator', 'owner'])
                 ->first()
                 ?? DB::table('users')->where('tenant_id', $id)->first();
 
@@ -334,7 +334,7 @@ class TenantController extends Controller
                         'tenant_id' => $id,
                         'name'      => $request->owner_name ?? $existingUser->name,
                         'phone'     => $request->owner_phone ?? $existingUser->phone,
-                        'role'      => 'admin',
+                        'role'      => 'organization',
                         'updated_at'=> now(),
                     ]);
                 } else {
@@ -344,7 +344,7 @@ class TenantController extends Controller
                         'email'      => $request->owner_email,
                         'phone'      => $request->owner_phone,
                         'password'   => Hash::make('password'),
-                        'role'       => 'admin',
+                        'role'       => 'organization',
                         'is_active'  => true,
                         'created_at' => now(),
                         'updated_at' => now(),
@@ -580,6 +580,159 @@ class TenantController extends Controller
             'tenant_id'   => $tenant->id,
             'tenant_name' => $tenant->name,
             'modules'     => $request->modules,
+        ]);
+    }
+
+    /**
+     * Get active tenant workspace profile for current tenant/user.
+     * GET /api/v1/tenants/profile
+     */
+    public function getProfile(Request $request)
+    {
+        $tenant = $this->resolveTenant($request);
+        if (!$tenant) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Workspace not found.',
+            ], 404);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'id'             => $tenant->id,
+                'name'           => $tenant->name,
+                'legal_name'     => $tenant->legal_name ?? null,
+                'slug'           => $tenant->slug,
+                'company_code'   => $tenant->company_code ?? null,
+                'logo_url'       => $tenant->logo_url ?? null,
+                'receipt_footer' => $tenant->receipt_footer ?? null,
+                'email'          => $tenant->email ?? null,
+                'phone'          => $tenant->phone ?? null,
+                'address'        => $tenant->address ?? null,
+                'country'        => $tenant->country ?? 'KH',
+                'currency'       => $tenant->currency ?? 'USD',
+                'client_tier'    => $tenant->client_tier ?? 'free_personal',
+                'status'         => $tenant->status ?? 'active',
+                'enabled_modules'=> is_string($tenant->enabled_modules) ? json_decode($tenant->enabled_modules, true) : ($tenant->enabled_modules ?? []),
+            ],
+        ]);
+    }
+
+    /**
+     * Update active tenant organization profile (branding, name, logo, contact).
+     * PUT|POST /api/v1/tenants/profile
+     */
+    public function updateProfile(Request $request)
+    {
+        $tenant = $this->resolveTenant($request);
+        if (!$tenant) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Workspace not found.',
+            ], 404);
+        }
+
+        $request->validate([
+            'name'           => 'sometimes|required|string|max:255',
+            'legal_name'     => 'nullable|string|max:255',
+            'logo_url'       => 'nullable|string',
+            'logo'           => 'nullable|file|mimes:jpeg,png,jpg,webp,svg|max:10240',
+            'receipt_footer' => 'nullable|string|max:500',
+            'phone'          => 'nullable|string|max:50',
+            'email'          => 'nullable|email|max:255',
+            'address'        => 'nullable|string|max:500',
+            'country'        => 'nullable|string|max:10',
+            'currency'       => 'nullable|string|max:10',
+        ]);
+
+        $updateData = [];
+
+        if ($request->has('name') && filled($request->name)) {
+            $updateData['name'] = $request->name;
+        }
+        if ($request->has('legal_name')) {
+            $updateData['legal_name'] = $request->legal_name;
+        }
+        if ($request->has('receipt_footer')) {
+            $updateData['receipt_footer'] = $request->receipt_footer;
+        }
+        if ($request->has('phone')) {
+            $updateData['phone'] = $request->phone;
+        }
+        if ($request->has('email')) {
+            $updateData['email'] = $request->email;
+        }
+        if ($request->has('address')) {
+            $updateData['address'] = $request->address;
+        }
+        if ($request->has('country')) {
+            $updateData['country'] = $request->country;
+        }
+        if ($request->has('currency')) {
+            $updateData['currency'] = $request->currency;
+        }
+
+        // Handle uploaded file or direct logo URL / Base64 Data URL
+        if ($request->hasFile('logo')) {
+            $file = $request->file('logo');
+
+            // 1. Check if Cloudinary is configured
+            $cloudinary = new \App\Services\CloudinaryService();
+            if ($cloudinary->isConfigured()) {
+                $cloudUrl = $cloudinary->upload($file, 'codebridges/logos');
+                if ($cloudUrl) {
+                    $updateData['logo_url'] = $cloudUrl;
+                }
+            }
+
+            // 2. Fallback to local storage if Cloudinary is not configured or fails
+            if (empty($updateData['logo_url'])) {
+                $ext = $file->getClientOriginalExtension() ?: 'png';
+                $filename = 'logo_' . $tenant->id . '_' . time() . '.' . $ext;
+                $file->storeAs('logos', $filename, 'public');
+                $updateData['logo_url'] = '/storage/logos/' . $filename;
+            }
+        } elseif ($request->has('logo_url')) {
+            $logoUrl = $request->logo_url;
+            // If base64 string and Cloudinary is configured, upload to Cloudinary CDN
+            if (!empty($logoUrl) && str_starts_with($logoUrl, 'data:image/')) {
+                $cloudinary = new \App\Services\CloudinaryService();
+                if ($cloudinary->isConfigured()) {
+                    $cloudUrl = $cloudinary->upload($logoUrl, 'codebridges/logos');
+                    if ($cloudUrl) {
+                        $logoUrl = $cloudUrl;
+                    }
+                }
+            }
+            $updateData['logo_url'] = $logoUrl;
+        }
+
+        if (!empty($updateData)) {
+            $updateData['updated_at'] = now();
+            DB::table('tenants')->where('id', $tenant->id)->update($updateData);
+        }
+
+        $updatedTenant = DB::table('tenants')->where('id', $tenant->id)->first();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Organization branding & profile updated successfully.',
+            'data'    => [
+                'id'             => $updatedTenant->id,
+                'name'           => $updatedTenant->name,
+                'legal_name'     => $updatedTenant->legal_name ?? null,
+                'slug'           => $updatedTenant->slug,
+                'logo_url'       => $updatedTenant->logo_url ?? null,
+                'receipt_footer' => $updatedTenant->receipt_footer ?? null,
+                'email'          => $updatedTenant->email ?? null,
+                'phone'          => $updatedTenant->phone ?? null,
+                'address'        => $updatedTenant->address ?? null,
+                'country'        => $updatedTenant->country ?? 'KH',
+                'currency'       => $updatedTenant->currency ?? 'USD',
+                'client_tier'    => $updatedTenant->client_tier ?? 'free_personal',
+                'status'         => $updatedTenant->status ?? 'active',
+            ],
         ]);
     }
 

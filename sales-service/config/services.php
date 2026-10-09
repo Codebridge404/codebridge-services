@@ -37,10 +37,10 @@ return [
 
     'bakong' => [
         'url' => env('BAKONG_API_URL', 'https://api-bakong.nbc.gov.kh/v1'),
-        'token' => env('BAKONG_API_TOKEN'),
-        'merchant_name' => env('BAKONG_MERCHANT_NAME', 'Freshmart POS'),
+        'token' => env('BAKONG_API_TOKEN', ''),
+        'merchant_name' => env('BAKONG_MERCHANT_NAME', 'Store POS'),
         'merchant_city' => env('BAKONG_MERCHANT_CITY', 'Phnom Penh'),
-        'merchant_id' => env('BAKONG_MERCHANT_ID', 'freshmart_pp'),
+        'merchant_id' => env('BAKONG_MERCHANT_ID', 'merchant_pos'),
     ],
 
 ];
