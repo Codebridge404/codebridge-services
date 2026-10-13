@@ -6,85 +6,483 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class MeetingTelegramController extends Controller
 {
     /**
-     * Get workspace Telegram bot settings.
+     * Factory fallback templates when none exist.
      */
-    public function show(Request $request)
-    {
-        $currentUser = $request->user();
-        $tenantId = $currentUser?->tenant_id;
+    protected static array $factoryDefaults = [
+        'confirmation' => "📅 *Meeting Confirmed*\n*Title:* {title}\n*Room:* {room}\n*Time:* {startTime} - {endTime}\n*Organizer:* {organizer}\n*Equipment:* {materials}",
+        'reminder' => "⏰ *Upcoming Meeting Reminder*\n*Title:* {title}\n*Room:* {room}\n*Starts In:* {leadMinutes} minutes ({startTime})\n*Organizer:* {organizer}\nPlease arrive on time or check in at the room display kiosk.",
+        'change' => "🔄 *Meeting Updated / Approved*\n*Title:* {title}\n*Room:* {room}\n*Schedule:* {startTime} - {endTime}\n*Status:* Approved & Scheduled\n*Organizer:* {organizer}",
+        'cancellation' => "❌ *Meeting Cancelled*\n*Title:* {title}\n*Room:* {room}\n*Scheduled Time:* {startTime}\n*Reason:* {reason}\nAllocated equipment and staff have been liberated.",
+    ];
 
-        $config = DB::table('meeting_telegram_configs')->where('tenant_id', $tenantId)->first();
-        return response()->json(['status' => 'success', 'data' => $config]);
+    /**
+     * Get public status of Telegram Bot gateway.
+     * GET /api/v1/meetings/telegram/status
+     */
+    public function status(Request $request)
+    {
+        $tenantId = $request->user()?->tenant_id;
+        $settings = $this->getTelegramSettings($tenantId);
+
+        $botUsername = $settings['bot_username'] ?? '';
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'bot_enabled' => (bool) ($settings['bot_enabled'] ?? false),
+                'bot_username' => $botUsername,
+                'default_chat_id' => $settings['default_chat_id'] ?? '',
+                'default_reminder_minutes' => (int) ($settings['default_reminder_minutes'] ?? 15),
+                'bot_link' => !empty($botUsername) ? "https://t.me/" . ltrim($botUsername, '@') : null,
+                'has_token' => !empty($settings['bot_token']),
+            ],
+        ]);
     }
 
     /**
-     * Update workspace Telegram bot settings.
+     * Get admin configuration with masked bot token.
+     * GET /api/v1/meetings/telegram/config
      */
-    public function update(Request $request)
+    public function config(Request $request)
+    {
+        $tenantId = $request->user()?->tenant_id;
+        $settings = $this->getTelegramSettings($tenantId);
+
+        $token = $settings['bot_token'] ?? '';
+        $maskedToken = '';
+        if (!empty($token)) {
+            $len = strlen($token);
+            $maskedToken = $len > 10 ? substr($token, 0, 4) . '••••••••' . substr($token, -4) : '••••••••';
+        }
+
+        $botUsername = $settings['bot_username'] ?? '';
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'bot_enabled' => (bool) ($settings['bot_enabled'] ?? false),
+                'bot_token_masked' => $maskedToken,
+                'has_token' => !empty($token),
+                'bot_username' => $botUsername,
+                'default_chat_id' => $settings['default_chat_id'] ?? '',
+                'default_reminder_minutes' => (int) ($settings['default_reminder_minutes'] ?? 15),
+                'bot_link' => !empty($botUsername) ? "https://t.me/" . ltrim($botUsername, '@') : null,
+            ],
+        ]);
+    }
+
+    /**
+     * Update Telegram Bot configuration.
+     * PUT /api/v1/meetings/telegram/config
+     */
+    public function updateConfig(Request $request)
     {
         $validated = $request->validate([
-            'bot_token' => 'nullable|string|max:255',
-            'chat_id' => 'nullable|string|max:100',
-            'is_enabled' => 'boolean',
-            'notify_on_booking' => 'boolean',
-            'notify_15m_before' => 'boolean',
+            'bot_enabled' => 'nullable|boolean',
+            'bot_token' => 'nullable|string',
+            'bot_username' => 'nullable|string|max:100',
+            'default_chat_id' => 'nullable|string|max:100',
+            'default_reminder_minutes' => 'nullable|integer|min:1|max:120',
         ]);
 
         $currentUser = $request->user();
         $tenantId = $currentUser?->tenant_id;
 
-        $existing = DB::table('meeting_telegram_configs')->where('tenant_id', $tenantId)->first();
-
-        if ($existing) {
-            DB::table('meeting_telegram_configs')->where('tenant_id', $tenantId)->update(
-                array_merge($validated, ['updated_at' => now()])
-            );
-        } else {
-            DB::table('meeting_telegram_configs')->insert(array_merge($validated, [
-                'tenant_id' => $tenantId,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]));
+        $updates = [];
+        if (isset($validated['bot_enabled'])) {
+            $updates['notification.telegram_enabled'] = $validated['bot_enabled'] ? 'true' : 'false';
+        }
+        if (!empty($validated['bot_token']) && !str_contains($validated['bot_token'], '••••')) {
+            $updates['notification.telegram_bot_token'] = trim($validated['bot_token']);
+        }
+        if (isset($validated['bot_username'])) {
+            $updates['notification.telegram_bot_username'] = ltrim(trim($validated['bot_username']), '@');
+        }
+        if (isset($validated['default_chat_id'])) {
+            $updates['notification.telegram_default_chat_id'] = trim($validated['default_chat_id']);
+        }
+        if (isset($validated['default_reminder_minutes'])) {
+            $updates['notification.default_lead_minutes'] = (string) $validated['default_reminder_minutes'];
         }
 
-        return response()->json(['status' => 'success', 'message' => 'Telegram configuration updated.']);
+        foreach ($updates as $key => $val) {
+            DB::table('meeting_system_settings')->updateOrInsert(
+                ['tenant_id' => $tenantId, 'key' => $key],
+                ['value' => $val, 'updated_by' => $currentUser?->id, 'updated_at' => now()]
+            );
+        }
+
+        // Record in audit log
+        try {
+            DB::table('audit_logs')->insert([
+                'user_id' => $currentUser?->id,
+                'user_name' => $currentUser?->name ?? 'Admin',
+                'action' => 'telegram_config_updated',
+                'module' => 'meetings',
+                'ip_address' => $request->ip(),
+                'payload' => json_encode(['updated_keys' => array_keys($updates)]),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        } catch (\Throwable $e) {}
+
+        return $this->config($request);
     }
 
     /**
-     * Send test alert via configured Telegram bot.
+     * Validate bot token directly against Telegram API.
+     * POST /api/v1/meetings/telegram/validate-token
      */
-    public function testNotification(Request $request)
+    public function validateToken(Request $request)
     {
-        $currentUser = $request->user();
-        $tenantId = $currentUser?->tenant_id;
-        $config = DB::table('meeting_telegram_configs')->where('tenant_id', $tenantId)->first();
+        $token = $request->input('token');
+        if (empty($token) || str_contains($token, '••••')) {
+            $tenantId = $request->user()?->tenant_id;
+            $token = $this->getSettingValue('notification.telegram_bot_token', $tenantId);
+        }
 
-        if (!$config || empty($config->bot_token) || empty($config->chat_id)) {
+        if (empty($token)) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Telegram Bot Token and Chat ID must be configured first.',
+                'valid' => false,
+                'message' => 'No Telegram Bot Token provided.',
             ], 422);
         }
 
-        $message = "🔔 *CodeBridges MMS Telegram Test*\n\nHello! Telegram alerts are successfully linked for your workspace.";
+        try {
+            $response = Http::timeout(6)->get("https://api.telegram.org/bot{$token}/getMe");
+            $data = $response->json();
+
+            if ($response->successful() && !empty($data['ok'])) {
+                $bot = $data['result'];
+                return response()->json([
+                    'status' => 'success',
+                    'valid' => true,
+                    'bot_id' => $bot['id'] ?? null,
+                    'bot_username' => $bot['username'] ?? '',
+                    'bot_first_name' => $bot['first_name'] ?? '',
+                    'message' => "Bot '@{$bot['username']}' verified successfully!",
+                ]);
+            }
+
+            return response()->json([
+                'status' => 'error',
+                'valid' => false,
+                'message' => $data['description'] ?? 'Invalid token response from Telegram API.',
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'status' => 'error',
+                'valid' => false,
+                'message' => 'Connection timeout or failed to contact Telegram API: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Send test alert to target chat ID.
+     * POST /api/v1/meetings/telegram/test
+     */
+    public function test(Request $request)
+    {
+        $currentUser = $request->user();
+        $tenantId = $currentUser?->tenant_id;
+        $targetChatId = $request->input('chat_id');
+        $customMessage = $request->input('message');
+
+        $settings = $this->getTelegramSettings($tenantId);
+        $token = $settings['bot_token'] ?? '';
+        if (empty($token)) {
+            return response()->json(['status' => 'error', 'message' => 'Telegram Bot Token is not configured.'], 400);
+        }
+
+        if (empty($targetChatId)) {
+            $targetChatId = $settings['default_chat_id'] ?? '';
+        }
+
+        if (empty($targetChatId)) {
+            return response()->json(['status' => 'error', 'message' => 'Target Telegram Chat ID is required.'], 422);
+        }
+
+        $text = !empty($customMessage) ? $customMessage :
+            "🚀 *CodeBridges Meeting Gateway Test Alert*\n\n" .
+            "Your Telegram integration is live and successfully communicating with the corporate meeting coordination engine.\n\n" .
+            "• Dispatched by: " . ($currentUser?->name ?? 'Administrator') . "\n" .
+            "• Timestamp: " . now()->toDateTimeString();
 
         try {
-            $response = Http::post("https://api.telegram.org/bot{$config->bot_token}/sendMessage", [
-                'chat_id' => $config->chat_id,
-                'text' => $message,
+            $response = Http::timeout(6)->post("https://api.telegram.org/bot{$token}/sendMessage", [
+                'chat_id' => $targetChatId,
+                'text' => $text,
                 'parse_mode' => 'Markdown',
             ]);
 
-            if ($response->successful()) {
-                return response()->json(['status' => 'success', 'message' => 'Test message sent to Telegram!']);
+            $data = $response->json();
+            if ($response->successful() && !empty($data['ok'])) {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => "Test alert dispatched successfully to chat '{$targetChatId}'!",
+                    'data' => $data['result'] ?? null,
+                ]);
             }
-            return response()->json(['status' => 'error', 'message' => 'Telegram API returned an error: ' . $response->body()], 400);
+
+            return response()->json([
+                'status' => 'error',
+                'message' => $data['description'] ?? 'Telegram API rejected message delivery.',
+            ], 400);
         } catch (\Throwable $e) {
-            return response()->json(['status' => 'error', 'message' => 'Could not connect to Telegram: ' . $e->getMessage()], 500);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Network error dispatching Telegram alert: ' . $e->getMessage(),
+            ], 500);
         }
+    }
+
+    /**
+     * List all notification templates.
+     * GET /api/v1/meetings/telegram/templates
+     */
+    public function templates(Request $request)
+    {
+        $tenantId = $request->user()?->tenant_id;
+        $templates = DB::table('meeting_notification_templates')
+            ->where(function ($q) use ($tenantId) {
+                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+            })
+            ->orderBy('id', 'asc')
+            ->get();
+
+        // Ensure all standard types are present
+        $standardTypes = ['confirmation', 'reminder', 'change', 'cancellation'];
+        $existingTypes = $templates->pluck('type')->toArray();
+
+        foreach ($standardTypes as $type) {
+            if (!in_array($type, $existingTypes)) {
+                $id = DB::table('meeting_notification_templates')->insertGetId([
+                    'tenant_id' => $tenantId,
+                    'type' => $type,
+                    'name' => ucfirst($type) . ' Template',
+                    'content' => self::$factoryDefaults[$type] ?? '',
+                    'is_customized' => false,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+        }
+
+        $all = DB::table('meeting_notification_templates')
+            ->where(function ($q) use ($tenantId) {
+                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+            })
+            ->get();
+
+        return response()->json(['status' => 'success', 'data' => $all]);
+    }
+
+    /**
+     * Update notification template.
+     * PUT /api/v1/meetings/telegram/templates/{type}
+     */
+    public function updateTemplate(Request $request, string $type)
+    {
+        $validated = $request->validate([
+            'content' => 'required|string',
+        ]);
+
+        $tenantId = $request->user()?->tenant_id;
+        DB::table('meeting_notification_templates')->updateOrInsert(
+            ['type' => $type, 'tenant_id' => $tenantId],
+            [
+                'content' => trim($validated['content']),
+                'is_customized' => true,
+                'updated_at' => now(),
+            ]
+        );
+
+        $saved = DB::table('meeting_notification_templates')
+            ->where('type', $type)
+            ->where(function ($q) use ($tenantId) {
+                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+            })
+            ->first();
+
+        return response()->json(['status' => 'success', 'data' => $saved, 'message' => 'Template updated.']);
+    }
+
+    /**
+     * Reset template to system factory default.
+     * POST /api/v1/meetings/telegram/templates/{type}/reset
+     */
+    public function resetTemplate(Request $request, string $type)
+    {
+        $defaultContent = self::$factoryDefaults[$type] ?? 'Notification alert: {title}';
+        $tenantId = $request->user()?->tenant_id;
+
+        DB::table('meeting_notification_templates')->updateOrInsert(
+            ['type' => $type, 'tenant_id' => $tenantId],
+            [
+                'content' => $defaultContent,
+                'is_customized' => false,
+                'updated_at' => now(),
+            ]
+        );
+
+        $saved = DB::table('meeting_notification_templates')
+            ->where('type', $type)
+            ->where(function ($q) use ($tenantId) {
+                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+            })
+            ->first();
+
+        return response()->json(['status' => 'success', 'data' => $saved, 'message' => 'Template restored to factory default.']);
+    }
+
+    /**
+     * Live preview template with realistic placeholder variables.
+     * POST /api/v1/meetings/telegram/templates/preview
+     */
+    public function previewTemplate(Request $request)
+    {
+        $content = $request->input('content');
+        $type = $request->input('type', 'confirmation');
+
+        if (empty($content)) {
+            $content = self::$factoryDefaults[$type] ?? 'Preview: {title}';
+        }
+
+        $sampleVars = [
+            'title' => 'Executive Board Strategy Review',
+            'room' => 'Executive Boardroom (Floor 4)',
+            'startTime' => date('M j, Y • 02:00 PM'),
+            'endTime' => '03:30 PM',
+            'organizer' => 'Executive Chair',
+            'materials' => '4K Laser Projector (1), Interactive Digital Whiteboard (1)',
+            'leadMinutes' => '15',
+            'reason' => 'Quarterly budget alignment sync',
+        ];
+
+        if ($request->has('sample_variables')) {
+            $sampleVars = array_merge($sampleVars, (array) $request->input('sample_variables'));
+        }
+
+        $rendered = $content;
+        foreach ($sampleVars as $k => $v) {
+            $rendered = str_replace('{' . $k . '}', (string) $v, $rendered);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'raw' => $content,
+                'rendered' => $rendered,
+            ],
+        ]);
+    }
+
+    /**
+     * Core static dispatcher called from Meeting lifecycle events to dispatch Telegram alerts.
+     */
+    public static function dispatchTelegramAlert(string $type, array $variables, ?string $tenantId = null, ?string $overrideChatId = null): bool
+    {
+        try {
+            $enabled = DB::table('meeting_system_settings')
+                ->where('key', 'notification.telegram_enabled')
+                ->where(function ($q) use ($tenantId) {
+                    if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                })->value('value');
+
+            if ($enabled !== 'true' && $enabled !== '1') {
+                return false;
+            }
+
+            $token = DB::table('meeting_system_settings')
+                ->where('key', 'notification.telegram_bot_token')
+                ->where(function ($q) use ($tenantId) {
+                    if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                })->value('value');
+
+            if (empty($token)) {
+                return false;
+            }
+
+            $chatId = $overrideChatId ?: DB::table('meeting_system_settings')
+                ->where('key', 'notification.telegram_default_chat_id')
+                ->where(function ($q) use ($tenantId) {
+                    if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                })->value('value');
+
+            if (empty($chatId)) {
+                return false;
+            }
+
+            // Get template
+            $templateRow = DB::table('meeting_notification_templates')
+                ->where('type', $type)
+                ->where(function ($q) use ($tenantId) {
+                    if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                })->first();
+
+            $raw = $templateRow ? $templateRow->content : (self::$factoryDefaults[$type] ?? "Notice: {title}");
+
+            $text = $raw;
+            foreach ($variables as $k => $v) {
+                $text = str_replace('{' . $k . '}', (string) $v, $text);
+            }
+
+            $res = Http::timeout(5)->post("https://api.telegram.org/bot{$token}/sendMessage", [
+                'chat_id' => $chatId,
+                'text' => $text,
+                'parse_mode' => 'Markdown',
+            ]);
+
+            return $res->successful();
+        } catch (\Throwable $e) {
+            Log::warning("Telegram dispatch failed: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    protected function getTelegramSettings(?string $tenantId): array
+    {
+        $keys = [
+            'notification.telegram_enabled',
+            'notification.telegram_bot_token',
+            'notification.telegram_bot_username',
+            'notification.telegram_default_chat_id',
+            'notification.default_lead_minutes',
+        ];
+
+        $rows = DB::table('meeting_system_settings')
+            ->whereIn('key', $keys)
+            ->where(function ($q) use ($tenantId) {
+                if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+            })
+            ->get();
+
+        $map = [];
+        foreach ($rows as $r) {
+            $map[$r->key] = $r->value;
+        }
+
+        return [
+            'bot_enabled' => ($map['notification.telegram_enabled'] ?? '') === 'true',
+            'bot_token' => $map['notification.telegram_bot_token'] ?? '',
+            'bot_username' => $map['notification.telegram_bot_username'] ?? '',
+            'default_chat_id' => $map['notification.telegram_default_chat_id'] ?? '',
+            'default_reminder_minutes' => (int) ($map['notification.default_lead_minutes'] ?? 15),
+        ];
+    }
+
+    protected function getSettingValue(string $key, ?string $tenantId): ?string
+    {
+        return DB::table('meeting_system_settings')
+            ->where('key', $key)
+            ->where(function ($q) use ($tenantId) {
+                if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+            })
+            ->value('value');
     }
 }
