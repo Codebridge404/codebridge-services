@@ -12,12 +12,12 @@ PORT_TO_LISTEN="${PORT:-80}"
 echo "🌐 Configuring Nginx to bind on port ${PORT_TO_LISTEN}..."
 sed -i "s/listen 80;/listen ${PORT_TO_LISTEN};/g" /etc/nginx/nginx.conf
 
-SERVICES=("auth-service" "inventory-service" "sales-service")
+SERVICES=("auth-service" "operations-service")
 TARGET_DB="${DB_DATABASE:-codebridge}"
 TARGET_PORT="${DB_PORT:-4000}"
 SSL_CA_PATH="${MYSQL_ATTR_SSL_CA:-/etc/ssl/certs/ca-certificates.crt}"
 
-# 1. Fast Setup of Environment, Keys & Permissions for the 3 consolidated microservices
+# 1. Fast Setup of Environment, Keys & Permissions for the 2 consolidated microservices
 for svc in "${SERVICES[@]}"; do
     if [ -d "/var/www/$svc" ]; then
         cd "/var/www/$svc"

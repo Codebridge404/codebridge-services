@@ -10,8 +10,7 @@ services:
       - ./gateway/docs.html:/usr/share/nginx/html/docs.html:ro
     depends_on:
       - auth-service
-      - inventory-service
-      - sales-service
+      - operations-service
     networks:
       - codebridge-network
 
@@ -42,19 +41,19 @@ services:
     networks:
       - codebridge-network
 
-  # 3. Inventory & Logistics Service (Port 8003 - Products, Categories, Brands, Coupons, Balances, Transfers, POs)
-  inventory-service:
+  # 3. Operations Service (Port 8003 - Catalog, Inventory, Warehouse Logistics, POS, Shifts, KHQR, Finance)
+  operations-service:
     build:
       context: .
       dockerfile: ./docker/Dockerfile.php
-    container_name: codebridge-inventory-service
+    container_name: codebridge-operations-service
     command: php artisan serve --host=0.0.0.0 --port=8000 --no-reload
     ports:
       - "8003:8000"
     volumes:
-      - ./inventory-service:/var/www/html
+      - ./operations-service:/var/www/html
     environment:
-      - APP_NAME="CodeBridge Inventory & Logistics Service"
+      - APP_NAME="CodeBridge Operations Service"
       - APP_ENV=local
       - APP_DEBUG=true
       - PHP_CLI_SERVER_WORKERS=4
@@ -69,34 +68,7 @@ services:
     networks:
       - codebridge-network
 
-  # 4. Commerce, Finance & Transactions Engine (Port 8006 - Sales, Invoicing, Billing, Shifts, KHQR Payments, Reconciliation, Finance)
-  sales-service:
-    build:
-      context: .
-      dockerfile: ./docker/Dockerfile.php
-    container_name: codebridge-sales-service
-    command: php artisan serve --host=0.0.0.0 --port=8000 --no-reload
-    ports:
-      - "8006:8000"
-    volumes:
-      - ./sales-service:/var/www/html
-    environment:
-      - APP_NAME="CodeBridge Commerce & Finance Service"
-      - APP_ENV=local
-      - APP_DEBUG=true
-      - PHP_CLI_SERVER_WORKERS=4
-      - DB_CONNECTION=mysql
-      - DB_HOST=mysql-db
-      - DB_PORT=3306
-      - DB_DATABASE=codebridge
-      - DB_USERNAME=root
-      - DB_PASSWORD=root_password
-    depends_on:
-      - mysql-db
-    networks:
-      - codebridge-network
-
-  # 5. Central MySQL 8 Database Server
+  # 4. Central MySQL 8 Database Server
   mysql-db:
     image: mysql:8.0
     container_name: codebridge-mysql-db

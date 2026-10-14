@@ -49,21 +49,21 @@ services:
         value: /etc/ssl/certs/ca-certificates.crt
 
   # ============================================================================
-  # 3. Inventory & Catalog Service (Private Service)
+  # 3. Operations, Inventory, Shifts & Commerce Engine (Private Service)
   # ============================================================================
   - type: pserv
-    name: inventory-service
+    name: operations-service
     env: docker
     dockerfilePath: ./docker/Dockerfile.cloud
     dockerContext: .
     dockerBuildArgs:
       - key: SERVICE_DIR
-        value: ./inventory-service
+        value: ./operations-service
     plan: free
     region: frankfurt
     envVars:
       - key: APP_NAME
-        value: "CodeBridge Inventory & Logistics Service"
+        value: "CodeBridge Operations Service"
       - key: APP_ENV
         value: production
       - key: DB_CONNECTION
@@ -81,35 +81,3 @@ services:
       - key: MYSQL_ATTR_SSL_CA
         value: /etc/ssl/certs/ca-certificates.crt
 
-  # ============================================================================
-  # 4. Commerce, Finance & Transactions Engine (Private Service)
-  # ============================================================================
-  - type: pserv
-    name: sales-service
-    env: docker
-    dockerfilePath: ./docker/Dockerfile.cloud
-    dockerContext: .
-    dockerBuildArgs:
-      - key: SERVICE_DIR
-        value: ./sales-service
-    plan: free
-    region: frankfurt
-    envVars:
-      - key: APP_NAME
-        value: "CodeBridge Commerce & Finance Service"
-      - key: APP_ENV
-        value: production
-      - key: DB_CONNECTION
-        value: mysql
-      - key: DB_HOST
-        sync: false
-      - key: DB_PORT
-        value: "4000"
-      - key: DB_DATABASE
-        value: codebridge
-      - key: DB_USERNAME
-        sync: false
-      - key: DB_PASSWORD
-        sync: false
-      - key: MYSQL_ATTR_SSL_CA
-        value: /etc/ssl/certs/ca-certificates.crt
