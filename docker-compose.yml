@@ -13,9 +13,9 @@ services:
       - inventory-service
       - sales-service
     networks:
-      - pos-network
+      - codebridge-network
 
-  # 2. Auth & Identity Service (Port 8001 - Identity, Tenants, Users, RBAC, CRM, Employees, Outlets)
+  # 2. Auth & Identity Service (Port 8001 - Identity, Tenants, Users, RBAC, CRM, Employees, Outlets, MMS)
   auth-service:
     build:
       context: .
@@ -27,7 +27,7 @@ services:
     volumes:
       - ./auth-service:/var/www/html
     environment:
-      - APP_NAME="CodeBridge Auth Service"
+      - APP_NAME="CodeBridge Auth & Identity Service"
       - APP_ENV=local
       - APP_DEBUG=true
       - PHP_CLI_SERVER_WORKERS=4
@@ -40,9 +40,9 @@ services:
     depends_on:
       - mysql-db
     networks:
-      - pos-network
+      - codebridge-network
 
-  # 3. Inventory & Catalog Service (Port 8003 - Products, Categories, Brands, Coupons, Balances, Transfers, POs)
+  # 3. Inventory & Logistics Service (Port 8003 - Products, Categories, Brands, Coupons, Balances, Transfers, POs)
   inventory-service:
     build:
       context: .
@@ -54,7 +54,7 @@ services:
     volumes:
       - ./inventory-service:/var/www/html
     environment:
-      - APP_NAME="CodeBridge Inventory Service"
+      - APP_NAME="CodeBridge Inventory & Logistics Service"
       - APP_ENV=local
       - APP_DEBUG=true
       - PHP_CLI_SERVER_WORKERS=4
@@ -67,9 +67,9 @@ services:
     depends_on:
       - mysql-db
     networks:
-      - pos-network
+      - codebridge-network
 
-  # 4. Sales, Shift & Payment Engine (Port 8006 - POS Terminal, Checkout, Shifts, KHQR Payments, Reconciliation, Finance)
+  # 4. Commerce, Finance & Transactions Engine (Port 8006 - Sales, Invoicing, Billing, Shifts, KHQR Payments, Reconciliation, Finance)
   sales-service:
     build:
       context: .
@@ -81,7 +81,7 @@ services:
     volumes:
       - ./sales-service:/var/www/html
     environment:
-      - APP_NAME="CodeBridge Sales Service"
+      - APP_NAME="CodeBridge Commerce & Finance Service"
       - APP_ENV=local
       - APP_DEBUG=true
       - PHP_CLI_SERVER_WORKERS=4
@@ -94,7 +94,7 @@ services:
     depends_on:
       - mysql-db
     networks:
-      - pos-network
+      - codebridge-network
 
   # 5. Central MySQL 8 Database Server
   mysql-db:
@@ -106,14 +106,14 @@ services:
     ports:
       - "3307:3306"
     volumes:
-      - pos-mysql-data:/var/lib/mysql
+      - codebridge-mysql-data:/var/lib/mysql
       - ./docker/mysql-init:/docker-entrypoint-initdb.d
     networks:
-      - pos-network
+      - codebridge-network
 
 networks:
-  pos-network:
+  codebridge-network:
     driver: bridge
 
 volumes:
-  pos-mysql-data:
+  codebridge-mysql-data:

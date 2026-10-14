@@ -3,7 +3,7 @@ services:
   # 1. Nginx API Gateway (Public Web Service)
   # ============================================================================
   - type: web
-    name: pos-api-gateway
+    name: codebridge-api-gateway
     env: docker
     dockerfilePath: ./gateway/Dockerfile
     dockerContext: .
@@ -28,7 +28,7 @@ services:
     region: frankfurt
     envVars:
       - key: APP_NAME
-        value: "POS Auth Service"
+        value: "CodeBridge Auth & Identity Service"
       - key: APP_ENV
         value: production
       - key: APP_DEBUG
@@ -63,7 +63,7 @@ services:
     region: frankfurt
     envVars:
       - key: APP_NAME
-        value: "POS Inventory Service"
+        value: "CodeBridge Inventory & Logistics Service"
       - key: APP_ENV
         value: production
       - key: DB_CONNECTION
@@ -82,7 +82,7 @@ services:
         value: /etc/ssl/certs/ca-certificates.crt
 
   # ============================================================================
-  # 4. Sales, Shift & Payment Engine (Private Service)
+  # 4. Commerce, Finance & Transactions Engine (Private Service)
   # ============================================================================
   - type: pserv
     name: sales-service
@@ -96,7 +96,7 @@ services:
     region: frankfurt
     envVars:
       - key: APP_NAME
-        value: "POS Sales Service"
+        value: "CodeBridge Commerce & Finance Service"
       - key: APP_ENV
         value: production
       - key: DB_CONNECTION
