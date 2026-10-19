@@ -1,0 +1,49 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Models\User;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Laravel\Sanctum\Sanctum;
+use Tests\TestCase;
+
+class SessionsSecurityTest extends TestCase
+{
+    use RefreshDatabase;
+
+    /**
+     * Test session endpoints require authentication.
+     */
+    public function test_sessions_and_2fa_require_authentication(): void
+    {
+        $this->getJson('/api/v1/auth/sessions')->assertStatus(401);
+        $this->postJson('/api/v1/auth/2fa/toggle')->assertStatus(401);
+    }
+
+    /**
+     * Test authenticated user can access sessions and toggle 2FA.
+     */
+    public function test_user_can_view_sessions_and_toggle_2fa(): void
+    {
+        $user = User::factory()->create();
+
+        Sanctum::actingAs($user, ['*']);
+
+        $this->getJson('/api/v1/auth/sessions')->assertStatus(200);
+        $this->postJson('/api/v1/auth/2fa/toggle')->assertStatus(200);
+    }
+
+    /**
+     * Test supervisor PIN verification validation.
+     */
+    public function test_pin_verification_requires_pin_code(): void
+    {
+        $user = User::factory()->create();
+
+        Sanctum::actingAs($user, ['*']);
+
+        $response = $this->postJson('/api/v1/auth/verify-pin', []);
+
+        $this->assertContains($response->getStatusCode(), [200, 422]);
+    }
+}

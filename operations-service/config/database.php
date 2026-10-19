@@ -35,10 +35,32 @@ return [
             'url' => env('DB_URL'),
             'host' => env('DB_HOST', 'mysql-db'),
             'port' => env('DB_PORT', '3306'),
-            'database' => env('DB_DATABASE', 'codebridge'),
+            'database' => env('DB_DATABASE', 'codebridge_operations'),
             'username' => env('DB_USERNAME', 'root'),
             'password' => env('DB_PASSWORD', 'root_password'),
             'unix_socket' => env('DB_SOCKET', ''),
+            'charset' => env('DB_CHARSET', 'utf8mb4'),
+            'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'strict' => true,
+            'engine' => null,
+            'options' => extension_loaded('pdo_mysql') ? array_filter([
+                (PHP_VERSION_ID >= 80500 ? Mysql::ATTR_SSL_CA : PDO::MYSQL_ATTR_SSL_CA) => env('MYSQL_ATTR_SSL_CA'),
+            ]) : [],
+        ],
+
+        // Dedicated connection to Auth Service database (codebridge_auth)
+        // Used for Sanctum token validation, user resolving, and RBAC cross-reference
+        'auth_db' => [
+            'driver' => 'mysql',
+            'url' => env('AUTH_DB_URL'),
+            'host' => env('AUTH_DB_HOST', env('DB_HOST', 'mysql-db')),
+            'port' => env('AUTH_DB_PORT', env('DB_PORT', '3306')),
+            'database' => env('AUTH_DB_DATABASE', 'codebridge_auth'),
+            'username' => env('AUTH_DB_USERNAME', env('DB_USERNAME', 'root')),
+            'password' => env('AUTH_DB_PASSWORD', env('DB_PASSWORD', 'root_password')),
+            'unix_socket' => env('AUTH_DB_SOCKET', ''),
             'charset' => env('DB_CHARSET', 'utf8mb4'),
             'collation' => env('DB_COLLATION', 'utf8mb4_unicode_ci'),
             'prefix' => '',

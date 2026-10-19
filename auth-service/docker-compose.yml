@@ -1,0 +1,189 @@
+services:
+
+  # 1. Auth & Identity PHP 8.4-FPM Service
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: codebridge-auth-service
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    expose:
+      - "9000"
+
+    volumes:
+      - .:/var/www/html
+      - auth-vendor:/var/www/html/vendor
+
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+
+      auth-redis:
+        condition: service_healthy
+
+    networks:
+      auth-network:
+        aliases:
+          - auth-service
+      codebridge-network:
+        aliases:
+          - auth-service
+
+  # 2. Auth Background Queue / Horizon Worker
+  auth-horizon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: codebridge-auth-horizon
+
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    volumes:
+      - .:/var/www/html
+      - auth-vendor:/var/www/html/vendor
+
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+
+      auth-redis:
+        condition: service_healthy
+
+    networks:
+      - auth-network
+      - codebridge-network
+
+  # 3. Dedicated Auth MySQL Database (codebridge_auth)
+  auth-mysql:
+    image: mysql:8.4
+
+    container_name: codebridge-auth-mysql
+
+    restart: unless-stopped
+
+    environment:
+      MYSQL_DATABASE: codebridge_auth
+      MYSQL_USER: codebridge_auth
+      MYSQL_PASSWORD: ${DB_PASSWORD:-root_password}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root_password}
+
+    ports:
+      - "3307:3306"
+
+    volumes:
+      - auth-mysql-data:/var/lib/mysql
+
+    healthcheck:
+      test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD:-root_password}\" --silent" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    networks:
+      auth-network:
+        aliases:
+          - mysql
+          - auth-mysql
+      codebridge-network:
+        aliases:
+          - auth-mysql
+
+  # 4. Dedicated Auth Redis Instance (Cache & Queue)
+  auth-redis:
+    image: redis:8-alpine
+
+    container_name: codebridge-auth-redis
+
+    restart: unless-stopped
+
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-null}
+
+    command: >
+      sh -c '
+        if [ -n "$$REDIS_PASSWORD" ] && [ "$$REDIS_PASSWORD" != "null" ]; then
+          exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+        else
+          exec redis-server --appendonly yes
+        fi
+      '
+
+    ports:
+      - "6379:6379"
+
+    volumes:
+      - auth-redis-data:/data
+
+    healthcheck:
+      test: [ "CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ] && [ \"$$REDIS_PASSWORD\" != \"null\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG; else redis-cli ping | grep PONG; fi" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+    networks:
+      auth-network:
+        aliases:
+          - redis
+          - auth-redis
+      codebridge-network:
+        aliases:
+          - auth-redis
+
+  # 5. Auth Database Admin GUI (phpMyAdmin on :8081)
+  auth-phpmyadmin:
+    image: phpmyadmin:5
+
+    container_name: codebridge-auth-phpmyadmin
+
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:8081:80"
+
+    environment:
+      PMA_HOST: auth-mysql
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+
+    networks:
+      - auth-network
+      - auth-admin-network
+
+networks:
+
+  auth-network:
+    driver: bridge
+    internal: false
+
+  auth-admin-network:
+    driver: bridge
+
+  codebridge-network:
+    name: codebridge-network
+    external: true
+
+volumes:
+
+  auth-mysql-data:
+
+  auth-redis-data:
+
+  auth-vendor:

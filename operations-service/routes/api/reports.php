@@ -1,0 +1,21 @@
+<?php
+
+use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\ReportController;
+use Illuminate\Support\Facades\Route;
+
+/*
+|--------------------------------------------------------------------------
+| Executive Dashboard & Business Intelligence Reports (Protected)
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth:sanctum', 'role:admin,super_admin,outlet_manager,accountant,cashier,supervisor,inventory_clerk,customer,user,employee,organization_owner,owner'])->group(function () {
+    Route::get('/admin/dashboard/summary', [DashboardController::class, 'summary']);
+    Route::get('/admin/dashboard/widgets', [DashboardController::class, 'widgets']);
+    Route::get('/admin/dashboard/charts', [DashboardController::class, 'charts']);
+
+    Route::get('/reports/sales', [ReportController::class, 'sales']);
+    Route::get('/reports/shifts', [ReportController::class, 'shifts']);
+    Route::get('/reports/tax', [ReportController::class, 'tax']);
+    Route::get('/reports/export', [ReportController::class, 'export']);
+});

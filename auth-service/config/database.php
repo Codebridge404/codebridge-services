@@ -35,7 +35,7 @@ return [
             'url' => env('DB_URL'),
             'host' => env('DB_HOST', 'mysql-db'),
             'port' => env('DB_PORT', '3306'),
-            'database' => env('DB_DATABASE', 'codebridge'),
+            'database' => env('DB_DATABASE', 'codebridge_auth'),
             'username' => env('DB_USERNAME', 'root'),
             'password' => env('DB_PASSWORD', 'root_password'),
             'unix_socket' => env('DB_SOCKET', ''),

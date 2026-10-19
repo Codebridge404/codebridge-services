@@ -2,9 +2,9 @@ name: Laravel Microservices CI
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "main", "feature/**" ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "master", "main" ]
 
 jobs:
   build-and-test:
@@ -15,11 +15,7 @@ jobs:
       matrix:
         service:
           - auth-service
-          - catalog-service
-          - inventory-service
-          - sales-service
-          - payment-service
-          - shift-service
+          - operations-service
 
     steps:
       - name: Checkout Code
@@ -43,5 +39,5 @@ jobs:
             mkdir -p database storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
             touch database/database.sqlite
             chmod -R 777 storage bootstrap/cache database
-            php artisan test --env=testing || echo "[Notice] Tests executed successfully."
+            php artisan test --env=testing
           fi
