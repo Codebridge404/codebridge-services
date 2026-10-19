@@ -15,7 +15,45 @@ enterprise multi-tier microservices architecture consisting of:
   • Scramble Interactive OpenAPI Documentation Hub (/docs, /docs/auth, /docs/operations)
   • Independent background queue workers (Laravel Horizon) for each microservice.
 
-2. API GATEWAY & ENTERPRISE SECURITY ENHANCEMENTS
+2. DATABASE ARCHITECTURE EVOLUTION: 1 SHARED DB -> 2 DEDICATED ISOLATED DBS
+--------------------------------------------------------------------------------
+A major milestone completed today was transitioning from a monolithic 1-shared-DB
+setup to a strictly isolated Database-per-Service architecture:
+
+  • Before (1 Shared Monolithic Database):
+    - Both authentication logic and retail/POS operations shared a single database
+      instance (`codebridge_db`).
+    - Tight coupling: direct cross-table SQL queries, shared connection pools, and
+      cascading failure risks (if POS queries bogged down the DB, login went down).
+
+  • After (2 Dedicated Isolated Microservice Databases):
+    - Database 1: `codebridge_auth` (Port 3307)
+      * Dedicated Service: Auth & Identity Service
+      * Domain Schema: users, personal_access_tokens, tenants, roles, permissions,
+        role_permissions, user_roles, api_keys, outlets, departments, employees,
+        customers, suppliers, meetings, meeting_rooms.
+      * Isolated Admin GUI: phpMyAdmin on Port 8081.
+      * Dedicated Cache: Redis on Port 6379.
+
+    - Database 2: `codebridge_operations` (Port 3308)
+      * Dedicated Service: Operations & POS Service
+      * Domain Schema: products, categories, brands, product_variants,
+        inventory_balances, inventory_movements, sales, sale_lines, shifts,
+        cash_drawer_movements, payments, payment_attempts, expenses, incomes,
+        bank_accounts, purchases, purchase_orders, tables, kitchen_orders.
+      * Isolated Admin GUI: phpMyAdmin on Port 8082.
+      * Dedicated Cache: Redis on Port 6380.
+
+  • Decoupling Benefits Achieved:
+    - Zero Cross-Database Foreign Keys: Operations never directly writes or locks
+      Auth tables, eliminating cascading deadlocks.
+    - Inter-Service Auth Verification: Operations validates user tokens and roles
+      via FastCGI internal networking / HTTP client (`AuthServiceClient.php`)
+      without direct SQL coupling.
+    - Independent Scaling & Maintenance: Database migrations, backups, and failovers
+      for Auth and Operations are completely autonomous.
+
+3. API GATEWAY & ENTERPRISE SECURITY ENHANCEMENTS
 --------------------------------------------------------------------------------
   • Gateway WAF (Web Application Firewall):
     - Configured threat inspection blocking malicious scanners, directory traversal,
@@ -32,7 +70,7 @@ enterprise multi-tier microservices architecture consisting of:
     - Resolved local gateway routing and CORS preflight issues so documentation
       requests run seamlessly from browser without network errors.
 
-3. MODULAR API ROUTING SYSTEM
+4. MODULAR API ROUTING SYSTEM
 --------------------------------------------------------------------------------
 Modularized routes in both microservices into dedicated domain files:
   • Auth Service (routes/api/):
@@ -51,7 +89,7 @@ Modularized routes in both microservices into dedicated domain files:
     - finance.php (expenses, incomes, bank accounts)
     - reports.php (sales & analytics dashboards)
 
-4. DOMAIN ELOQUENT MODELS (App\Models)
+5. DOMAIN ELOQUENT MODELS (App\Models)
 --------------------------------------------------------------------------------
 Created full Eloquent ORM models with $fillable, $casts, and relational methods:
   • Auth Service (auth-service/app/Models):
@@ -62,7 +100,7 @@ Created full Eloquent ORM models with $fillable, $casts, and relational methods:
       Shift, CashDrawerMovement, Payment, Expense, Income,
       BankAccount, Purchase, PurchaseOrder, User, PersonalAccessToken
 
-5. AUTOMATED TEST SUITES & SECURITY VERIFICATION
+6. AUTOMATED TEST SUITES & SECURITY VERIFICATION
 --------------------------------------------------------------------------------
 Implemented comprehensive automated PHPUnit / Pest feature & security tests:
   • Auth Service: 27 test cases, 76 assertions (100% passing)
@@ -77,7 +115,7 @@ Implemented comprehensive automated PHPUnit / Pest feature & security tests:
     - InputValidationSecurityTest: SQL injection filtering in search,
       XSS script handling, pagination DoS / integer overflow safeguards.
 
-6. DOCKER ENVIRONMENT VERIFICATION
+7. DOCKER ENVIRONMENT VERIFICATION
 --------------------------------------------------------------------------------
 11 Docker containers currently running, healthy, and isolated:
   • Gateway: codebridge-api-gateway (Port 8080)
@@ -87,5 +125,5 @@ Implemented comprehensive automated PHPUnit / Pest feature & security tests:
     codebridge-operations-redis (6380), codebridge-operations-phpmyadmin (8082), Horizon
 
 ================================================================================
-Generated on: 2026-10-19 16:59:00 +07:00
+Generated on: 2026-10-19 17:02:00 +07:00
 ================================================================================
