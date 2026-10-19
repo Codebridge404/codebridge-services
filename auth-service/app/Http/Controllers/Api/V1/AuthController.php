@@ -50,16 +50,25 @@ class AuthController extends Controller
                         'lockout_until' => now()->addMinutes(15),
                         'failed_login_attempts' => 0,
                     ]);
-                    // Log audit event
-                    DB::table('audit_logs')->insert([
-                        'user_id' => $user->id,
-                        'action' => 'auth.brute_force_lockout',
-                        'module' => 'Authentication',
-                        'description' => "Account {$user->email} locked out for 15 minutes after 5 consecutive failed login attempts.",
-                        'ip_address' => $request->ip(),
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]);
+                    // Log audit event safely
+                    if (\Illuminate\Support\Facades\Schema::hasTable('audit_logs')) {
+                        $auditPayload = [
+                            'user_id' => $user->id,
+                            'action' => 'auth.brute_force_lockout',
+                            'ip_address' => $request->ip(),
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ];
+                        if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'module')) {
+                            $auditPayload['module'] = 'Authentication';
+                            $auditPayload['description'] = "Account {$user->email} locked out for 15 minutes after 5 consecutive failed login attempts.";
+                        } elseif (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'new_values')) {
+                            $auditPayload['new_values'] = json_encode([
+                                'description' => "Account {$user->email} locked out for 15 minutes after 5 consecutive failed login attempts.",
+                            ]);
+                        }
+                        DB::table('audit_logs')->insert($auditPayload);
+                    }
                 }
             }
 

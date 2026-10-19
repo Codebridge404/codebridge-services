@@ -1,91 +1,11 @@
-services:
-  # 1. API Gateway (Nginx Reverse Proxy)
-  api-gateway:
-    image: nginx:alpine
-    container_name: codebridge-api-gateway
-    ports:
-      - "8080:80"
-    volumes:
-      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./gateway/docs.html:/usr/share/nginx/html/docs.html:ro
-    depends_on:
-      - auth-service
-      - operations-service
-    networks:
-      - codebridge-network
+name: codebridge
 
-  # 2. Auth & Identity Service (Port 8001 - Identity, Tenants, Users, RBAC, CRM, Employees, Outlets, MMS)
-  auth-service:
-    build:
-      context: .
-      dockerfile: ./docker/Dockerfile.php
-    container_name: codebridge-auth-service
-    command: php artisan serve --host=0.0.0.0 --port=8000 --no-reload
-    ports:
-      - "8001:8000"
-    volumes:
-      - ./auth-service:/var/www/html
-    environment:
-      - APP_NAME="CodeBridge Auth & Identity Service"
-      - APP_ENV=local
-      - APP_DEBUG=true
-      - PHP_CLI_SERVER_WORKERS=4
-      - DB_CONNECTION=mysql
-      - DB_HOST=mysql-db
-      - DB_PORT=3306
-      - DB_DATABASE=codebridge
-      - DB_USERNAME=root
-      - DB_PASSWORD=root_password
-    depends_on:
-      - mysql-db
-    networks:
-      - codebridge-network
-
-  # 3. Operations Service (Port 8003 - Catalog, Inventory, Warehouse Logistics, POS, Shifts, KHQR, Finance)
-  operations-service:
-    build:
-      context: .
-      dockerfile: ./docker/Dockerfile.php
-    container_name: codebridge-operations-service
-    command: php artisan serve --host=0.0.0.0 --port=8000 --no-reload
-    ports:
-      - "8003:8000"
-    volumes:
-      - ./operations-service:/var/www/html
-    environment:
-      - APP_NAME="CodeBridge Operations Service"
-      - APP_ENV=local
-      - APP_DEBUG=true
-      - PHP_CLI_SERVER_WORKERS=4
-      - DB_CONNECTION=mysql
-      - DB_HOST=mysql-db
-      - DB_PORT=3306
-      - DB_DATABASE=codebridge
-      - DB_USERNAME=root
-      - DB_PASSWORD=root_password
-    depends_on:
-      - mysql-db
-    networks:
-      - codebridge-network
-
-  # 4. Central MySQL 8 Database Server
-  mysql-db:
-    image: mysql:8.0
-    container_name: codebridge-mysql-db
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: root_password
-    ports:
-      - "3307:3306"
-    volumes:
-      - codebridge-mysql-data:/var/lib/mysql
-      - ./docker/mysql-init:/docker-entrypoint-initdb.d
-    networks:
-      - codebridge-network
+include:
+  - ./gateway/docker-compose.yml
+  - ./auth-service/docker-compose.yml
+  - ./operations-service/docker-compose.yml
 
 networks:
   codebridge-network:
-    driver: bridge
-
-volumes:
-  codebridge-mysql-data:
+    external: true
+    name: codebridge-network

@@ -7,12 +7,17 @@ The **Operations Microservice** is the unified commerce, supply chain, and store
 ## 1. Overview Specifications
 
 - **Port**: `8003`
-- **Database**: `codebridge` (Unified Single Database, MySQL 8.0)
+- **Database**: `codebridge_operations` (Dedicated Microservice DB, MySQL 8.0)
 - **Primary Key Standard**: Auto-increment BigInt (`id`, `unsignedBigInteger`) & UUID idempotency
+- **Modular Monolith**: Products, Inventory, Sales & POS, and Finance all live inside this service sharing `codebridge_operations` database
 - **API Gateway Routes**: 
   - Catalog & Stock: `/api/v1/products`, `/api/v1/categories`, `/api/v1/brands`, `/api/v1/inventory`, `/api/v1/purchases`, `/api/v1/purchase-orders`
   - Sales & POS: `/api/v1/sales`, `/api/v1/carts`, `/api/v1/online-orders`, `/api/v1/shifts`, `/api/v1/kds`, `/api/v1/tables`
   - Payments & Finance: `/api/v1/payments`, `/api/v1/reconciliation`, `/api/v1/expenses`, `/api/v1/income`, `/api/v1/bank-accounts`
+- **Inter-service Communication**:
+  - Auth DB connection (`auth_db` -> `codebridge_auth`) for Sanctum token authentication
+  - Inter-service REST API client (`AuthServiceClient` -> `http://auth-service:8000/api/v1`)
+  - Event dispatching for cross-domain notifications
 
 ---
 

@@ -811,10 +811,10 @@ class MeetingController extends Controller
     public static function releaseUnattendedMeetings(?string $tenantId = null): int
     {
         $graceMinutes = (int) (DB::table('meeting_system_settings')
-            ->where('key', 'booking.no_show_auto_release_minutes')
+            ->where('setting_key', 'booking.no_show_auto_release_minutes')
             ->where(function ($q) use ($tenantId) {
                 if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-            })->value('value') ?? 15);
+            })->value('setting_value') ?? 15);
 
         if ($graceMinutes <= 0) {
             return 0;
@@ -905,10 +905,10 @@ class MeetingController extends Controller
     public static function dispatchAdvanceReminders(?string $tenantId = null): int
     {
         $leadMinutes = (int) (DB::table('meeting_system_settings')
-            ->where('key', 'notification.default_lead_minutes')
+            ->where('setting_key', 'notification.default_lead_minutes')
             ->where(function ($q) use ($tenantId) {
                 if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-            })->value('value') ?? 15);
+            })->value('setting_value') ?? 15);
 
         if ($leadMinutes <= 0) {
             $leadMinutes = 15;

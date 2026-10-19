@@ -7,7 +7,7 @@ The **Auth Microservice** is responsible for user identity management, Laravel S
 ## 1. Overview Specifications
 
 - **Port**: `8001`
-- **Database**: `auth_db` (MySQL 8.0)
+- **Database**: `codebridge_auth` (Dedicated Microservice DB, MySQL 8.0)
 - **Primary Key Standard**: Auto-increment BigInt (`id`, `unsignedBigInteger`)
 - **API Gateway Prefix**: `/api/v1/auth`, `/api/v1/me`, `/api/v1/users`, `/api/v1/roles`
 
@@ -22,7 +22,7 @@ The **Auth Microservice** is responsible for user identity management, Laravel S
 
 ---
 
-## 3. Database Schema (`auth_db`)
+## 3. Database Schema (`codebridge_auth`)
 
 - **`users`**: Stores user credentials, email, password hash, role, supervisor PIN hash, and status.
 - **`roles`**: Defines system roles and permission capability lists.

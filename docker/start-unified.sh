@@ -13,14 +13,22 @@ echo "🌐 Configuring Nginx to bind on port ${PORT_TO_LISTEN}..."
 sed -i "s/listen 80;/listen ${PORT_TO_LISTEN};/g" /etc/nginx/nginx.conf
 
 SERVICES=("auth-service" "operations-service")
-TARGET_DB="${DB_DATABASE:-codebridge}"
+AUTH_DB="${AUTH_DB_DATABASE:-codebridge_auth}"
+OPERATIONS_DB="${OPERATIONS_DB_DATABASE:-codebridge_operations}"
 TARGET_PORT="${DB_PORT:-4000}"
 SSL_CA_PATH="${MYSQL_ATTR_SSL_CA:-/etc/ssl/certs/ca-certificates.crt}"
 
-# 1. Fast Setup of Environment, Keys & Permissions for the 2 consolidated microservices
+# 1. Fast Setup of Environment, Keys & Permissions for the 2 microservices
 for svc in "${SERVICES[@]}"; do
     if [ -d "/var/www/$svc" ]; then
         cd "/var/www/$svc"
+        
+        # Determine dedicated database for this service
+        if [ "$svc" = "auth-service" ]; then
+            SVC_DB="$AUTH_DB"
+        else
+            SVC_DB="$OPERATIONS_DB"
+        fi
         
         # 1. Setup storage and cache directories
         mkdir -p storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
@@ -37,9 +45,12 @@ APP_KEY=
 DB_CONNECTION=mysql
 DB_HOST=${DB_HOST:-127.0.0.1}
 DB_PORT=${TARGET_PORT}
-DB_DATABASE=${TARGET_DB}
+DB_DATABASE=${SVC_DB}
 DB_USERNAME=${DB_USERNAME:-root}
 DB_PASSWORD=${DB_PASSWORD:-}
+AUTH_DB_DATABASE=${AUTH_DB}
+AUTH_SERVICE_URL=${AUTH_SERVICE_URL:-http://127.0.0.1:8000/api/v1}
+OPERATIONS_SERVICE_URL=${OPERATIONS_SERVICE_URL:-http://127.0.0.1:8000/api/v1}
 MYSQL_ATTR_SSL_CA=${SSL_CA_PATH}
 
 SESSION_DRIVER=file
@@ -63,7 +74,7 @@ done
 (
     sleep 2
     if [ -n "$DB_HOST" ] && [ -n "$DB_USERNAME" ] && [ -n "$DB_PASSWORD" ]; then
-        echo "📦 [Async DB] Ensuring cloud database (${TARGET_DB}) exists on TiDB Cloud..."
+        echo "📦 [Async DB] Ensuring microservice databases (${AUTH_DB}, ${OPERATIONS_DB}) exist..."
 
         SSL_CLI_FLAG=""
         if [ -f "$SSL_CA_PATH" ]; then
@@ -71,18 +82,19 @@ done
         fi
 
         mysql --connect-timeout=10 -h "$DB_HOST" -P "$TARGET_PORT" -u "$DB_USERNAME" -p"$DB_PASSWORD" $SSL_CLI_FLAG -e "
-            CREATE DATABASE IF NOT EXISTS \`${TARGET_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+            CREATE DATABASE IF NOT EXISTS \`${AUTH_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+            CREATE DATABASE IF NOT EXISTS \`${OPERATIONS_DB}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
         " 2>/dev/null || true
 
         for svc in "${SERVICES[@]}"; do
             if [ -d "/var/www/$svc" ]; then
                 cd "/var/www/$svc"
-                echo "🚀 [Async DB] Running migrations for $svc (${TARGET_DB})..."
+                echo "🚀 [Async DB] Running migrations for $svc..."
                 php artisan migrate --force 2>/dev/null || true
                 php artisan db:seed --force 2>/dev/null || true
             fi
         done
-        echo "✅ [Async DB] All database migrations completed on TiDB Cloud."
+        echo "✅ [Async DB] All database migrations completed."
     fi
 ) &
 

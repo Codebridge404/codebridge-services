@@ -40,7 +40,7 @@ services:
       - key: DB_PORT
         value: "4000" # TiDB Cloud default port
       - key: DB_DATABASE
-        value: codebridge
+        value: codebridge_auth
       - key: DB_USERNAME
         sync: false # Set to your TiDB Cloud User (e.g. <prefix>.root)
       - key: DB_PASSWORD
@@ -73,11 +73,15 @@ services:
       - key: DB_PORT
         value: "4000"
       - key: DB_DATABASE
-        value: codebridge
+        value: codebridge_operations
       - key: DB_USERNAME
         sync: false
       - key: DB_PASSWORD
         sync: false
+      - key: AUTH_DB_DATABASE
+        value: codebridge_auth
+      - key: AUTH_SERVICE_URL
+        value: "http://auth-service:8000/api/v1"
       - key: MYSQL_ATTR_SSL_CA
         value: /etc/ssl/certs/ca-certificates.crt
 

@@ -1,0 +1,20 @@
+services:
+  api-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-api-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services:/etc/nginx/services:ro
+      - ./docs.html:/usr/share/nginx/html/docs.html:ro
+    networks:
+      - codebridge-network
+
+networks:
+  codebridge-network:
+    name: codebridge-network
+    external: true

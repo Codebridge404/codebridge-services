@@ -1,0 +1,189 @@
+services:
+
+  # 1. Operations PHP 8.4-FPM Service (Modular Monolith: Catalog, Inventory, Sales, Finance)
+  operations-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: codebridge-operations-service
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    expose:
+      - "9000"
+
+    volumes:
+      - .:/var/www/html
+      - operations-vendor:/var/www/html/vendor
+
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+
+      operations-redis:
+        condition: service_healthy
+
+    networks:
+      operations-network:
+        aliases:
+          - operations-service
+      codebridge-network:
+        aliases:
+          - operations-service
+
+  # 2. Operations Background Queue / Horizon Worker
+  operations-horizon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: codebridge-operations-horizon
+
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    volumes:
+      - .:/var/www/html
+      - operations-vendor:/var/www/html/vendor
+
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+
+      operations-redis:
+        condition: service_healthy
+
+    networks:
+      - operations-network
+      - codebridge-network
+
+  # 3. Dedicated Operations MySQL Database (codebridge_operations)
+  operations-mysql:
+    image: mysql:8.4
+
+    container_name: codebridge-operations-mysql
+
+    restart: unless-stopped
+
+    environment:
+      MYSQL_DATABASE: codebridge_operations
+      MYSQL_USER: codebridge_operations
+      MYSQL_PASSWORD: ${DB_PASSWORD:-root_password}
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root_password}
+
+    ports:
+      - "3308:3306"
+
+    volumes:
+      - operations-mysql-data:/var/lib/mysql
+
+    healthcheck:
+      test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD:-root_password}\" --silent" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    networks:
+      operations-network:
+        aliases:
+          - mysql
+          - operations-mysql
+      codebridge-network:
+        aliases:
+          - operations-mysql
+
+  # 4. Dedicated Operations Redis Instance (Cache & Queue)
+  operations-redis:
+    image: redis:8-alpine
+
+    container_name: codebridge-operations-redis
+
+    restart: unless-stopped
+
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-null}
+
+    command: >
+      sh -c '
+        if [ -n "$$REDIS_PASSWORD" ] && [ "$$REDIS_PASSWORD" != "null" ]; then
+          exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+        else
+          exec redis-server --appendonly yes
+        fi
+      '
+
+    ports:
+      - "6380:6379"
+
+    volumes:
+      - operations-redis-data:/data
+
+    healthcheck:
+      test: [ "CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ] && [ \"$$REDIS_PASSWORD\" != \"null\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping | grep PONG; else redis-cli ping | grep PONG; fi" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+    networks:
+      operations-network:
+        aliases:
+          - redis
+          - operations-redis
+      codebridge-network:
+        aliases:
+          - operations-redis
+
+  # 5. Operations Database Admin GUI (phpMyAdmin on :8082)
+  operations-phpmyadmin:
+    image: phpmyadmin:5
+
+    container_name: codebridge-operations-phpmyadmin
+
+    restart: unless-stopped
+
+    ports:
+      - "127.0.0.1:8082:80"
+
+    environment:
+      PMA_HOST: operations-mysql
+      PMA_PORT: 3306
+      UPLOAD_LIMIT: 64M
+
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+
+    networks:
+      - operations-network
+      - operations-admin-network
+
+networks:
+
+  operations-network:
+    driver: bridge
+    internal: false
+
+  operations-admin-network:
+    driver: bridge
+
+  codebridge-network:
+    name: codebridge-network
+    external: true
+
+volumes:
+
+  operations-mysql-data:
+
+  operations-redis-data:
+
+  operations-vendor:
