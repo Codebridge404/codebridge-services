@@ -39,5 +39,5 @@ jobs:
             mkdir -p database storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
             touch database/database.sqlite
             chmod -R 777 storage bootstrap/cache database
-            php artisan test
+            php artisan test --env=testing
           fi

@@ -330,6 +330,10 @@ class InventoryController extends Controller
             $query->where('p.expiry_date', '<=', $soonThreshold);
         }
 
+        $daysLeftSql = DB::getDriverName() === 'sqlite'
+            ? "CAST(julianday(p.expiry_date) - julianday('now') AS INTEGER) as days_left"
+            : "DATEDIFF(p.expiry_date, CURDATE()) as days_left";
+
         $items = $query->select(
                 'p.id as product_id',
                 'p.name as product_name',
@@ -341,7 +345,7 @@ class InventoryController extends Controller
                 'p.expiry_date',
                 'c.name as category_name',
                 DB::raw('COALESCE(ib.on_hand, 0) as on_hand'),
-                DB::raw("DATEDIFF(p.expiry_date, CURDATE()) as days_left"),
+                DB::raw($daysLeftSql),
                 DB::raw("CASE WHEN p.expiry_date < '{$today}' THEN 'expired' ELSE 'expiring_soon' END as status")
             )
             ->orderBy('p.expiry_date', 'asc')

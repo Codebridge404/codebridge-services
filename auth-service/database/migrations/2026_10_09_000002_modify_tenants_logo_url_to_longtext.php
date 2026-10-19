@@ -10,14 +10,18 @@ return new class extends Migration
     public function up(): void
     {
         if (Schema::hasTable('tenants')) {
-            DB::statement('ALTER TABLE tenants MODIFY logo_url LONGTEXT NULL;');
+            if (DB::getDriverName() === 'mysql') {
+                DB::statement('ALTER TABLE tenants MODIFY logo_url LONGTEXT NULL;');
+            }
         }
     }
 
     public function down(): void
     {
         if (Schema::hasTable('tenants')) {
-            DB::statement('ALTER TABLE tenants MODIFY logo_url VARCHAR(255) NULL;');
+            if (DB::getDriverName() === 'mysql') {
+                DB::statement('ALTER TABLE tenants MODIFY logo_url VARCHAR(255) NULL;');
+            }
         }
     }
 };
