@@ -2,10 +2,13 @@
 
 namespace Tests\Feature\Security;
 
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class InputValidationSecurityTest extends TestCase
 {
+    use RefreshDatabase;
+
     /**
      * Test SQL injection payloads in public catalog search.
      */

@@ -23,7 +23,7 @@ class AuthController extends Controller
             'device_name' => 'nullable|string',
         ]);
 
-        $loginInput = trim($request->email);
+        $loginInput = str_replace("\0", '', trim($request->email));
 
         $query = User::where('email', $loginInput);
         if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'phone')) {

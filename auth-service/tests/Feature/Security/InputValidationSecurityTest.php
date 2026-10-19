@@ -4,10 +4,27 @@ namespace Tests\Feature\Security;
 
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class InputValidationSecurityTest extends TestCase
 {
+    use RefreshDatabase;
+
+    protected User $testUser;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $this->testUser = User::create([
+            'name' => 'Security Test User',
+            'email' => 'security@codebridge.dev',
+            'password' => Hash::make('password123'),
+            'role' => 'admin',
+        ]);
+    }
+
     /**
      * Test SQL injection payloads in authentication endpoints are safely rejected or sanitized.
      */
@@ -26,7 +43,7 @@ class InputValidationSecurityTest extends TestCase
                 'password' => 'password123',
             ]);
 
-            // Must reject as unprocessable/invalid email format (422) or failed authentication (401), never 500
+            // Must reject as unprocessable (422) or failed authentication (401), never crash with 500
             $this->assertContains($response->getStatusCode(), [401, 422], "Failed for payload: {$maliciousEmail}");
             $this->assertNotEquals(500, $response->getStatusCode());
         }
@@ -37,11 +54,6 @@ class InputValidationSecurityTest extends TestCase
      */
     public function test_xss_script_payloads_do_not_execute_or_crash_api(): void
     {
-        $user = User::first();
-        if (!$user) {
-            $this->markTestSkipped('No user found');
-        }
-
         $xssPayloads = [
             "<script>alert('XSS')</script>",
             "javascript:alert(1)",
@@ -50,7 +62,7 @@ class InputValidationSecurityTest extends TestCase
         ];
 
         foreach ($xssPayloads as $payload) {
-            $response = $this->actingAs($user)->getJson('/api/v1/users/lookup?search=' . urlencode($payload));
+            $response = $this->actingAs($this->testUser)->getJson('/api/v1/users/lookup?search=' . urlencode($payload));
 
             // Must respond cleanly with 200 or 422, never crash with unhandled 500 error
             $this->assertNotEquals(500, $response->getStatusCode(), "Crashed on XSS payload: {$payload}");
@@ -62,11 +74,6 @@ class InputValidationSecurityTest extends TestCase
      */
     public function test_pos_pin_rejects_alphabetic_and_oversized_values(): void
     {
-        $user = User::first();
-        if (!$user) {
-            $this->markTestSkipped('No user found');
-        }
-
         $invalidPins = [
             'abcd',
             '12',
@@ -76,7 +83,7 @@ class InputValidationSecurityTest extends TestCase
         ];
 
         foreach ($invalidPins as $pin) {
-            $response = $this->actingAs($user)->postJson('/api/v1/auth/verify-pin', [
+            $response = $this->actingAs($this->testUser)->postJson('/api/v1/auth/verify-pin', [
                 'pin_code' => $pin,
             ]);
 
