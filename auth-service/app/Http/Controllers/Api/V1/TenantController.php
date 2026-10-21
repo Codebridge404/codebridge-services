@@ -615,6 +615,7 @@ class TenantController extends Controller
                 'client_tier'    => $tenant->client_tier ?? 'free_personal',
                 'status'         => $tenant->status ?? 'active',
                 'enabled_modules'=> is_string($tenant->enabled_modules) ? json_decode($tenant->enabled_modules, true) : ($tenant->enabled_modules ?? []),
+                'payment_settings' => is_string($tenant->payment_settings ?? null) ? json_decode($tenant->payment_settings, true) : ($tenant->payment_settings ?? null),
             ],
         ]);
     }
@@ -671,6 +672,15 @@ class TenantController extends Controller
         }
         if ($request->has('currency')) {
             $updateData['currency'] = $request->currency;
+        }
+        if ($request->has('payment_settings')) {
+            $settingsVal = $request->input('payment_settings');
+            if (is_string($settingsVal)) {
+                $decoded = json_decode($settingsVal, true);
+                $updateData['payment_settings'] = $decoded !== null ? json_encode($decoded) : $settingsVal;
+            } else {
+                $updateData['payment_settings'] = json_encode($settingsVal);
+            }
         }
 
         // Handle uploaded file or direct logo URL / Base64 Data URL
@@ -732,6 +742,7 @@ class TenantController extends Controller
                 'currency'       => $updatedTenant->currency ?? 'USD',
                 'client_tier'    => $updatedTenant->client_tier ?? 'free_personal',
                 'status'         => $updatedTenant->status ?? 'active',
+                'payment_settings' => is_string($updatedTenant->payment_settings ?? null) ? json_decode($updatedTenant->payment_settings, true) : ($updatedTenant->payment_settings ?? null),
             ],
         ]);
     }

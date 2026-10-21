@@ -34,6 +34,8 @@ Route::middleware('role:organization,admin,super_admin,outlet_manager')->group(f
     Route::post('/outlets', [OutletController::class, 'store'])->middleware('quota:outlets');
     Route::put('/outlets/{id}', [OutletController::class, 'update']);
     Route::delete('/outlets/{id}', [OutletController::class, 'destroy']);
+    Route::get('/outlets/{id}/terminal-settings', [OutletController::class, 'getTerminalSettings']);
+    Route::patch('/outlets/{id}/terminal-settings', [OutletController::class, 'updateTerminalSettings']);
 
     // Departments CRUD
     Route::post('/departments', [DepartmentController::class, 'store']);

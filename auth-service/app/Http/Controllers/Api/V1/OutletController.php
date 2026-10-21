@@ -42,6 +42,9 @@ class OutletController extends Controller
                 'o.receipt_header',
                 'o.receipt_footer',
                 'o.is_active',
+                'o.is_kds_enabled',
+                'o.is_cfd_enabled',
+                'o.terminal_settings',
                 'o.created_at',
                 DB::raw('(SELECT COUNT(*) FROM users WHERE outlet_id = o.id) as staff_count'),
                 DB::raw('(SELECT COUNT(*) FROM registers WHERE outlet_id = o.id) as registers_count')
@@ -65,6 +68,9 @@ class OutletController extends Controller
             'address' => 'nullable|string|max:500',
             'receipt_header' => 'nullable|string|max:255',
             'receipt_footer' => 'nullable|string|max:255',
+            'is_kds_enabled' => 'nullable|boolean',
+            'is_cfd_enabled' => 'nullable|boolean',
+            'terminal_settings' => 'nullable|array',
         ]);
 
         $tenantId = $user ? $user->tenant_id : null;
@@ -77,6 +83,9 @@ class OutletController extends Controller
             'address' => $validated['address'] ?? null,
             'receipt_header' => $validated['receipt_header'] ?? 'Thank you for shopping!',
             'receipt_footer' => $validated['receipt_footer'] ?? 'Please come again!',
+            'is_kds_enabled' => $validated['is_kds_enabled'] ?? true,
+            'is_cfd_enabled' => $validated['is_cfd_enabled'] ?? true,
+            'terminal_settings' => isset($validated['terminal_settings']) ? json_encode($validated['terminal_settings']) : null,
             'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
@@ -97,20 +106,121 @@ class OutletController extends Controller
             'address' => 'nullable|string|max:500',
             'receipt_header' => 'nullable|string|max:255',
             'receipt_footer' => 'nullable|string|max:255',
+            'is_kds_enabled' => 'nullable|boolean',
+            'is_cfd_enabled' => 'nullable|boolean',
+            'terminal_settings' => 'nullable|array',
         ]);
 
-        DB::table('outlets')->where('id', $id)->update([
+        $updates = [
             'name' => $validated['name'],
             'phone' => $validated['phone'] ?? null,
             'address' => $validated['address'] ?? null,
             'receipt_header' => $validated['receipt_header'] ?? null,
             'receipt_footer' => $validated['receipt_footer'] ?? null,
             'updated_at' => now(),
-        ]);
+        ];
+
+        if (array_key_exists('is_kds_enabled', $validated)) {
+            $updates['is_kds_enabled'] = $validated['is_kds_enabled'];
+        }
+        if (array_key_exists('is_cfd_enabled', $validated)) {
+            $updates['is_cfd_enabled'] = $validated['is_cfd_enabled'];
+        }
+        if (array_key_exists('terminal_settings', $validated)) {
+            $updates['terminal_settings'] = json_encode($validated['terminal_settings']);
+        }
+
+        DB::table('outlets')->where('id', $id)->update($updates);
 
         return response()->json([
             'status' => 'success',
             'message' => 'Store outlet updated successfully.',
+        ]);
+    }
+
+    /**
+     * Get POS Terminal & Peripheral Settings for a specific outlet.
+     * GET /api/v1/outlets/{id}/terminal-settings
+     */
+    public function getTerminalSettings($id)
+    {
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
+        }
+
+        $terminalSettings = $outlet->terminal_settings;
+        if (is_string($terminalSettings)) {
+            $terminalSettings = json_decode($terminalSettings, true);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'outlet_id' => $outlet->id,
+                'outlet_name' => $outlet->name,
+                'is_kds_enabled' => (bool) $outlet->is_kds_enabled,
+                'is_cfd_enabled' => (bool) $outlet->is_cfd_enabled,
+                'terminal_settings' => $terminalSettings ?? [],
+            ],
+        ]);
+    }
+
+    /**
+     * Update POS Terminal Feature Flags & Peripherals for an outlet.
+     * PATCH /api/v1/outlets/{id}/terminal-settings
+     */
+    public function updateTerminalSettings(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'is_kds_enabled' => 'nullable|boolean',
+            'is_cfd_enabled' => 'nullable|boolean',
+            'terminal_settings' => 'nullable|array',
+        ]);
+
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
+        }
+
+        $updates = [
+            'updated_at' => now(),
+        ];
+
+        if (array_key_exists('is_kds_enabled', $validated)) {
+            $updates['is_kds_enabled'] = $validated['is_kds_enabled'];
+        }
+        if (array_key_exists('is_cfd_enabled', $validated)) {
+            $updates['is_cfd_enabled'] = $validated['is_cfd_enabled'];
+        }
+        if (array_key_exists('terminal_settings', $validated)) {
+            $currentSettings = $outlet->terminal_settings;
+            if (is_string($currentSettings)) {
+                $currentSettings = json_decode($currentSettings, true) ?? [];
+            } else {
+                $currentSettings = is_array($currentSettings) ? $currentSettings : [];
+            }
+            $mergedSettings = array_merge($currentSettings, $validated['terminal_settings']);
+            $updates['terminal_settings'] = json_encode($mergedSettings);
+        }
+
+        DB::table('outlets')->where('id', $id)->update($updates);
+
+        $freshOutlet = DB::table('outlets')->where('id', $id)->first();
+        $storedSettings = $freshOutlet->terminal_settings;
+        if (is_string($storedSettings)) {
+            $storedSettings = json_decode($storedSettings, true);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Outlet terminal settings updated successfully.',
+            'data' => [
+                'outlet_id' => $freshOutlet->id,
+                'is_kds_enabled' => (bool) $freshOutlet->is_kds_enabled,
+                'is_cfd_enabled' => (bool) $freshOutlet->is_cfd_enabled,
+                'terminal_settings' => $storedSettings ?? [],
+            ],
         ]);
     }
 
