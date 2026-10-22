@@ -556,7 +556,7 @@ class TenantController extends Controller
     public function updateModules(Request $request)
     {
         $request->validate([
-            'modules'   => 'required|array',
+            'modules'   => 'present|array',
             'tenant_id' => 'nullable|string',
             'org_name'  => 'nullable|string',
         ]);
