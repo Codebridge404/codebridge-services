@@ -7,6 +7,30 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0091] Active POS Cart State, Line Item Hold & Retrieval Engine Controller
+ *
+ * @ticket BD-0091
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/CartController.php
+ * @related-model DB table pos_carts, App\Models\Product
+ * @entry-point CartController::getCart(), addItem(), updateItem(), removeItem(), parkCart(), restoreCart()
+ * @routes
+ *  - GET  /api/v1/cart
+ *  - POST /api/v1/cart/items
+ *  - PUT  /api/v1/cart/items/{id}
+ *  - DELETE /api/v1/cart/items/{id}
+ *  - POST /api/v1/cart/park
+ *  - POST /api/v1/cart/restore
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Register Session Scoping): Scopes cart state to specific cashier terminal, shift, and outlet.
+ * Step 2 (Item Addition & Quantity Math): Adds products to cart, validates stock levels, and applies line modifiers.
+ * Step 3 (Pricing & Tax Calculation): Recalculates subtotal, discounts, and applicable VAT/sales taxes in real-time.
+ * Step 4 (Cart Park / Hold): Saves suspended cart with table or customer tag for later recall by cashier.
+ * Step 5 (Cart Resumption & Clear): Restores held cart back to active POS terminal or flushes upon completed order.
+ */
 class CartController extends Controller
 {
     public function hold(Request $request)

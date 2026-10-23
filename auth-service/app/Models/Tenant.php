@@ -10,11 +10,13 @@ class Tenant extends Model
     use HasFactory;
 
     protected $fillable = [
+        'uuid',
         'name',
         'legal_name',
         'slug',
         'company_code',
         'logo_url',
+        'receipt_header',
         'receipt_footer',
         'email',
         'phone',
@@ -38,6 +40,46 @@ class Tenant extends Model
 
     public function users()
     {
-        return $this->hasMany(User::class);
+        return $this->hasMany(User::class, 'tenant_id');
+    }
+
+    public function outlets()
+    {
+        return $this->hasMany(Outlet::class, 'tenant_id');
+    }
+
+    public function roles()
+    {
+        return $this->hasMany(Role::class, 'company_id');
+    }
+
+    public function subscriptions()
+    {
+        return $this->hasMany(TenantSubscription::class, 'tenant_id');
+    }
+
+    public function activeSubscription()
+    {
+        return $this->hasOne(TenantSubscription::class, 'tenant_id')->where('status', 'active')->latestOfMany();
+    }
+
+    public function apiKeys()
+    {
+        return $this->hasMany(ApiKey::class, 'tenant_id');
+    }
+
+    public function invitations()
+    {
+        return $this->hasMany(UserInvitation::class, 'tenant_id');
+    }
+
+    public function employees()
+    {
+        return $this->hasMany(Employee::class, 'tenant_id');
+    }
+
+    public function departments()
+    {
+        return $this->hasMany(Department::class, 'tenant_id');
     }
 }

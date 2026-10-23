@@ -6,6 +6,26 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0073] Meeting Configuration, Policies & Default Templates Controller
+ *
+ * @ticket BD-0073
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingSettingController.php
+ * @related-model DB table meeting_settings, App\Models\Tenant
+ * @entry-point MeetingSettingController::getSettings(), updateSettings()
+ * @routes
+ *  - GET /api/v1/meeting-settings
+ *  - PUT /api/v1/meeting-settings
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Policy Retrieval): Loads tenant-wide meeting policies, duration limits, and buffer intervals.
+ * Step 2 (Template Management): Configures default agendas and meeting types (1-on-1, Standup, Board Meeting).
+ * Step 3 (Working Hours Enforcement): Sets allowed booking hours to prevent after-hours room scheduling.
+ * Step 4 (Integration Credentials): Manages external calendar sync and third-party webhook integrations.
+ * Step 5 (Quota Configuration): Restricts maximum concurrent active meetings per subscription plan.
+ */
 class MeetingSettingController extends Controller
 {
     /**

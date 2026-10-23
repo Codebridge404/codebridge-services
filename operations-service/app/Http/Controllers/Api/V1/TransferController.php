@@ -6,6 +6,21 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0016] Inter-Outlet Multi-Warehouse Stock Transfer & Dispatch Controller.
+ *
+ * @ticket BD-0016
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/TransferController.php
+ * @table stock_transfers, stock_transfer_lines
+ * @entry-point GET /api/v1/transfers, POST /api/v1/transfers, POST /api/v1/transfers/{id}/receive
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Creates transfer requests between source and destination outlets.
+ * 2. Deducts from origin warehouse and marks stock as in_transit.
+ * 3. Atomic stock receiving at destination warehouse via barcode scan verification.
+ */
 class TransferController extends Controller
 {
     protected function getTenantId(Request $request): ?string

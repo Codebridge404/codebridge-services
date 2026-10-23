@@ -5,6 +5,25 @@ namespace App\Services;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * [BD-0106] National Bank of Cambodia Bakong KHQR Settlement Gateway Service
+ *
+ * @ticket BD-0106
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Services/BakongService.php
+ * @related-model App\Models\Payment, Bakong Open API Gateway
+ * @entry-point BakongService::generateKhqr(), verifyPayment(), checkStatus()
+ * @routes
+ *  - Service Layer: App\Services\BakongService
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (KHQR Payload Generation): Generates EMVCo-compliant KHQR string containing merchant ID, currency (USD/KHR), and amount.
+ * Step 2 (Dynamic QR Code Encoding): Renders dynamic QR code image or deep link for customer banking app scanning.
+ * Step 3 (Real-Time Payment Polling): Polls Bakong Open API gateway or listens for real-time payment webhook notifications.
+ * Step 4 (Cryptographic Signature Validation): Verifies Bakong RSA/HMAC webhook signature to prevent fraudulent confirmations.
+ * Step 5 (Order Settlement Finalization): Marks order payment as settled, records Bakong external transaction ID, and releases cart.
+ */
 class BakongService
 {
     protected string $apiUrl;

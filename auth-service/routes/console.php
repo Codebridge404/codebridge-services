@@ -11,3 +11,6 @@ Artisan::command('inspire', function () {
 // CodeBridges Meeting Module Scheduled Background Turnovers & Reminders
 Schedule::command('meetings:auto-release')->everyMinute()->withoutOverlapping();
 Schedule::command('meetings:send-reminders')->everyMinute()->withoutOverlapping();
+
+// Customer Store Credit & Digital Voucher Daily Expiration Sweep
+Schedule::command('store-credit:expire')->dailyAt('00:05')->withoutOverlapping();

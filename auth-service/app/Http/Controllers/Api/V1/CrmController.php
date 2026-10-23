@@ -6,6 +6,21 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0007] Customer CRM, Sales Pipeline & Deals Management Controller.
+ *
+ * @ticket BD-0007
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/CrmController.php
+ * @table crm_deals, crm_leads, crm_activities
+ * @entry-point GET /api/v1/crm/deals, POST /api/v1/crm/deals, GET /api/v1/crm/pipeline
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Kanban pipeline stage transitions (lead, proposal, negotiation, won, lost).
+ * 2. Deal valuation, probability weighting, and expected close dates.
+ * 3. Activity logging (calls, emails, meetings, notes) linked to deals.
+ */
 class CrmController extends Controller
 {
     protected function getTenantId(Request $request): ?string

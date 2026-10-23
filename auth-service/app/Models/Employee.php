@@ -24,10 +24,18 @@ class Employee extends Model
     ];
 
     protected $casts = [
+        'tenant_id' => 'integer',
+        'department_id' => 'integer',
+        'user_id' => 'integer',
         'is_active' => 'boolean',
         'salary' => 'decimal:2',
         'hire_date' => 'date',
     ];
+
+    public function tenant()
+    {
+        return $this->belongsTo(Tenant::class, 'tenant_id');
+    }
 
     public function department()
     {

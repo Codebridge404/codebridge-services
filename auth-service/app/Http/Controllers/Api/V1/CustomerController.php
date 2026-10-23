@@ -6,6 +6,29 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0062] Customer Profile, Credit Balance & CRM Directory Controller
+ *
+ * @ticket BD-0062
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/CustomerController.php
+ * @related-model DB table customers, App\Models\Customer, App\Models\StoreCreditInvoice
+ * @entry-point CustomerController::index(), store(), show(), update(), destroy()
+ * @routes
+ *  - GET    /api/v1/customers
+ *  - POST   /api/v1/customers
+ *  - GET    /api/v1/customers/{id}
+ *  - PUT    /api/v1/customers/{id}
+ *  - DELETE /api/v1/customers/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Boundary Enforcement): Validates tenant isolation ensuring customer directories remain siloed.
+ * Step 2 (Customer Lookup & Search): Supports searching by customer phone number, email, name, or loyalty barcode.
+ * Step 3 (Profile Management): Creates and updates customer records with contact information, credit limits, and tax exemptions.
+ * Step 4 (Store Credit & Loyalty Aggregation): Aggregates active store credit balance and earned reward points for POS checkout.
+ * Step 5 (Transaction History Access): Retrieves linked order receipts, payment summaries, and credit ledger histories.
+ */
 class CustomerController extends Controller
 {
     protected function getTenantId(Request $request): ?string

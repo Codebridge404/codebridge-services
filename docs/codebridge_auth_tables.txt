@@ -1,0 +1,1010 @@
+================================================================================
+DATABASE SCHEMA SPECIFICATION: codebridge_auth
+Host: auth-mysql:3306 (Exposed Port: 3307)
+Total Tables: 66
+================================================================================
+
+TABLE: api_keys
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES                           
+user_id                        bigint unsigned        YES                           
+name                           varchar(255)           NO                            
+key_prefix                     varchar(16)            NO         MUL                
+secret_hash                    varchar(64)            NO                            
+permissions                    json                   YES                           
+last_used_at                   timestamp              YES                           
+expires_at                     timestamp              YES                           
+is_active                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: attendances
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+user_id                        bigint unsigned        YES        MUL                
+employee_id                    bigint unsigned        YES        MUL                
+outlet_id                      varchar(255)           YES        MUL                
+clock_in                       datetime               NO                            
+clock_out                      datetime               YES                           
+status                         varchar(255)           NO                present     
+notes                          varchar(255)           YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: audit_logs
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+user_id                        bigint unsigned        YES                           
+outlet_id                      bigint unsigned        YES                           
+action                         varchar(255)           NO                            
+auditable_type                 varchar(255)           YES                           
+auditable_id                   varchar(255)           YES                           
+old_values                     json                   YES                           
+new_values                     json                   YES                           
+ip_address                     varchar(255)           YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: brands
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+name                           varchar(255)           NO                            
+slug                           varchar(255)           NO         UNI                
+logo                           varchar(255)           YES                           
+description                    text                   YES                           
+is_active                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: cache
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+key                            varchar(255)           NO         PRI                
+value                          mediumtext             NO                            
+expiration                     int                    NO         MUL                
+
+TABLE: cache_locks
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+key                            varchar(255)           NO         PRI                
+owner                          varchar(255)           NO                            
+expiration                     int                    NO         MUL                
+
+TABLE: cash_drawer_movements
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+shift_id                       bigint unsigned        NO                            
+user_id                        bigint unsigned        NO                            
+type                           varchar(255)           NO                            
+amount                         decimal(12,2)          NO                            
+reason                         varchar(255)           NO                            
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: categories
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+name                           varchar(255)           NO                            
+slug                           varchar(255)           NO         UNI                
+parent_id                      bigint unsigned        YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: crm_activities
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+deal_id                        bigint unsigned        YES                           
+customer_id                    bigint unsigned        YES                           
+type                           varchar(50)            NO                call        
+title                          varchar(255)           NO                            
+contact                        varchar(255)           YES                           
+summary                        text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: customer_credit_ledgers
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+customer_id                    bigint unsigned        NO                            
+amount_change                  decimal(12,2)          NO                            
+debit_amount                   decimal(12,2)          NO                0.00        
+credit_amount                  decimal(12,2)          NO                0.00        
+balance_before                 decimal(12,2)          NO                0.00        
+balance_after                  decimal(12,2)          NO                0.00        
+expires_at                     datetime               YES        MUL                
+is_expired                     tinyint(1)             NO         MUL    0           
+entry_type                     varchar(255)           NO                            
+reference_id                   varchar(255)           YES                           
+invoice_id                     bigint unsigned        YES                           
+voucher_id                     bigint unsigned        YES                           
+notes                          text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: customers
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+name                           varchar(255)           NO                            
+code                           varchar(255)           NO         UNI                
+email                          varchar(255)           YES                           
+phone                          varchar(255)           YES                           
+address                        text                   YES                           
+loyalty_points                 int                    NO                0           
+store_credit                   decimal(12,2)          NO                0.00        
+total_spent                    decimal(12,2)          NO                0.00        
+is_active                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: deals
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+title                          varchar(255)           NO                            
+company                        varchar(255)           YES                           
+customer_id                    bigint unsigned        YES                           
+value                          decimal(12,2)          NO                0.00        
+stage                          varchar(50)            NO                lead        
+probability                    int                    NO                50          
+owner_name                     varchar(255)           YES               Sales Team  
+expected_close_date            date                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: departments
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+name                           varchar(255)           NO                            
+code                           varchar(255)           NO         UNI                
+description                    text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: digital_vouchers
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+voucher_code                   varchar(64)            NO         UNI                
+title                          varchar(255)           NO                            
+value                          decimal(12,2)          NO                            
+currency                       varchar(3)             NO                USD         
+issued_to_customer_id          bigint unsigned        YES        MUL                
+redeemed_by_customer_id        bigint unsigned        YES        MUL                
+redeemed_at                    datetime               YES                           
+status                         varchar(30)            NO         MUL    active      
+expires_at                     datetime               NO         MUL                
+created_by                     bigint unsigned        YES                           
+notes                          text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: employees
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+employee_code                  varchar(255)           NO         UNI                
+first_name                     varchar(255)           NO                            
+last_name                      varchar(255)           NO                            
+email                          varchar(255)           YES                           
+phone                          varchar(255)           YES                           
+department_id                  bigint unsigned        YES                           
+outlet_id                      bigint unsigned        YES                           
+designation                    varchar(255)           NO                Staff       
+employment_type                varchar(255)           NO                Full-time   
+hire_date                      date                   YES                           
+salary                         decimal(12,2)          NO                0.00        
+is_active                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: failed_jobs
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+uuid                           varchar(255)           NO         UNI                
+connection                     text                   NO                            
+queue                          text                   NO                            
+payload                        longtext               NO                            
+exception                      longtext               NO                            
+failed_at                      timestamp              NO                CURRENT_TIMESTAMP
+
+TABLE: gift_cards
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+card_code                      varchar(255)           NO         UNI                
+customer                       varchar(255)           NO                Walk-in Customer
+balance                        decimal(12,2)          NO                0.00        
+status                         varchar(255)           NO                active      
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: inventory_balances
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+outlet_id                      bigint unsigned        NO                            
+product_id                     bigint unsigned        NO                            
+variant_id                     bigint unsigned        YES                           
+on_hand                        decimal(12,4)          NO                0.0000      
+reserved                       decimal(12,4)          NO                0.0000      
+available                      decimal(12,4)          NO                0.0000      
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: inventory_movements
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+outlet_id                      bigint unsigned        NO                            
+product_id                     bigint unsigned        NO                            
+user_id                        bigint unsigned        YES                           
+variant_id                     bigint unsigned        YES                           
+quantity_change                decimal(12,4)          YES                           
+movement_type                  varchar(255)           NO                            
+quantity                       decimal(12,4)          NO                0.0000      
+unit_cost                      decimal(12,4)          YES                           
+reference_type                 varchar(255)           YES                           
+reference_id                   varchar(255)           YES                           
+notes                          text                   YES                           
+created_by                     bigint unsigned        YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: job_batches
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             varchar(255)           NO         PRI                
+name                           varchar(255)           NO                            
+total_jobs                     int                    NO                            
+pending_jobs                   int                    NO                            
+failed_jobs                    int                    NO                            
+failed_job_ids                 longtext               NO                            
+options                        mediumtext             YES                           
+cancelled_at                   int                    YES                           
+created_at                     int                    NO                            
+finished_at                    int                    YES                           
+
+TABLE: jobs
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+queue                          varchar(255)           NO         MUL                
+payload                        longtext               NO                            
+attempts                       tinyint unsigned       NO                            
+reserved_at                    int unsigned           YES                           
+available_at                   int unsigned           NO                            
+created_at                     int unsigned           NO                            
+
+TABLE: leads
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+name                           varchar(255)           NO                            
+company                        varchar(255)           YES                           
+email                          varchar(255)           YES                           
+phone                          varchar(255)           YES                           
+score                          varchar(50)            NO                Warm (70)   
+source                         varchar(50)            NO                Web Form    
+status                         varchar(50)            NO                new         
+notes                          text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_action_items
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+meeting_id                     bigint unsigned        NO         MUL                
+tenant_id                      bigint unsigned        YES        MUL                
+title                          varchar(255)           NO                            
+description                    text                   YES                           
+assigned_to                    bigint unsigned        YES        MUL                
+due_date                       date                   YES                           
+status                         varchar(30)            NO                pending     
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_attachments
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+meeting_id                     bigint unsigned        NO         MUL                
+tenant_id                      bigint unsigned        YES        MUL                
+file_name                      varchar(255)           NO                            
+file_type                      varchar(100)           YES                           
+file_url                       longtext               YES                           
+file_size                      bigint unsigned        YES                           
+uploaded_by                    bigint unsigned        YES        MUL                
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_attendees
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+meeting_id                     bigint unsigned        NO         MUL                
+user_id                        bigint unsigned        YES        MUL                
+name                           varchar(150)           NO                            
+email                          varchar(150)           YES                           
+role                           varchar(50)            NO                attendee    
+rsvp_status                    varchar(30)            NO                pending     
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_material_allocations
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+meeting_id                     bigint unsigned        NO         MUL                
+material_id                    bigint unsigned        NO         MUL                
+quantity_allocated             int                    NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_materials
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+name                           varchar(150)           NO                            
+category                       varchar(50)            NO                audio_visual
+quantity_total                 int                    NO                1           
+quantity_available             int                    NO                1           
+status                         varchar(30)            NO                active      
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_minutes
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+meeting_id                     bigint unsigned        NO         UNI                
+recorded_by                    bigint unsigned        YES        MUL                
+content                        longtext               YES                           
+action_items                   json                   YES                           
+status                         varchar(30)            NO                draft       
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_notification_templates
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      varchar(255)           YES        MUL                
+type                           varchar(255)           NO         MUL                
+name                           varchar(255)           NO                            
+content                        text                   NO                            
+is_customized                  tinyint(1)             NO                0           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_notifications
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+user_id                        bigint unsigned        NO         MUL                
+meeting_id                     bigint unsigned        YES        MUL                
+type                           varchar(50)            NO                invitation  
+title                          varchar(255)           NO                            
+message                        text                   YES                           
+status                         varchar(30)            NO                unread      
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_room_issues
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+room_id                        bigint unsigned        NO         MUL                
+reported_by                    bigint unsigned        YES        MUL                
+category                       varchar(50)            NO                audio_visual
+priority                       varchar(30)            NO                medium      
+status                         varchar(30)            NO                reported    
+description                    text                   NO                            
+resolution_notes               text                   YES                           
+resolved_at                    datetime               YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_rooms
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+outlet_id                      bigint unsigned        YES        MUL                
+name                           varchar(150)           NO                            
+code                           varchar(50)            YES                           
+floor                          varchar(50)            YES                           
+capacity                       int                    NO                6           
+amenities                      text                   YES                           
+status                         varchar(30)            NO                active      
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_staff
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+user_id                        bigint unsigned        YES        MUL                
+name                           varchar(150)           NO                            
+role                           varchar(50)            NO                technician  
+phone                          varchar(50)            YES                           
+status                         varchar(30)            NO                active      
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_staff_allocations
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+meeting_id                     bigint unsigned        NO         MUL                
+staff_id                       bigint unsigned        NO         MUL                
+assigned_role                  varchar(50)            YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_system_settings
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+setting_key                    varchar(100)           NO         MUL                
+setting_value                  text                   YES                           
+category                       varchar(50)            NO                booking_policy
+data_type                      varchar(30)            NO                string      
+display_name                   varchar(150)           NO                            
+description                    varchar(500)           YES                           
+is_public                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meeting_telegram_configs
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        NO         UNI                
+bot_token                      varchar(255)           YES                           
+chat_id                        varchar(100)           YES                           
+is_enabled                     tinyint(1)             NO                0           
+notify_on_booking              tinyint(1)             NO                1           
+notify_15m_before              tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: meetings
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+room_id                        bigint unsigned        NO         MUL                
+organizer_id                   bigint unsigned        NO         MUL                
+title                          varchar(255)           NO                            
+description                    text                   YES                           
+start_time                     datetime               NO         MUL                
+end_time                       datetime               NO         MUL                
+status                         varchar(30)            NO                scheduled   
+meeting_type                   varchar(50)            NO                internal    
+requires_approval              tinyint(1)             NO                0           
+approved_by                    bigint unsigned        YES                           
+approved_at                    datetime               YES                           
+recurring_series_id            varchar(100)           YES                           
+recurrence_type                varchar(30)            NO                none        
+ended_early_at                 datetime               YES                           
+checked_in_at                  datetime               YES                           
+cancellation_reason            text                   YES                           
+meeting_link                   varchar(255)           YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: migrations
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             int unsigned           NO         PRI                
+migration                      varchar(255)           NO                            
+batch                          int                    NO                            
+
+TABLE: outlets
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+uuid                           char(36)               YES        UNI                
+tenant_id                      bigint unsigned        YES        MUL                
+name                           varchar(255)           NO                            
+code                           varchar(255)           NO         UNI                
+address                        varchar(255)           YES                           
+phone                          varchar(255)           YES                           
+receipt_header                 varchar(255)           YES                           
+receipt_footer                 varchar(255)           YES                           
+is_active                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: password_reset_tokens
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+email                          varchar(255)           NO         PRI                
+token                          varchar(255)           NO                            
+created_at                     timestamp              YES                           
+
+TABLE: payment_attempts
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+payment_id                     bigint unsigned        NO                            
+merchant_reference             varchar(255)           NO         UNI                
+provider_transaction_id        varchar(255)           YES                           
+amount                         decimal(12,2)          NO                            
+currency                       varchar(3)             NO                USD         
+status                         varchar(255)           NO                created     
+raw_payload                    json                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: payments
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+sale_id                        bigint unsigned        NO                            
+tender_type                    varchar(255)           NO                            
+amount                         decimal(12,2)          NO                            
+currency                       varchar(3)             NO                USD         
+status                         varchar(255)           NO                created     
+reference_number               varchar(255)           YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: permissions
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+name                           varchar(255)           NO         UNI                
+group                          varchar(255)           NO                            
+description                    text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: personal_access_tokens
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tokenable_type                 varchar(255)           NO         MUL                
+tokenable_id                   bigint unsigned        NO                            
+name                           text                   NO                            
+ip_address                     varchar(45)            YES                           
+user_agent                     text                   YES                           
+device_name                    varchar(255)           YES                           
+token                          varchar(64)            NO         UNI                
+abilities                      text                   YES                           
+last_used_at                   timestamp              YES                           
+expires_at                     timestamp              YES        MUL                
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: platform_announcements
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+title                          varchar(255)           NO                            
+message                        text                   NO                            
+severity                       enum('info','warning','critical') NO                info        
+is_active                      tinyint(1)             NO                1           
+target_audience                varchar(255)           NO                all         
+starts_at                      timestamp              YES                           
+ends_at                        timestamp              YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: platform_modules
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             varchar(64)            NO         PRI                
+name                           varchar(128)           NO                            
+monogram                       varchar(8)             NO                            
+category                       varchar(64)            NO                            
+description                    text                   NO                            
+icon                           varchar(64)            NO                Store       
+logo_url                       varchar(255)           YES                           
+href                           varchar(255)           NO                            
+bg_pill                        varchar(128)           YES                           
+card_bg                        varchar(255)           YES                           
+is_core                        tinyint(1)             NO                0           
+is_active                      tinyint(1)             NO                1           
+sort_order                     int                    NO                0           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: product_variants
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+product_id                     bigint unsigned        NO                            
+name                           varchar(255)           NO                            
+sku                            varchar(255)           NO         UNI                
+barcode                        varchar(255)           YES        UNI                
+cost_price                     decimal(12,4)          YES                           
+selling_price                  decimal(12,2)          YES                           
+is_active                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: products
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+category_id                    bigint unsigned        YES                           
+brand_id                       bigint unsigned        YES                           
+name                           varchar(255)           NO                            
+sku                            varchar(255)           NO         UNI                
+barcode                        varchar(255)           YES        UNI                
+description                    text                   YES                           
+cost_price                     decimal(12,4)          NO                0.0000      
+selling_price                  decimal(12,2)          NO                0.00        
+image_url                      varchar(255)           YES                           
+min_reorder_point              int                    NO                5           
+is_active                      tinyint(1)             NO                1           
+expiry_date                    date                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: refunds
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+sale_id                        bigint unsigned        NO                            
+payment_id                     bigint unsigned        NO                            
+user_id                        bigint unsigned        NO                            
+amount                         decimal(12,2)          NO                            
+reason                         varchar(255)           NO                            
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: registers
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+outlet_id                      bigint unsigned        NO                            
+name                           varchar(255)           NO                            
+code                           varchar(255)           NO                            
+is_active                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: role_permissions
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+role_id                        bigint unsigned        NO         PRI                
+permission_id                  bigint unsigned        NO         PRI                
+
+TABLE: roles
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+company_id                     bigint unsigned        YES                           
+name                           varchar(255)           NO                            
+slug                           varchar(255)           NO         MUL                
+parent_role                    varchar(50)            NO                employee    
+description                    text                   YES                           
+is_system                      tinyint(1)             NO                0           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: sale_lines
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+sale_id                        bigint unsigned        NO                            
+product_id                     bigint unsigned        NO                            
+variant_id                     bigint unsigned        YES                           
+product_name                   varchar(255)           NO                            
+unit_price                     decimal(12,2)          NO                            
+quantity                       decimal(12,4)          NO                            
+discount_amount                decimal(12,2)          NO                0.00        
+subtotal                       decimal(12,2)          NO                            
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: sales
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+outlet_id                      bigint unsigned        NO                            
+register_id                    bigint unsigned        NO                            
+shift_id                       bigint unsigned        YES                           
+user_id                        bigint unsigned        NO                            
+receipt_number                 varchar(255)           NO         UNI                
+idempotency_key                varchar(255)           NO         UNI                
+subtotal                       decimal(12,2)          NO                            
+tax_total                      decimal(12,2)          NO                0.00        
+discount_total                 decimal(12,2)          NO                0.00        
+grand_total                    decimal(12,2)          NO                            
+currency                       varchar(3)             NO                USD         
+status                         varchar(255)           NO                completed   
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: sessions
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             varchar(255)           NO         PRI                
+user_id                        bigint unsigned        YES        MUL                
+ip_address                     varchar(45)            YES                           
+user_agent                     text                   YES                           
+payload                        longtext               NO                            
+last_activity                  int                    NO         MUL                
+
+TABLE: shifts
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+outlet_id                      bigint unsigned        NO                            
+register_id                    bigint unsigned        NO                            
+user_id                        bigint unsigned        NO                            
+opened_at                      datetime               NO                            
+closed_at                      datetime               YES                           
+opening_float                  decimal(12,2)          NO                0.00        
+expected_cash                  decimal(12,2)          NO                0.00        
+counted_cash                   decimal(12,2)          YES                           
+cash_variance                  decimal(12,2)          YES                           
+status                         varchar(255)           NO                open        
+closing_note                   text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: stock_transfer_lines
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+transfer_id                    bigint unsigned        NO                            
+product_id                     bigint unsigned        NO                            
+quantity                       int                    NO                            
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: stock_transfers
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+transfer_number                varchar(255)           NO         UNI                
+from_outlet_id                 bigint unsigned        NO                            
+to_outlet_id                   bigint unsigned        NO                            
+user_id                        bigint unsigned        NO                            
+status                         varchar(255)           NO                dispatched  
+dispatched_at                  datetime               NO                            
+received_at                    datetime               YES                           
+notes                          text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: store_credit_invoices
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+invoice_number                 varchar(50)            NO         UNI                
+customer_id                    bigint unsigned        NO         MUL                
+amount_paid                    decimal(12,2)          NO                            
+credit_amount                  decimal(12,2)          NO                            
+bonus_credit                   decimal(12,2)          NO                0.00        
+payment_method                 varchar(30)            NO                cash        
+payment_reference              varchar(255)           YES                           
+status                         varchar(30)            NO                paid        
+cashier_id                     bigint unsigned        YES                           
+outlet_id                      bigint unsigned        YES                           
+expires_at                     datetime               YES        MUL                
+notes                          text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: suppliers
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+name                           varchar(255)           NO                            
+code                           varchar(255)           NO         UNI                
+contact_name                   varchar(255)           YES                           
+email                          varchar(255)           YES                           
+phone                          varchar(255)           YES                           
+address                        text                   YES                           
+is_active                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: support_tickets
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             varchar(255)           NO         PRI                
+tenant_id                      varchar(255)           YES        MUL                
+tenant_name                    varchar(255)           NO                            
+requester_name                 varchar(255)           NO                            
+requester_email                varchar(255)           YES                           
+subject                        varchar(255)           NO                            
+description                    text                   YES                           
+priority                       enum('urgent','high','normal') NO                normal      
+status                         enum('open','in_progress','resolved') NO                open        
+category                       varchar(255)           NO                General Support
+response_note                  text                   YES                           
+resolved_at                    timestamp              YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: tenant_subscriptions
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        NO         MUL                
+plan_name                      varchar(255)           NO                            
+billing_cycle                  enum('monthly','quarterly','yearly') NO                monthly     
+price                          decimal(10,2)          NO                0.00        
+currency                       varchar(255)           NO                USD         
+status                         enum('active','cancelled','expired','pending') NO                pending     
+starts_at                      timestamp              YES                           
+expires_at                     timestamp              YES                           
+notes                          text                   YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: tenants
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+name                           varchar(255)           NO                            
+legal_name                     varchar(255)           YES                           
+slug                           varchar(255)           NO         UNI                
+company_code                   varchar(255)           YES        UNI                
+client_tier                    enum('free_personal','business_runner','enterprise_org') NO                free_personal
+status                         enum('active','suspended','trial','expired') NO                trial       
+email                          varchar(255)           NO                            
+phone                          varchar(255)           YES                           
+address                        varchar(255)           YES                           
+country                        varchar(255)           NO                KH          
+currency                       varchar(255)           NO                USD         
+enabled_modules                json                   YES                           
+logo_url                       longtext               YES                           
+receipt_footer                 varchar(255)           YES                           
+domain                         varchar(255)           YES                           
+max_outlets                    int                    NO                1           
+max_registers                  int                    NO                2           
+max_users                      int                    NO                5           
+trial_ends_at                  timestamp              YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: user_invitations
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES                           
+outlet_id                      bigint unsigned        YES                           
+email                          varchar(255)           NO         MUL                
+role                           varchar(255)           NO                cashier     
+token                          varchar(128)           NO         UNI                
+invited_by                     bigint unsigned        YES                           
+expires_at                     timestamp              NO                            
+accepted_at                    timestamp              YES                           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: user_roles
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+tenant_id                      bigint unsigned        YES        MUL                
+user_id                        bigint unsigned        NO         MUL                
+role_id                        bigint unsigned        NO         MUL                
+is_active                      tinyint(1)             NO                1           
+created_at                     timestamp              YES                           
+updated_at                     timestamp              YES                           
+
+TABLE: users
+--------------------------------------------------------------------------------
+Column Name                    Data Type              Nullable   Key    Default     
+--------------------------------------------------------------------------------
+id                             bigint unsigned        NO         PRI                
+uuid                           char(36)               NO         UNI                
+tenant_id                      bigint unsigned        YES        MUL                
+outlet_uuid                    char(36)               YES        MUL                
+name                           varchar(255)           NO                            
+email                          varchar(255)           NO         UNI                
+email_verified_at              timestamp              YES                           
+password                       varchar(255)           NO                            
+pin_code                       varchar(255)           YES                           
+failed_login_attempts          int unsigned           NO                0           
+lockout_until                  timestamp              YES                           
+two_factor_secret              varchar(255)           YES                           
+two_factor_enabled             tinyint(1)             NO                0           
+phone                          varchar(255)           YES                           
+avatar_url                     longtext               YES                           
+is_active                      tinyint(1)             NO                1           
+remember_token                 varchar(100)           YES                           
+created_at                     timestamp              YES                           

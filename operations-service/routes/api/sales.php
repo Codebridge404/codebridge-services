@@ -27,6 +27,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/sales', [CheckoutController::class, 'index']);
         Route::post('/sales', [CheckoutController::class, 'store']);
         Route::post('/sales/sync', [OfflineSyncController::class, 'sync']);
+        Route::post('/offline-sync', [OfflineSyncController::class, 'sync']);
+        Route::get('/offline-sync/conflicts', [OfflineSyncController::class, 'conflicts']);
+        Route::get('/offline-sync/conflicts/{id}', [OfflineSyncController::class, 'showConflict']);
+        Route::patch('/offline-sync/conflicts/{id}/resolve', [OfflineSyncController::class, 'resolveConflict']);
         Route::get('/sales/{id}/receipt', [ReceiptController::class, 'show']);
         Route::post('/sales/{id}/return-quote', [RefundController::class, 'returnQuote']);
         Route::post('/sales/{id}/refund', [RefundController::class, 'refund']);

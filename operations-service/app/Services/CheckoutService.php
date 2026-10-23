@@ -6,6 +6,25 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
+/**
+ * [BD-0109] Point-of-Sale Order Calculation & Multi-Payment Settlement Engine
+ *
+ * @ticket BD-0109
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Services/CheckoutService.php
+ * @related-model App\Models\Order, App\Models\Payment, App\Models\Product
+ * @entry-point CheckoutService::processCheckout(), calculateTotals(), handleSplitPayment()
+ * @routes
+ *  - Service Layer: App\Services\CheckoutService
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Cart Inventory Lock): Verifies real-time stock levels and places transactional lock on cart item SKUs.
+ * Step 2 (Tiered Price & Tax Calculation): Applies discounts, coupons, service charges, and VAT breakdown.
+ * Step 3 (Multi-Tender Payment Execution): Routes payments across cash, credit card, Bakong KHQR, or customer store credit.
+ * Step 4 (Order & Receipt Creation): Generates sequential invoice order number, stores line items, and commits transaction.
+ * Step 5 (Inventory Decrement & KDS Dispatch): Atomically decrements stock and transmits order tickets to kitchen display displays.
+ */
 class CheckoutService
 {
     public function finalizeSale(array $data, ?User $cashier = null): array

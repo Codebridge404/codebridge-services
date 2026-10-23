@@ -6,6 +6,28 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0070] Meeting Proceedings, Notes & Minutes Archiving Controller
+ *
+ * @ticket BD-0070
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingMinutesController.php
+ * @related-model DB table meeting_minutes, App\Models\User
+ * @entry-point MeetingMinutesController::show(), store(), update(), publish()
+ * @routes
+ *  - GET  /api/v1/meetings/{meeting_id}/minutes
+ *  - POST /api/v1/meetings/{meeting_id}/minutes
+ *  - PUT  /api/v1/meetings/{meeting_id}/minutes
+ *  - POST /api/v1/meetings/{meeting_id}/minutes/publish
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Validation): Restricts minutes documentation to authorized meeting participants within tenant.
+ * Step 2 (Note Drafting & Formatting): Records structured agenda topics, attendee discussions, and formal motions.
+ * Step 3 (Participant Sign-Off): Collects electronic acknowledgments from meeting attendees.
+ * Step 4 (Versioning & Immutability): Maintains revision history and freezes finalized official minutes.
+ * Step 5 (Distribution & Export): Generates downloadable summary reports for stakeholder circulation.
+ */
 class MeetingMinutesController extends Controller
 {
     /**

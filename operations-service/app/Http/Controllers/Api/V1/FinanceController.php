@@ -6,6 +6,27 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0096] Cash Flow, Revenue Accounts & Financial Ledger Management Controller
+ *
+ * @ticket BD-0096
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/FinanceController.php
+ * @related-model DB table ledger_entries, App\Models\Shift
+ * @entry-point FinanceController::index(), recordCashMovement(), dailySummary()
+ * @routes
+ *  - GET  /api/v1/finance/ledger
+ *  - POST /api/v1/finance/cash-movement
+ *  - GET  /api/v1/finance/daily-summary
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Ledger Scoping): Enforces tenant financial data isolation across chart of accounts.
+ * Step 2 (Cash Drawer In/Out Recording): Records cash drops, float additions, and petty cash payouts with cashier reason notes.
+ * Step 3 (Revenue Account Mapping): Maps checkout payment methods (Cash, Card, Bakong KHQR) to financial accounts.
+ * Step 4 (Daily Summary Generation): Generates end-of-day revenue summaries and cash-on-hand audit totals.
+ * Step 5 (Financial Export): Exports ledger entries to standardized CSV/accounting formats for bookkeeping.
+ */
 class FinanceController extends Controller
 {
     protected function getTenantId(Request $request): ?string

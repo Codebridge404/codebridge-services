@@ -8,6 +8,21 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0006] Merchant Developer API Key Issuance & Cryptographic Hashing Controller.
+ *
+ * @ticket BD-0006
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/ApiKeyController.php
+ * @related-model App\Models\ApiKey
+ * @entry-point GET /api/v1/api-keys, POST /api/v1/api-keys, DELETE /api/v1/api-keys/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Generates 64-character secret with key_prefix (first 16 chars).
+ * 2. SHA-256 hashes the secret (never stores plaintext API keys).
+ * 3. Associates granular permissions JSON matrix.
+ */
 class ApiKeyController extends Controller
 {
     /**

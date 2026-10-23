@@ -7,6 +7,28 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
+/**
+ * [BD-0063] Loyalty Tier, Reward Points Accumulation & Redemption Controller
+ *
+ * @ticket BD-0063
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/CustomerLoyaltyController.php
+ * @related-model DB table customer_loyalty_points, DB table loyalty_tiers
+ * @entry-point CustomerLoyaltyController::getPoints(), earn(), redeem(), getTiers()
+ * @routes
+ *  - GET  /api/v1/customers/{id}/loyalty
+ *  - POST /api/v1/customers/{id}/loyalty/earn
+ *  - POST /api/v1/customers/{id}/loyalty/redeem
+ *  - GET  /api/v1/loyalty/tiers
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Loyalty Account Validation): Identifies customer loyalty account and resolves current tier level (Bronze, Silver, Gold, Platinum).
+ * Step 2 (Points Accrual Calculation): Applies tenant point earning rules (e.g. 1 point per $1 spent) based on qualified purchases.
+ * Step 3 (Redemption Eligibility Check): Validates point minimum balances and applies redemption discounts to transaction balances.
+ * Step 4 (Ledger Transaction Recording): Appends immutable points ledger entries with balance tracking and reason codes.
+ * Step 5 (Tier Progression Audit): Evaluates annual spend milestones to automatically promote or demote loyalty member tiers.
+ */
 class CustomerLoyaltyController extends Controller
 {
     /**

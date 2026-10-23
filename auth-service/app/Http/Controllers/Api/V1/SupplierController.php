@@ -7,6 +7,29 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0077] Vendor & Supplier Contact & Procurement Directory Controller
+ *
+ * @ticket BD-0077
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/SupplierController.php
+ * @related-model DB table suppliers, App\Models\Tenant
+ * @entry-point SupplierController::index(), store(), show(), update(), destroy()
+ * @routes
+ *  - GET    /api/v1/suppliers
+ *  - POST   /api/v1/suppliers
+ *  - GET    /api/v1/suppliers/{id}
+ *  - PUT    /api/v1/suppliers/{id}
+ *  - DELETE /api/v1/suppliers/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Partitioning): Isolates supplier databases per tenant organization.
+ * Step 2 (Vendor Profile Management): Creates and updates supplier contacts, tax numbers, and payment terms.
+ * Step 3 (Product Supply Catalog): Links supplied items and SKU catalogs to primary and secondary suppliers.
+ * Step 4 (Performance & Lead-Time Metrics): Tracks supplier delivery reliability and historical procurement costs.
+ * Step 5 (Financial Balance Tracking): Aggregates outstanding accounts payable and purchase order payment histories.
+ */
 class SupplierController extends Controller
 {
     protected function getTenantId(Request $request): ?string

@@ -7,6 +7,25 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
+/**
+ * [BD-0083] Machine-to-Machine API Key Verification & Rate Protection Middleware
+ *
+ * @ticket BD-0083
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Middleware/ApiKeyMiddleware.php
+ * @related-model App\Models\ApiKey, DB table api_keys
+ * @entry-point ApiKeyMiddleware::handle()
+ * @routes
+ *  - Middleware: api_key
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Header Extraction): Extracts X-API-KEY from incoming HTTP request headers.
+ * Step 2 (Hash Verification): Computes cryptographic hash and looks up active API key record in database.
+ * Step 3 (Expiration & Status Check): Rejects expired, revoked, or suspended API keys with HTTP 401.
+ * Step 4 (Tenant & Scope Context Injection): Injects authenticated tenant_id and permitted scopes into request context.
+ * Step 5 (Rate Limit Enforcement): Verifies key-specific per-minute quota before forwarding request to controller.
+ */
 class ApiKeyMiddleware
 {
     /**

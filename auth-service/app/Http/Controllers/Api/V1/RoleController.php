@@ -6,6 +6,21 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0005] Dynamic RBAC Roles & Granular Permissions Controller.
+ *
+ * @ticket BD-0005
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/RoleController.php
+ * @related-model App\Models\Role, App\Models\Permission, App\Models\UserRole
+ * @entry-point GET /api/v1/roles, POST /api/v1/roles, PUT /api/v1/roles/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Manages system default and custom tenant roles.
+ * 2. Maps granular permission bits to roles via role_permissions pivot.
+ * 3. Prevents modification or deletion of core system immutable roles.
+ */
 class RoleController extends Controller
 {
     /**

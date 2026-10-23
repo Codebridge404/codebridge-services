@@ -7,6 +7,17 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
+/**
+ * [BD-0039] Multi-Tenant Resource Quota Enforcement Middleware.
+ *
+ * @ticket BD-0039
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Middleware/TenantQuotaMiddleware.php
+ * @related-model App\Models\TenantSubscription, App\Models\UserRole
+ * @date-time 2026-10-23T15:35:00+07:00
+ *
+ * Enforces seat quotas for staff, outlets, and registers per subscription tier.
+ */
 class TenantQuotaMiddleware
 {
     /**
@@ -62,12 +73,21 @@ class TenantQuotaMiddleware
         };
 
         if ($resourceType === 'users') {
-            $currentUsersCount = DB::table('users')
-                ->where(function ($q) use ($tenant) {
-                    $q->where('tenant_id', $tenant->id)
-                      ->orWhereNull('tenant_id');
+            $currentUsersCount = DB::table('users as u')
+                ->leftJoin('user_roles as ur', function ($j) {
+                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
                 })
-                ->where('role', '!=', 'super_admin')
+                ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                ->where(function ($q) use ($tenant) {
+                    $q->where('u.tenant_id', $tenant->id)
+                      ->orWhereNull('u.tenant_id');
+                })
+                ->where(function ($q) {
+                    $q->whereNull('r.slug')->orWhere('r.slug', '!=', 'super_admin');
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+                        $q->orWhere('u.role', '!=', 'super_admin');
+                    }
+                })
                 ->count();
 
             if ($currentUsersCount >= $maxUsers) {

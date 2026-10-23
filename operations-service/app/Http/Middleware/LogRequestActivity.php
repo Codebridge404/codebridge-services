@@ -7,6 +7,25 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpFoundation\Response;
 
+/**
+ * [BD-0112] Operations HTTP Audit & Request Activity Logging Middleware
+ *
+ * @ticket BD-0112
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Middleware/LogRequestActivity.php
+ * @related-model DB table audit_logs
+ * @entry-point LogRequestActivity::handle()
+ * @routes
+ *  - Middleware: log_activity
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Request Capture): Captures request method, path, tenant_id, cashier identity, and client IP address.
+ * Step 2 (Sensitive Parameter Masking): Masks card PINs, CVVs, and sensitive credentials.
+ * Step 3 (Pipeline Execution): Executes request downstream and measures response execution time.
+ * Step 4 (Response Code Auditing): Records HTTP status code and operational error payloads.
+ * Step 5 (Audit Log Persistence): Appends execution record asynchronously to operations audit ledger.
+ */
 class LogRequestActivity
 {
     /**

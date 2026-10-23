@@ -10,6 +10,23 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
+/**
+ * [BD-0001] Central Authentication, SSO, 2FA & Password/PIN Security Controller.
+ *
+ * @ticket BD-0001
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/AuthController.php
+ * @related-model App\Models\User, App\Models\UserRole
+ * @entry-point POST /api/v1/auth/login, POST /api/v1/auth/logout, GET /api/v1/me
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Sanitizes login input against null-byte injection.
+ * 2. Checks account lockout status (5 failed attempts = 15 min lock).
+ * 3. Verifies BCrypt hash and resets failed attempt counters.
+ * 4. Issues signed Bearer JWT token and Sanctum personal access token.
+ * 5. Returns authenticated user profile, roles, and accessible outlets.
+ */
 class AuthController extends Controller
 {
     /**
@@ -109,10 +126,18 @@ class AuthController extends Controller
             }
         }
 
+        // Generate Stateless Enterprise JWT Token
+        $jwtService = app(\App\Services\JwtService::class);
+        $jwtToken = $jwtService->generateTokenForUser($user);
+
         return response()->json([
             'status' => 'success',
             'user' => $user,
-            'token' => $plainToken,
+            'token' => $jwtToken,
+            'access_token' => $jwtToken,
+            'token_type' => 'Bearer',
+            'expires_in' => $jwtService->getTtlSeconds(),
+            'sanctum_token' => $plainToken,
         ]);
     }
 
@@ -185,11 +210,19 @@ class AuthController extends Controller
             }
         }
 
+        // Generate Stateless Enterprise JWT Token
+        $jwtService = app(\App\Services\JwtService::class);
+        $jwtToken = $jwtService->generateTokenForUser($user);
+
         return response()->json([
             'status' => 'success',
             'message' => "Welcome back, {$user->name}!",
             'user' => $user,
-            'token' => $plainToken,
+            'token' => $jwtToken,
+            'access_token' => $jwtToken,
+            'token_type' => 'Bearer',
+            'expires_in' => $jwtService->getTtlSeconds(),
+            'sanctum_token' => $plainToken,
         ]);
     }
 
