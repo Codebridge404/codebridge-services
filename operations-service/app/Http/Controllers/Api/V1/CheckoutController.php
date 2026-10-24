@@ -7,6 +7,22 @@ use App\Services\CheckoutService;
 use Illuminate\Http\Request;
 use Exception;
 
+/**
+ * [BD-0012] Server-Authoritative POS Checkout & Idempotency Controller.
+ *
+ * @ticket BD-0012
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/CheckoutController.php
+ * @related-service App\Services\CheckoutService
+ * @entry-point POST /api/v1/sales/checkout, GET /api/v1/sales
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Client submitted totals are discarded; unit prices fetched from DB.
+ * 2. 10% VAT and line item discounts calculated atomically server-side.
+ * 3. Enforces idempotency_key UNIQUE constraint to prevent duplicate sales.
+ * 4. Inserts sales, sale_lines, decrements stock, and appends movements ledger.
+ */
 class CheckoutController extends Controller
 {
     protected CheckoutService $checkoutService;

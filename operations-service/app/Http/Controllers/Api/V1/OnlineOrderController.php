@@ -7,6 +7,27 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
+/**
+ * [BD-0098] Omnichannel E-Commerce & Third-party Delivery Ingestion Controller
+ *
+ * @ticket BD-0098
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/OnlineOrderController.php
+ * @related-model App\Models\Order, DB table online_orders
+ * @entry-point OnlineOrderController::index(), ingestOrder(), updateDeliveryStatus()
+ * @routes
+ *  - GET  /api/v1/online-orders
+ *  - POST /api/v1/online-orders/ingest
+ *  - PUT  /api/v1/online-orders/{id}/status
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Webhook Ingestion): Receives incoming orders from e-commerce storefronts and delivery aggregator APIs.
+ * Step 2 (Customer & Address Resolution): Creates or resolves customer profile and delivery address coordinates.
+ * Step 3 (Inventory Reservation): Atomically holds inventory stock for incoming online order lines.
+ * Step 4 (Kitchen Order Injection): Injects validated online orders into active KDS and POS queues with pickup timestamps.
+ * Step 5 (Order Status Webhook Dispatch): Dispatches status change events (Confirmed, Out for Delivery, Completed) back to client.
+ */
 class OnlineOrderController extends Controller
 {
     /**

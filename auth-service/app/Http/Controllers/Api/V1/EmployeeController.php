@@ -7,6 +7,29 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0065] Human Resource Management & Staff Records Controller
+ *
+ * @ticket BD-0065
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/EmployeeController.php
+ * @related-model App\Models\Employee, App\Models\User, App\Models\Department
+ * @entry-point EmployeeController::index(), store(), show(), update(), destroy()
+ * @routes
+ *  - GET    /api/v1/employees
+ *  - POST   /api/v1/employees
+ *  - GET    /api/v1/employees/{id}
+ *  - PUT    /api/v1/employees/{id}
+ *  - DELETE /api/v1/employees/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Scoping & Isolation): Enforces tenant_id isolation across all employee records.
+ * Step 2 (Staff Registration & Validation): Validates national ID, tax number, emergency contacts, hire date, and job title.
+ * Step 3 (User Account Linking): Connects HR employee records to system user accounts for POS and back-office logins.
+ * Step 4 (Department & Outlet Assignment): Assigns employee to primary store outlet branch and operational department.
+ * Step 5 (Employment Lifecycle Status): Manages status transitions (active, on_leave, probation, terminated).
+ */
 class EmployeeController extends Controller
 {
     protected function getTenantId(Request $request): ?string

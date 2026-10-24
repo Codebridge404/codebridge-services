@@ -10,6 +10,7 @@ class Outlet extends Model
     use HasFactory;
 
     protected $fillable = [
+        'uuid',
         'tenant_id',
         'name',
         'code',
@@ -21,12 +22,27 @@ class Outlet extends Model
         'receipt_footer',
     ];
 
+    protected static function booted(): void
+    {
+        static::creating(function (Outlet $outlet) {
+            if (empty($outlet->uuid)) {
+                $outlet->uuid = (string) \Illuminate\Support\Str::uuid();
+            }
+        });
+    }
+
     protected $casts = [
+        'tenant_id' => 'integer',
         'is_active' => 'boolean',
     ];
 
+    public function tenant()
+    {
+        return $this->belongsTo(Tenant::class, 'tenant_id');
+    }
+
     public function users()
     {
-        return $this->hasMany(User::class);
+        return $this->hasMany(User::class, 'outlet_uuid', 'uuid');
     }
 }

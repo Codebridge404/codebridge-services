@@ -7,6 +7,28 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0078] Helpdesk Support Ticketing & Issue Resolution Controller
+ *
+ * @ticket BD-0078
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/SupportController.php
+ * @related-model DB table support_tickets, App\Models\User
+ * @entry-point SupportController::index(), store(), reply(), close()
+ * @routes
+ *  - GET  /api/v1/support/tickets
+ *  - POST /api/v1/support/tickets
+ *  - POST /api/v1/support/tickets/{id}/reply
+ *  - POST /api/v1/support/tickets/{id}/close
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Support Ticket Submission): Allows tenant users to submit incident tickets, bug reports, and assistance requests.
+ * Step 2 (Priority Categorization): Categorizes issues by urgency (P1 Critical Outage down to P4 Feature Request).
+ * Step 3 (Ticket Threading & Messaging): Facilitates two-way communication between tenant staff and support engineers.
+ * Step 4 (Attachment Handling): Securely stores screenshot and log file attachments for issue diagnosis.
+ * Step 5 (Resolution & SLA Auditing): Tracks time-to-first-response and resolution against customer SLA tiers.
+ */
 class SupportController extends Controller
 {
     /**

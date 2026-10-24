@@ -13,7 +13,13 @@ class Permission extends Model
         'name',
         'slug',
         'module',
+        'group',
         'description',
+        'is_system_default',
+    ];
+
+    protected $casts = [
+        'is_system_default' => 'boolean',
     ];
 
     public function roles()

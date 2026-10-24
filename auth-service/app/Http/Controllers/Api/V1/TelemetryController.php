@@ -7,6 +7,27 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 
+/**
+ * [BD-0079] System Telemetry, Health Metrics & Runtime Telemetry Controller
+ *
+ * @ticket BD-0079
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/TelemetryController.php
+ * @related-model DB connection status, Redis cache ping, system telemetry
+ * @entry-point TelemetryController::health(), metrics(), ping()
+ * @routes
+ *  - GET /api/v1/telemetry/health
+ *  - GET /api/v1/telemetry/metrics
+ *  - GET /api/v1/telemetry/ping
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Health Check Endpoint): Evaluates MySQL database ping, Redis cache responsiveness, and memory usage.
+ * Step 2 (Service Heartbeat Dispatch): Reports service heartbeat and active worker threads to central monitor.
+ * Step 3 (Metric Aggregation): Collects request throughput, response latency percentiles (p50, p95, p99), and error rates.
+ * Step 4 (Distributed Trace Ingestion): Propagates correlation IDs across microservice network boundaries.
+ * Step 5 (Anomaly Alerting): Triggers automated alerts when error thresholds or resource limits are breached.
+ */
 class TelemetryController extends Controller
 {
     /**

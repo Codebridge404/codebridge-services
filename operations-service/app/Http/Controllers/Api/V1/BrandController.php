@@ -7,6 +7,29 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0090] Product Brand Catalog & Brand Asset Management Controller
+ *
+ * @ticket BD-0090
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/BrandController.php
+ * @related-model App\Models\Brand, App\Models\Product
+ * @entry-point BrandController::index(), store(), show(), update(), destroy()
+ * @routes
+ *  - GET    /api/v1/brands
+ *  - POST   /api/v1/brands
+ *  - GET    /api/v1/brands/{id}
+ *  - PUT    /api/v1/brands/{id}
+ *  - DELETE /api/v1/brands/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Multi-Tenant Scoping): Enforces tenant_id isolation for brand catalog directory.
+ * Step 2 (Brand Search & Pagination): Returns paginated list of registered brands with logo URLs and product counts.
+ * Step 3 (Brand Creation & Validation): Validates unique brand name and slug within tenant.
+ * Step 4 (Update & Media Linking): Updates brand details and links official brand logo assets.
+ * Step 5 (Cascading Safe Deletion): Checks for linked products before permitting brand deletion.
+ */
 class BrandController extends Controller
 {
     public function index(Request $request)

@@ -7,6 +7,25 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
 use Symfony\Component\HttpFoundation\Response;
 
+/**
+ * [BD-0085] Brute Force Protection & Sliding-Window Throttling Middleware
+ *
+ * @ticket BD-0085
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Middleware/RateLimitAuthMiddleware.php
+ * @related-model Illuminate\Support\Facades\RateLimiter
+ * @entry-point RateLimitAuthMiddleware::handle()
+ * @routes
+ *  - Middleware: rate_limit_auth
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Client Fingerprinting): Builds unique rate limit key combining client IP address and target account identity.
+ * Step 2 (Sliding Window Counter): Increments Redis or cache-backed hit counter within current rate limit window.
+ * Step 3 (Threshold Evaluation): Verifies if request count exceeds maximum threshold (e.g. 5 attempts per 60 seconds).
+ * Step 4 (HTTP 429 Throttle Response): Rejects excessive attempts with HTTP 429 Too Many Requests and Retry-After header.
+ * Step 5 (Counter Decay & Reset): Automatically decays counter on successful authentication or window expiration.
+ */
 class RateLimitAuthMiddleware
 {
     /**

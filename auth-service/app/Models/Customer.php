@@ -11,6 +11,7 @@ class Customer extends Model
 
     protected $fillable = [
         'tenant_id',
+        'code',
         'name',
         'phone',
         'email',
@@ -20,9 +21,28 @@ class Customer extends Model
         'is_active',
     ];
 
+    protected static function booted()
+    {
+        static::creating(function ($customer) {
+            if (empty($customer->code)) {
+                $customer->code = 'CUST-' . strtoupper(\Illuminate\Support\Str::random(8));
+            }
+        });
+    }
+
     protected $casts = [
         'store_credit' => 'decimal:2',
         'loyalty_points' => 'integer',
         'is_active' => 'boolean',
     ];
+
+    public function creditInvoices()
+    {
+        return $this->hasMany(StoreCreditInvoice::class, 'customer_id');
+    }
+
+    public function vouchers()
+    {
+        return $this->hasMany(DigitalVoucher::class, 'issued_to_customer_id');
+    }
 }

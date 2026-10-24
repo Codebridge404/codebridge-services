@@ -6,6 +6,21 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0011] Dual-Layer Multi-Warehouse Inventory & Movement Ledger Controller.
+ *
+ * @ticket BD-0011
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/InventoryController.php
+ * @table inventory_balances, inventory_movements
+ * @entry-point GET /api/v1/inventory/balances, GET /api/v1/inventory/movements, POST /api/v1/inventory/adjust
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Layer 1 (Snapshot): Real-time on_hand, reserved, and available stock levels.
+ * 2. Layer 2 (Append-Only): Immutable movement ledger for receive, sale, transfer, and adjustment.
+ * 3. Low stock threshold warnings and out-of-stock alerts.
+ */
 class InventoryController extends Controller
 {
     protected function getTenantId(Request $request): ?string

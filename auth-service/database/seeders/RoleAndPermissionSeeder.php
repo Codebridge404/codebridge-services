@@ -199,21 +199,23 @@ class RoleAndPermissionSeeder extends Seeder
         // 3. Reconcile Existing Users to 3 Parent Roles & map their role_id
         $roleRecordMap = DB::table('roles')->pluck('id', 'slug')->toArray();
 
-        // Map Admin/Owner users to parent role 'organization'
-        $orgRoleId = $roleRecordMap['organization'] ?? ($roleRecordMap['admin'] ?? null);
-        DB::table('users')->whereIn('role', ['admin', 'administrator', 'owner'])->update([
-            'role' => 'organization',
-            'role_id' => $orgRoleId,
-        ]);
-
-        // Map Staff users to parent role 'employee' and attach sub-role ID
-        $staffSubRoles = ['cashier', 'inventory_clerk', 'accountant', 'meeting_organizer', 'outlet_manager', 'supervisor', 'user', 'customer'];
-        foreach ($staffSubRoles as $subSlug) {
-            $matchedRoleId = $roleRecordMap[$subSlug] ?? ($roleRecordMap['employee'] ?? null);
-            DB::table('users')->where('role', $subSlug)->update([
-                'role' => 'employee',
-                'role_id' => $matchedRoleId,
+        if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+            // Map Admin/Owner users to parent role 'organization'
+            $orgRoleId = $roleRecordMap['organization'] ?? ($roleRecordMap['admin'] ?? null);
+            DB::table('users')->whereIn('role', ['admin', 'administrator', 'owner'])->update([
+                'role' => 'organization',
+                'role_id' => $orgRoleId,
             ]);
+
+            // Map Staff users to parent role 'employee' and attach sub-role ID
+            $staffSubRoles = ['cashier', 'inventory_clerk', 'accountant', 'meeting_organizer', 'outlet_manager', 'supervisor', 'user', 'customer'];
+            foreach ($staffSubRoles as $subSlug) {
+                $matchedRoleId = $roleRecordMap[$subSlug] ?? ($roleRecordMap['employee'] ?? null);
+                DB::table('users')->where('role', $subSlug)->update([
+                    'role' => 'employee',
+                    'role_id' => $matchedRoleId,
+                ]);
+            }
         }
     }
 }

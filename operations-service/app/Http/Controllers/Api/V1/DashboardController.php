@@ -6,6 +6,27 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0094] Real-time Operations KPI Analytics & Store Executive Metrics Controller
+ *
+ * @ticket BD-0094
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/DashboardController.php
+ * @related-model App\Models\Order, App\Models\Payment, App\Models\Product
+ * @entry-point DashboardController::summary(), salesVelocity(), topSellingProducts()
+ * @routes
+ *  - GET /api/v1/dashboard/summary
+ *  - GET /api/v1/dashboard/velocity
+ *  - GET /api/v1/dashboard/top-products
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant & Outlet Scoping): Scopes KPI metrics to requested tenant and specific outlet branch.
+ * Step 2 (Real-Time Revenue Aggregation): Computes gross sales, net sales, refund totals, and tax collections for current day.
+ * Step 3 (Transaction Volume Metrics): Aggregates completed order count, average ticket size, and hourly sales velocity.
+ * Step 4 (Low Stock Inventory Warnings): Identifies items with stock on hand falling below reorder threshold points.
+ * Step 5 (Top-Selling Products): Ranks top 5 revenue-generating items and top categories for executive oversight.
+ */
 class DashboardController extends Controller
 {
     public function summary(Request $request)

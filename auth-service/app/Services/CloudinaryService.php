@@ -6,6 +6,25 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * [BD-0087] Cloudinary Digital Asset & Media CDN Storage Service
+ *
+ * @ticket BD-0087
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Services/CloudinaryService.php
+ * @related-model Cloudinary\Cloudinary API, App\Models\User
+ * @entry-point CloudinaryService::uploadImage(), deleteImage()
+ * @routes
+ *  - Service Layer: App\Services\CloudinaryService
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Environment Configuration): Loads Cloudinary API credentials, cloud name, and upload presets.
+ * Step 2 (File Validation): Validates MIME type, file extension, and maximum upload size limits.
+ * Step 3 (Secure Cloud Upload): Transmits image/document to Cloudinary storage via authenticated API SDK.
+ * Step 4 (CDN URL Resolution): Generates optimized CDN delivery URLs with responsive image transformations.
+ * Step 5 (Asset Purging & Cleanup): Deletes remote assets when user avatars or receipts are removed or replaced.
+ */
 class CloudinaryService
 {
     protected ?string $cloudName;

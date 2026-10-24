@@ -31,9 +31,27 @@ class ApiKey extends Model
     {
         return [
             'permissions' => 'array',
+            'tenant_id' => 'integer',
+            'user_id' => 'integer',
             'last_used_at' => 'datetime',
             'expires_at' => 'datetime',
             'is_active' => 'boolean',
         ];
+    }
+
+    /**
+     * Get the user who owns this API key.
+     */
+    public function user()
+    {
+        return $this->belongsTo(User::class, 'user_id');
+    }
+
+    /**
+     * Get the tenant this API key belongs to.
+     */
+    public function tenant()
+    {
+        return $this->belongsTo(Tenant::class, 'tenant_id');
     }
 }

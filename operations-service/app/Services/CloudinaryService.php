@@ -6,6 +6,25 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * [BD-0110] Operations Cloudinary Asset Uploader & Product Image CDN Service
+ *
+ * @ticket BD-0110
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Services/CloudinaryService.php
+ * @related-model Cloudinary\Cloudinary API, App\Models\Product
+ * @entry-point CloudinaryService::uploadImage(), deleteImage()
+ * @routes
+ *  - Service Layer: App\Services\CloudinaryService
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Asset Inspection): Inspects product photos, category icons, and brand logos for allowable formats and dimensions.
+ * Step 2 (Image Optimization): Resizes and compresses images for high-speed POS display and e-commerce web clients.
+ * Step 3 (Secure Cloudinary Transport): Uploads image binary securely to Cloudinary with tenant-specific folder prefixes.
+ * Step 4 (CDN URL Storage): Returns HTTPS CDN URL to caller for storage in products or categories table.
+ * Step 5 (Remote Asset Deletion): Deletes obsolete product imagery from Cloudinary CDN when items are deleted.
+ */
 class CloudinaryService
 {
     protected ?string $cloudName;

@@ -6,6 +6,28 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0068] Meeting Issue Escalation & Risk Tracking Controller
+ *
+ * @ticket BD-0068
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingIssueController.php
+ * @related-model DB table meeting_issues, App\Models\User
+ * @entry-point MeetingIssueController::index(), store(), update(), resolve()
+ * @routes
+ *  - GET  /api/v1/meetings/{meeting_id}/issues
+ *  - POST /api/v1/meetings/{meeting_id}/issues
+ *  - PUT  /api/v1/meeting-issues/{id}
+ *  - POST /api/v1/meeting-issues/{id}/resolve
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Isolation): Validates meeting and issue scope to tenant workspace.
+ * Step 2 (Risk & Impediment Logging): Captures operational blockers raised during standups and departmental meetings.
+ * Step 3 (Priority & Severity Assignment): Sets severity levels (Low, Medium, High, Critical) with target resolution dates.
+ * Step 4 (Departmental Routing): Routes issues to accountable department leads for triage.
+ * Step 5 (Resolution Closure): Documents mitigation actions and archives resolved blockers.
+ */
 class MeetingIssueController extends Controller
 {
     /**

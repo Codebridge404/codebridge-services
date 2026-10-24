@@ -7,6 +7,29 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0092] Multi-Level Product Category & Tax Group Taxonomy Controller
+ *
+ * @ticket BD-0092
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/CategoryController.php
+ * @related-model App\Models\Category, App\Models\Product
+ * @entry-point CategoryController::index(), store(), show(), update(), destroy()
+ * @routes
+ *  - GET    /api/v1/categories
+ *  - POST   /api/v1/categories
+ *  - GET    /api/v1/categories/{id}
+ *  - PUT    /api/v1/categories/{id}
+ *  - DELETE /api/v1/categories/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Scoping): Restricts category tree to authenticated tenant organization.
+ * Step 2 (Hierarchical Category Tree): Retrieves nested parent-child categories for POS menu navigation.
+ * Step 3 (Category Creation): Validates category name, color code, icon, and parent category ID.
+ * Step 4 (Tax Group Association): Links default sales tax rates to categories for automated tax calculation.
+ * Step 5 (Menu Sorting & Display Order): Updates display sort ordering for POS touch-screen grids.
+ */
 class CategoryController extends Controller
 {
     protected function getTenantId(Request $request): ?string

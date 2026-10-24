@@ -6,6 +6,27 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0069] Meeting Resource Allocation & Equipment Logistics Controller
+ *
+ * @ticket BD-0069
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingLogisticsController.php
+ * @related-model DB table meeting_logistics, App\Models\Outlet
+ * @entry-point MeetingLogisticsController::index(), reserve(), release()
+ * @routes
+ *  - GET  /api/v1/meeting-logistics
+ *  - POST /api/v1/meetings/{meeting_id}/logistics/reserve
+ *  - POST /api/v1/meetings/{meeting_id}/logistics/release
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Context Verification): Ensures equipment and room resources belong to the requesting tenant.
+ * Step 2 (Resource Availability Check): Verifies projector, video conferencing hardware, and seating availability.
+ * Step 3 (Booking Association): Reserves required logistical items concurrently with meeting schedules.
+ * Step 4 (Setup Confirmation): Records pre-meeting logistics preparation checklists.
+ * Step 5 (Resource Release): Releases shared hardware back to inventory pool upon meeting conclusion.
+ */
 class MeetingLogisticsController extends Controller
 {
     /**

@@ -7,6 +7,29 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
+/**
+ * [BD-0100] Supplier Purchase Orders, Goods Receipt & Cost Tracking Controller
+ *
+ * @ticket BD-0100
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/PurchaseController.php
+ * @related-model DB table purchase_orders, DB table purchase_order_items
+ * @entry-point PurchaseController::index(), store(), show(), receiveGoods(), cancel()
+ * @routes
+ *  - GET  /api/v1/purchases
+ *  - POST /api/v1/purchases
+ *  - GET  /api/v1/purchases/{id}
+ *  - POST /api/v1/purchases/{id}/receive
+ *  - POST /api/v1/purchases/{id}/cancel
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Purchase Order Creation): Drafts supplier purchase orders with requested SKU quantities and agreed unit costs.
+ * Step 2 (Approval Workflow): Enforces manager approval for purchase orders exceeding configured expenditure thresholds.
+ * Step 3 (Goods Receipt Inspection): Records physical received quantities at warehouse/outlet against ordered PO items.
+ * Step 4 (Inventory Stock Increment): Atomically increments on-hand stock and updates weighted average unit cost.
+ * Step 5 (Discrepancy & Return Handling): Records damaged goods, short shipments, and supplier credit notes.
+ */
 class PurchaseController extends Controller
 {
     protected function getTenantId(Request $request): ?string

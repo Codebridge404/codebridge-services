@@ -6,6 +6,25 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
+/**
+ * [BD-0088] Store Credit & Customer Wallet Checkout Settlement Service
+ *
+ * @ticket BD-0088
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Services/CheckoutService.php
+ * @related-model App\Models\StoreCreditInvoice, DB table customers
+ * @entry-point CheckoutService::applyStoreCredit(), releaseHold()
+ * @routes
+ *  - Service Layer: App\Services\CheckoutService
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Wallet Balance Check): Verifies customer has sufficient store credit tranches for requested purchase.
+ * Step 2 (Tranche Locking): Places a temporary hold lock on targeted credit tranche rows during checkout.
+ * Step 3 (Payment Settlement): Deducts balance atomically upon order finalization and records credit debit invoice.
+ * Step 4 (Automatic Release): Automatically releases hold lock if checkout session is cancelled or times out.
+ * Step 5 (Audit Trail Generation): Logs customer balance update and generates verification receipt reference.
+ */
 class CheckoutService
 {
     public function finalizeSale(array $data, User $cashier): array

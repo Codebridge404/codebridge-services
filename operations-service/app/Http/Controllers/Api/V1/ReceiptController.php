@@ -6,6 +6,27 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0101] Thermal ESC/POS & Digital Receipt Generator Engine Controller
+ *
+ * @ticket BD-0101
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/ReceiptController.php
+ * @related-model App\Models\Order, App\Models\Payment
+ * @entry-point ReceiptController::getReceipt(), printThermal(), sendDigitalReceipt()
+ * @routes
+ *  - GET  /api/v1/receipts/{order_id}
+ *  - POST /api/v1/receipts/{order_id}/print
+ *  - POST /api/v1/receipts/{order_id}/digital
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Order Summary Retrieval): Fetches completed order details, items, tax breakdown, payments, and discounts.
+ * Step 2 (Outlet Header & Branding): Injects tenant business logo, branch address, VAT identification number, and phone.
+ * Step 3 (Dual-Currency Representation): Formats transaction total in primary currency (USD) and local currency (KHR).
+ * Step 4 (ESC/POS Formatting): Generates thermal receipt command stream for 58mm and 80mm ESC/POS hardware printers.
+ * Step 5 (Digital Receipt & QR Generation): Generates public verification URL and QR code for paperless digital receipts.
+ */
 class ReceiptController extends Controller
 {
     public function show(Request $request, $id)
