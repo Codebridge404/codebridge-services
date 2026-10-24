@@ -7,6 +7,22 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0010] Enterprise Product Catalog, Pricing & Barcode SKU Controller.
+ *
+ * @ticket BD-0010
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/ProductController.php
+ * @related-model App\Models\Product, App\Models\Category, App\Models\Brand
+ * @entry-point GET /api/v1/products, POST /api/v1/products, POST /api/v1/products/bulk
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. SKU generation, EAN-13 barcode lookups, and category tagging.
+ * 2. Multi-tier retail pricing and cost accounting.
+ * 3. Atomic bulk product ingestion.
+ * 4. Multi-tenant catalog scoping via X-Tenant-Id.
+ */
 class ProductController extends Controller
 {
     protected function getTenantId(Request $request): ?string

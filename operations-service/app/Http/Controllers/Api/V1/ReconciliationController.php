@@ -6,6 +6,21 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0015] Bank & Payment Gateway Settlement Reconciliation Controller.
+ *
+ * @ticket BD-0015
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/ReconciliationController.php
+ * @table reconciliations, reconciliation_exceptions
+ * @entry-point POST /api/v1/reconciliation/run, GET /api/v1/reconciliation/batches
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Matches internal sales payments against external ABA / Bakong settlements.
+ * 2. Flags discrepancies into reconciliation_exceptions table.
+ * 3. Accountant approval and resolution workflows.
+ */
 class ReconciliationController extends Controller
 {
     protected function getTenantId(Request $request): ?string

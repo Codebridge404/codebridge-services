@@ -7,6 +7,21 @@ use App\Services\BakongService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0013] Dynamic NBC Bakong KHQR, Cash Tender & Payment State Machine Controller.
+ *
+ * @ticket BD-0013
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/PaymentController.php
+ * @related-service App\Services\BakongService
+ * @entry-point POST /api/v1/payments/khqr, POST /api/v1/payments/callback
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Generates dynamic Bakong KHQR payloads for secondary customer screens.
+ * 2. Manages 8-state payment lifecycle (created, pending, paid, refunded).
+ * 3. Server-to-server webhook verification and transaction status validation.
+ */
 class PaymentController extends Controller
 {
     protected BakongService $bakongService;

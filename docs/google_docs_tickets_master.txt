@@ -1,0 +1,1604 @@
+================================================================================
+CODEBRIDGE SYSTEM COMPLETE MASTER TICKETS & PROCESS SPECIFICATION FOR GOOGLE DOCS
+Generated: 2026-10-23 15:58:00 +07:00
+Platform: CodeBridge Multi-Tenant Cloud Platform
+Architecture: Distributed Cloud Microservices (Auth & Operations)
+Total Registered System Tickets: 80
+================================================================================
+
+================================================================================
+SECTION 1: AUTH & IDENTITY MICROSERVICE (codebridge-auth-service) - [45 Tickets]
+================================================================================
+
+--------------------------------------------------------------------------------
+TICKET: BD-0001 - Central Authentication, SSO, 2FA & Password/PIN Security Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0001
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/AuthController.php
+Related Model / Service:App\Models\User, App\Models\UserRole
+Method / Entry Point:   POST /api/v1/auth/login, POST /api/v1/auth/logout, GET /api/v1/me
+Command / API Route:    POST /api/v1/auth/login, POST /api/v1/auth/logout, GET /api/v1/me
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Sanitizes login input against null-byte injection.
+2. Checks account lockout status (5 failed attempts = 15 min lock).
+3. Verifies BCrypt hash and resets failed attempt counters.
+4. Issues signed Bearer JWT token and Sanctum personal access token.
+5. Returns authenticated user profile, roles, and accessible outlets.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0002 - Multi-Tenant User Management & Role Assignment Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0002
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/UserController.php
+Related Model / Service:App\Models\User, App\Models\UserRole, App\Models\Outlet
+Method / Entry Point:   GET /api/v1/users, POST /api/v1/users, PUT /api/v1/users/{id}
+Command / API Route:    GET /api/v1/users, POST /api/v1/users, PUT /api/v1/users/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Queries users joined with user_roles pivot and outlets table by outlet_uuid.
+2. Enforces multi-tenant tenant_id scoping for organization admins.
+3. Provisions new staff with hashed password, personal 4-digit PIN, and assigned role.
+4. Updates roles seamlessly via the user_roles pivot table.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0003 - Multi-Tenant Organization Provisioning & Management Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0003
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/TenantController.php
+Related Model / Service:App\Models\Tenant, App\Models\TenantSubscription, App\Models\Outlet
+Method / Entry Point:   POST /api/v1/tenants/register, GET /api/v1/tenants/my, GET /api/v1/tenants/{id}/settings
+Command / API Route:    POST /api/v1/tenants/register, GET /api/v1/tenants/my, GET /api/v1/tenants/{id}/settings
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Self-service organization registration with slug auto-generation.
+2. Automated provisioning of 14-day trial in tenant_subscriptions table.
+3. Primary outlet creation (Main Branch) and default terminal REG-01.
+4. Tenant switcher context resolver and subscription quota management.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0004 - Multi-Outlet & Physical Branch Management Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0004
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/OutletController.php
+Related Model / Service:App\Models\Outlet, App\Models\User
+Method / Entry Point:   GET /api/v1/outlets, POST /api/v1/outlets, PUT /api/v1/outlets/{id}
+Command / API Route:    GET /api/v1/outlets, POST /api/v1/outlets, PUT /api/v1/outlets/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Automatic generation of UUIDv4 for new outlets.
+2. Links staff members via outlet_uuid.
+3. Enforces multi-tenant workspace isolation.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0005 - Dynamic RBAC Roles & Granular Permissions Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0005
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/RoleController.php
+Related Model / Service:App\Models\Role, App\Models\Permission, App\Models\UserRole
+Method / Entry Point:   GET /api/v1/roles, POST /api/v1/roles, PUT /api/v1/roles/{id}
+Command / API Route:    GET /api/v1/roles, POST /api/v1/roles, PUT /api/v1/roles/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Manages system default and custom tenant roles.
+2. Maps granular permission bits to roles via role_permissions pivot.
+3. Prevents modification or deletion of core system immutable roles.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0006 - Merchant Developer API Key Issuance & Cryptographic Hashing Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0006
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/ApiKeyController.php
+Related Model / Service:App\Models\ApiKey
+Method / Entry Point:   GET /api/v1/api-keys, POST /api/v1/api-keys, DELETE /api/v1/api-keys/{id}
+Command / API Route:    GET /api/v1/api-keys, POST /api/v1/api-keys, DELETE /api/v1/api-keys/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Generates 64-character secret with key_prefix (first 16 chars).
+2. SHA-256 hashes the secret (never stores plaintext API keys).
+3. Associates granular permissions JSON matrix.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0007 - Customer CRM, Sales Pipeline & Deals Management Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0007
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/CrmController.php
+Related Model / Service:N/A
+Method / Entry Point:   GET /api/v1/crm/deals, POST /api/v1/crm/deals, GET /api/v1/crm/pipeline
+Command / API Route:    GET /api/v1/crm/deals, POST /api/v1/crm/deals, GET /api/v1/crm/pipeline
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Kanban pipeline stage transitions (lead, proposal, negotiation, won, lost).
+2. Deal valuation, probability weighting, and expected close dates.
+3. Activity logging (calls, emails, meetings, notes) linked to deals.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0008 - Corporate Meeting Scheduling, Room Collision & Ghost Auto-Release Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0008
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingController.php
+Related Model / Service:N/A
+Method / Entry Point:   GET /api/v1/meetings, POST /api/v1/meetings, POST /api/v1/meetings/{id}/checkin
+Command / API Route:    GET /api/v1/meetings, POST /api/v1/meetings, POST /api/v1/meetings/{id}/checkin
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Zero double-booking collision algorithm with turnover buffers.
+2. 15-minute unattended ghost-room auto-cancellation and resource recovery.
+3. Digital door tablet check-in and QR ad-hoc reservations.
+4. Multi-channel Telegram bot and RFC 5545 iCalendar dispatching.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0034 - Process Customer Store Credit & Digital Voucher Expirations.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0034
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Console/Commands/ExpireStoreCreditCommand.php
+Related Model / Service:App\Services\StoreCreditService (processExpirations)
+Method / Entry Point:   php artisan store-credit:expire {--tenant=}
+Command / API Route:    php artisan store-credit:expire {--tenant=}
+Date & Time:            2026-10-23T15:33:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Resolve optional tenant scoping.
+2. Execute atomic sweep of expired digital vouchers and credit tranches.
+3. Apply pessimistic locking on affected customer records.
+4. Deduct expired balances and append immutable ledger audit entries.
+5. Render summary metrics table to console output.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0035 - Customer Store Credit Invoicing, Voucher Redemption & Wallet APIs.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0035
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/StoreCreditInvoiceController.php
+Related Model / Service:App\Services\StoreCreditService
+Method / Entry Point:   API Routes: /api/v1/customers/{id}/credit/
+Command / API Route:    API Routes: /api/v1/customers/{id}/credit/
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Issue atomic top-up invoices with cash/card/KHQR tender.
+2. Issue and redeem promotional digital gift vouchers.
+3. Real-time customer balance statements & upcoming 30-day expiration tracking.
+4. Manual trigger endpoint for expiration sweeps.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0036 - Enterprise Double-Entry Customer Store Credit & Digital Voucher Service.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0036
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Services/StoreCreditService.php
+Related Model / Service:App\Http\Controllers\Api\V1\StoreCreditInvoiceController
+Method / Entry Point:   N/A
+Command / API Route:    N/A
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. createTopUpInvoice() - Atomic top-up with bonus calculation and double-entry ledger.
+2. issueDigitalVoucher() - Secure random voucher code generation with validity windows.
+3. redeemDigitalVoucher() - Race-condition-free voucher redemption via lockForUpdate.
+4. processExpirations() - Daily automated reclaim of past-due credit tranches and vouchers.
+5. getCustomerStatement() - Running balance statements with upcoming 30-day expiration alerts.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0037 - User Role Pivot Model for Decoupled Multi-Role RBAC.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0037
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Models/UserRole.php
+Related Model / Service:App\Models\User, App\Models\Role
+Method / Entry Point:   N/A
+Command / API Route:    N/A
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Controller or service execution entry point invoked.
+2. Multi-tenant boundary isolation enforced.
+3. Core business logic and database transaction committed.
+4. Standard response formatted and delivered.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0038 - Core User Identity Model aligned with ERD standards.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0038
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Models/User.php
+Related Model / Service:App\Models\UserRole, App\Models\Role, App\Models\Outlet
+Method / Entry Point:   N/A
+Command / API Route:    N/A
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Controller or service execution entry point invoked.
+2. Multi-tenant boundary isolation enforced.
+3. Core business logic and database transaction committed.
+4. Standard response formatted and delivered.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0039 - Multi-Tenant Resource Quota Enforcement Middleware.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0039
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Middleware/TenantQuotaMiddleware.php
+Related Model / Service:App\Models\TenantSubscription, App\Models\UserRole
+Method / Entry Point:   N/A
+Command / API Route:    N/A
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Controller or service execution entry point invoked.
+2. Multi-tenant boundary isolation enforced.
+3. Core business logic and database transaction committed.
+4. Standard response formatted and delivered.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0040 - Stateless JWT Authentication Middleware.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0040
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Middleware/AuthenticateJwt.php
+Related Model / Service:App\Services\JwtService
+Method / Entry Point:   N/A
+Command / API Route:    N/A
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Controller or service execution entry point invoked.
+2. Multi-tenant boundary isolation enforced.
+3. Core business logic and database transaction committed.
+4. Standard response formatted and delivered.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0041 - High-Performance Stateless JWT Token Issuer & Verifier.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0041
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Services/JwtService.php
+Related Model / Service:N/A
+Method / Entry Point:   N/A
+Command / API Route:    N/A
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Controller or service execution entry point invoked.
+2. Multi-tenant boundary isolation enforced.
+3. Core business logic and database transaction committed.
+4. Standard response formatted and delivered.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0060 - Staff Shift Attendance, Clock In/Out & GPS Geofencing Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0060
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/AttendanceController.php
+Related Model / Service:App\Models\Employee, DB table attendances
+Method / Entry Point:   AttendanceController::index(), clockIn(), clockOut(), summary()
+Command / API Route:    GET  /api/v1/attendances
+                        POST /api/v1/attendances/clock-in
+                        POST /api/v1/attendances/clock-out
+                        GET  /api/v1/attendances/summary
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Scoping): Extracts and enforces tenant_id scoping from request headers, token, or query parameters.
+Step 2 (Record Filtering): Queries attendances joined with employees and users, applying date range and query filters.
+Step 3 (Clock-In Validation): Verifies employee active status, checks for duplicate open clock-ins, and validates geo-coordinates.
+Step 4 (Shift Duration & Break Tracking): Computes total work duration, active break intervals, and overtime calculations.
+Step 5 (Clock-Out Finalization): Records check-out timestamp, calculates final hours, and records status (on_time, late, early_departure).
+
+--------------------------------------------------------------------------------
+TICKET: BD-0061 - Security & Audit Trail Log Inspection Engine
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0061
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/AuditLogController.php
+Related Model / Service:DB table audit_logs, App\Models\User
+Method / Entry Point:   AuditLogController::index(), show(), export()
+Command / API Route:    GET  /api/v1/audit-logs
+                        GET  /api/v1/audit-logs/{id}
+                        GET  /api/v1/audit-logs/export
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Isolation): Restricts audit log visibility strictly to the requesting tenant partition.
+Step 2 (Forensic Query Filtering): Filters immutable event logs by user_id, action type, IP address, and date window.
+Step 3 (Request Payload Inspection): Decodes captured JSON changes (old values vs new values) for forensic tracking.
+Step 4 (Pagination & Sorting): Returns chronological paginated audit trails with user and actor metadata.
+Step 5 (Export & Compliance Delivery): Serializes historical audit records for regulatory compliance reviews.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0062 - Customer Profile, Credit Balance & CRM Directory Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0062
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/CustomerController.php
+Related Model / Service:DB table customers, App\Models\Customer, App\Models\StoreCreditInvoice
+Method / Entry Point:   CustomerController::index(), store(), show(), update(), destroy()
+Command / API Route:    GET    /api/v1/customers
+                        POST   /api/v1/customers
+                        GET    /api/v1/customers/{id}
+                        PUT    /api/v1/customers/{id}
+                        DELETE /api/v1/customers/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Boundary Enforcement): Validates tenant isolation ensuring customer directories remain siloed.
+Step 2 (Customer Lookup & Search): Supports searching by customer phone number, email, name, or loyalty barcode.
+Step 3 (Profile Management): Creates and updates customer records with contact information, credit limits, and tax exemptions.
+Step 4 (Store Credit & Loyalty Aggregation): Aggregates active store credit balance and earned reward points for POS checkout.
+Step 5 (Transaction History Access): Retrieves linked order receipts, payment summaries, and credit ledger histories.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0063 - Loyalty Tier, Reward Points Accumulation & Redemption Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0063
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/CustomerLoyaltyController.php
+Related Model / Service:DB table customer_loyalty_points, DB table loyalty_tiers
+Method / Entry Point:   CustomerLoyaltyController::getPoints(), earn(), redeem(), getTiers()
+Command / API Route:    GET  /api/v1/customers/{id}/loyalty
+                        POST /api/v1/customers/{id}/loyalty/earn
+                        POST /api/v1/customers/{id}/loyalty/redeem
+                        GET  /api/v1/loyalty/tiers
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Loyalty Account Validation): Identifies customer loyalty account and resolves current tier level (Bronze, Silver, Gold, Platinum).
+Step 2 (Points Accrual Calculation): Applies tenant point earning rules (e.g. 1 point per $1 spent) based on qualified purchases.
+Step 3 (Redemption Eligibility Check): Validates point minimum balances and applies redemption discounts to transaction balances.
+Step 4 (Ledger Transaction Recording): Appends immutable points ledger entries with balance tracking and reason codes.
+Step 5 (Tier Progression Audit): Evaluates annual spend milestones to automatically promote or demote loyalty member tiers.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0064 - Organizational Structure & Departmental Hierarchy Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0064
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/DepartmentController.php
+Related Model / Service:App\Models\Department, App\Models\Employee
+Method / Entry Point:   DepartmentController::index(), store(), update(), destroy()
+Command / API Route:    GET    /api/v1/departments
+                        POST   /api/v1/departments
+                        PUT    /api/v1/departments/{id}
+                        DELETE /api/v1/departments/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Boundary Check): Verifies tenant context for departmental structure.
+Step 2 (Department Directory Listing): Lists all operational divisions (Kitchen, Service, Accounting, Management).
+Step 3 (Creation & Validation): Validates unique department code and name per tenant.
+Step 4 (Hierarchy & Role Linkage): Maps department associations to staff profiles and supervisory managers.
+Step 5 (Deletion & Orphan Safeguard): Prevents deletion of departments with actively assigned personnel.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0065 - Human Resource Management & Staff Records Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0065
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/EmployeeController.php
+Related Model / Service:App\Models\Employee, App\Models\User, App\Models\Department
+Method / Entry Point:   EmployeeController::index(), store(), show(), update(), destroy()
+Command / API Route:    GET    /api/v1/employees
+                        POST   /api/v1/employees
+                        GET    /api/v1/employees/{id}
+                        PUT    /api/v1/employees/{id}
+                        DELETE /api/v1/employees/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Scoping & Isolation): Enforces tenant_id isolation across all employee records.
+Step 2 (Staff Registration & Validation): Validates national ID, tax number, emergency contacts, hire date, and job title.
+Step 3 (User Account Linking): Connects HR employee records to system user accounts for POS and back-office logins.
+Step 4 (Department & Outlet Assignment): Assigns employee to primary store outlet branch and operational department.
+Step 5 (Employment Lifecycle Status): Manages status transitions (active, on_leave, probation, terminated).
+
+--------------------------------------------------------------------------------
+TICKET: BD-0066 - Digital & Physical Gift Card Issuance & Balance Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0066
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/GiftCardController.php
+Related Model / Service:DB table gift_cards, DB table gift_card_transactions
+Method / Entry Point:   GiftCardController::index(), issue(), checkBalance(), redeem()
+Command / API Route:    GET  /api/v1/gift-cards
+                        POST /api/v1/gift-cards/issue
+                        POST /api/v1/gift-cards/check-balance
+                        POST /api/v1/gift-cards/redeem
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Security Partitioning): Scopes gift cards and balances to tenant organization.
+Step 2 (Card Code Generation): Generates cryptographically unique, unguessable gift card serial numbers and PINs.
+Step 3 (Activation & Initial Funding): Funds gift card with initial face value, records payer, and activates card.
+Step 4 (Real-time Balance Lookup): Provides fast POS barcode scanning to check current balance and expiration date.
+Step 5 (Redemption & Debit Deduction): Atomically deducts purchase amounts during checkout and logs card transaction history.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0067 - Meeting Action Items & Task Delegation Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0067
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingActionItemController.php
+Related Model / Service:DB table meeting_action_items, App\Models\User
+Method / Entry Point:   MeetingActionItemController::index(), store(), update(), destroy()
+Command / API Route:    GET    /api/v1/meetings/{meeting_id}/action-items
+                        POST   /api/v1/meetings/{meeting_id}/action-items
+                        PUT    /api/v1/action-items/{id}
+                        DELETE /api/v1/action-items/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Meeting Ownership Verification): Validates parent meeting existence within current tenant partition.
+Step 2 (Action Item Assignment): Assigns follow-up tasks to specific staff members with strict deadlines.
+Step 3 (Status Tracking): Updates progress states (pending, in_progress, completed, deferred).
+Step 4 (Automated Escalation): Flags overdue action items in daily meeting summaries.
+Step 5 (Completion Verification): Records sign-off timestamp and completion notes.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0068 - Meeting Issue Escalation & Risk Tracking Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0068
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingIssueController.php
+Related Model / Service:DB table meeting_issues, App\Models\User
+Method / Entry Point:   MeetingIssueController::index(), store(), update(), resolve()
+Command / API Route:    GET  /api/v1/meetings/{meeting_id}/issues
+                        POST /api/v1/meetings/{meeting_id}/issues
+                        PUT  /api/v1/meeting-issues/{id}
+                        POST /api/v1/meeting-issues/{id}/resolve
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Isolation): Validates meeting and issue scope to tenant workspace.
+Step 2 (Risk & Impediment Logging): Captures operational blockers raised during standups and departmental meetings.
+Step 3 (Priority & Severity Assignment): Sets severity levels (Low, Medium, High, Critical) with target resolution dates.
+Step 4 (Departmental Routing): Routes issues to accountable department leads for triage.
+Step 5 (Resolution Closure): Documents mitigation actions and archives resolved blockers.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0069 - Meeting Resource Allocation & Equipment Logistics Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0069
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingLogisticsController.php
+Related Model / Service:DB table meeting_logistics, App\Models\Outlet
+Method / Entry Point:   MeetingLogisticsController::index(), reserve(), release()
+Command / API Route:    GET  /api/v1/meeting-logistics
+                        POST /api/v1/meetings/{meeting_id}/logistics/reserve
+                        POST /api/v1/meetings/{meeting_id}/logistics/release
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Context Verification): Ensures equipment and room resources belong to the requesting tenant.
+Step 2 (Resource Availability Check): Verifies projector, video conferencing hardware, and seating availability.
+Step 3 (Booking Association): Reserves required logistical items concurrently with meeting schedules.
+Step 4 (Setup Confirmation): Records pre-meeting logistics preparation checklists.
+Step 5 (Resource Release): Releases shared hardware back to inventory pool upon meeting conclusion.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0070 - Meeting Proceedings, Notes & Minutes Archiving Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0070
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingMinutesController.php
+Related Model / Service:DB table meeting_minutes, App\Models\User
+Method / Entry Point:   MeetingMinutesController::show(), store(), update(), publish()
+Command / API Route:    GET  /api/v1/meetings/{meeting_id}/minutes
+                        POST /api/v1/meetings/{meeting_id}/minutes
+                        PUT  /api/v1/meetings/{meeting_id}/minutes
+                        POST /api/v1/meetings/{meeting_id}/minutes/publish
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Validation): Restricts minutes documentation to authorized meeting participants within tenant.
+Step 2 (Note Drafting & Formatting): Records structured agenda topics, attendee discussions, and formal motions.
+Step 3 (Participant Sign-Off): Collects electronic acknowledgments from meeting attendees.
+Step 4 (Versioning & Immutability): Maintains revision history and freezes finalized official minutes.
+Step 5 (Distribution & Export): Generates downloadable summary reports for stakeholder circulation.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0071 - Meeting Reminders, Push Alerts & Notifications Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0071
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingNotificationController.php
+Related Model / Service:DB table meeting_notifications, App\Models\User
+Method / Entry Point:   MeetingNotificationController::index(), markRead(), sendReminder()
+Command / API Route:    GET  /api/v1/meeting-notifications
+                        POST /api/v1/meeting-notifications/{id}/read
+                        POST /api/v1/meetings/{meeting_id}/send-reminder
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Participant Identification): Resolves invited user notification preferences (email, in-app, Telegram).
+Step 2 (Event Trigger Processing): Triggers automated alerts upon meeting scheduling, rescheduling, or cancellation.
+Step 3 (Lead-time Reminder Dispatch): Queues 15-minute and 1-hour pre-meeting reminder notifications.
+Step 4 (Delivery Status Logging): Records notification delivery receipts and error tracking.
+Step 5 (Notification Preferences): Allows users to configure personal notification schedules and mute windows.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0072 - Conference Room Scheduling & Conflict Resolution Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0072
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingRoomController.php
+Related Model / Service:DB table meeting_rooms, App\Models\Outlet
+Method / Entry Point:   MeetingRoomController::index(), store(), update(), destroy(), availability()
+Command / API Route:    GET    /api/v1/meeting-rooms
+                        POST   /api/v1/meeting-rooms
+                        PUT    /api/v1/meeting-rooms/{id}
+                        DELETE /api/v1/meeting-rooms/{id}
+                        GET    /api/v1/meeting-rooms/{id}/availability
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Room Directory): Lists physical conference rooms, boardrooms, and meeting pods per store/outlet.
+Step 2 (Capacity & Amenity Filtering): Filters rooms by attendee seating capacity and audiovisual capabilities.
+Step 3 (Overlap & Conflict Detection): Validates proposed booking time intervals against existing reservations.
+Step 4 (Room Reservation Lock): Locks room slot and issues confirmation details to meeting organizer.
+Step 5 (Room Maintenance Schedule): Blocks rooms during scheduled cleaning, maintenance, or refurbishments.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0073 - Meeting Configuration, Policies & Default Templates Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0073
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingSettingController.php
+Related Model / Service:DB table meeting_settings, App\Models\Tenant
+Method / Entry Point:   MeetingSettingController::getSettings(), updateSettings()
+Command / API Route:    GET /api/v1/meeting-settings
+                        PUT /api/v1/meeting-settings
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Policy Retrieval): Loads tenant-wide meeting policies, duration limits, and buffer intervals.
+Step 2 (Template Management): Configures default agendas and meeting types (1-on-1, Standup, Board Meeting).
+Step 3 (Working Hours Enforcement): Sets allowed booking hours to prevent after-hours room scheduling.
+Step 4 (Integration Credentials): Manages external calendar sync and third-party webhook integrations.
+Step 5 (Quota Configuration): Restricts maximum concurrent active meetings per subscription plan.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0074 - Telegram Bot Meeting Integration & Real-time Alerts Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0074
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingTelegramController.php
+Related Model / Service:DB table telegram_integrations, App\Models\User
+Method / Entry Point:   MeetingTelegramController::webhook(), linkAccount(), sendTestAlert()
+Command / API Route:    POST /api/v1/meetings/telegram/webhook
+                        POST /api/v1/meetings/telegram/link
+                        POST /api/v1/meetings/telegram/test
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Telegram Webhook Verification): Validates incoming Telegram bot requests with secure secret token.
+Step 2 (User Chat Linking): Links staff Telegram Chat ID to internal employee user account via OTP verification.
+Step 3 (Instant Meeting Alerts): Dispatches instant push messages to Telegram groups or direct chats for upcoming meetings.
+Step 4 (Interactive Responses): Processes inline button responses (Accept, Decline, Reschedule) from Telegram.
+Step 5 (Command Handling): Handles bot commands (/schedule, /today, /status) directly inside Telegram channels.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0075 - Granular RBAC Permission Catalog & Authorization Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0075
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/PermissionController.php
+Related Model / Service:App\Models\Role, DB table permissions, DB table role_permissions
+Method / Entry Point:   PermissionController::index(), syncPermissions(), check()
+Command / API Route:    GET  /api/v1/permissions
+                        POST /api/v1/roles/{id}/permissions
+                        GET  /api/v1/permissions/check
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Permission Catalog Discovery): Returns standardized system permission matrix across all modules.
+Step 2 (Category Grouping): Organizes permissions into operational groups (POS, Inventory, Billing, Users, Reports).
+Step 3 (Role Permission Sync): Allows tenant administrators to assign and revoke permissions to custom roles.
+Step 4 (Cache Invalidation): Invalidates distributed user permission caches upon any role permission change.
+Step 5 (Privilege Escalation Prevention): Restricts tenant admins from assigning superadmin system permissions.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0076 - Global Platform Microservice Modules & Features Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0076
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/PlatformModuleController.php
+Related Model / Service:DB table platform_modules, App\Models\Tenant
+Method / Entry Point:   PlatformModuleController::index(), updateModuleStatus()
+Command / API Route:    GET /api/v1/platform-modules
+                        PUT /api/v1/platform-modules/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Superadmin Authorization): Requires superadmin platform credentials to configure system modules.
+Step 2 (Module Registry Listing): Returns all platform modules (KDS, Tables, Loyalty, Multi-currency, Store Credit).
+Step 3 (Feature Flag Definition): Defines availability flags, beta release toggles, and minimum service version requirements.
+Step 4 (Dependency Validation): Verifies required base services before enabling advanced platform add-ons.
+Step 5 (Global Catalog Distribution): Synchronizes enabled module registry with downstream microservices.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0077 - Vendor & Supplier Contact & Procurement Directory Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0077
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/SupplierController.php
+Related Model / Service:DB table suppliers, App\Models\Tenant
+Method / Entry Point:   SupplierController::index(), store(), show(), update(), destroy()
+Command / API Route:    GET    /api/v1/suppliers
+                        POST   /api/v1/suppliers
+                        GET    /api/v1/suppliers/{id}
+                        PUT    /api/v1/suppliers/{id}
+                        DELETE /api/v1/suppliers/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Partitioning): Isolates supplier databases per tenant organization.
+Step 2 (Vendor Profile Management): Creates and updates supplier contacts, tax numbers, and payment terms.
+Step 3 (Product Supply Catalog): Links supplied items and SKU catalogs to primary and secondary suppliers.
+Step 4 (Performance & Lead-Time Metrics): Tracks supplier delivery reliability and historical procurement costs.
+Step 5 (Financial Balance Tracking): Aggregates outstanding accounts payable and purchase order payment histories.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0078 - Helpdesk Support Ticketing & Issue Resolution Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0078
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/SupportController.php
+Related Model / Service:DB table support_tickets, App\Models\User
+Method / Entry Point:   SupportController::index(), store(), reply(), close()
+Command / API Route:    GET  /api/v1/support/tickets
+                        POST /api/v1/support/tickets
+                        POST /api/v1/support/tickets/{id}/reply
+                        POST /api/v1/support/tickets/{id}/close
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Support Ticket Submission): Allows tenant users to submit incident tickets, bug reports, and assistance requests.
+Step 2 (Priority Categorization): Categorizes issues by urgency (P1 Critical Outage down to P4 Feature Request).
+Step 3 (Ticket Threading & Messaging): Facilitates two-way communication between tenant staff and support engineers.
+Step 4 (Attachment Handling): Securely stores screenshot and log file attachments for issue diagnosis.
+Step 5 (Resolution & SLA Auditing): Tracks time-to-first-response and resolution against customer SLA tiers.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0079 - System Telemetry, Health Metrics & Runtime Telemetry Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0079
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/TelemetryController.php
+Related Model / Service:DB connection status, Redis cache ping, system telemetry
+Method / Entry Point:   TelemetryController::health(), metrics(), ping()
+Command / API Route:    GET /api/v1/telemetry/health
+                        GET /api/v1/telemetry/metrics
+                        GET /api/v1/telemetry/ping
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Health Check Endpoint): Evaluates MySQL database ping, Redis cache responsiveness, and memory usage.
+Step 2 (Service Heartbeat Dispatch): Reports service heartbeat and active worker threads to central monitor.
+Step 3 (Metric Aggregation): Collects request throughput, response latency percentiles (p50, p95, p99), and error rates.
+Step 4 (Distributed Trace Ingestion): Propagates correlation IDs across microservice network boundaries.
+Step 5 (Anomaly Alerting): Triggers automated alerts when error thresholds or resource limits are breached.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0080 - Per-Tenant Module Entitlements & Subscription Tiers Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0080
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/TenantModuleController.php
+Related Model / Service:DB table tenant_modules, App\Models\Tenant
+Method / Entry Point:   TenantModuleController::index(), updateModule()
+Command / API Route:    GET /api/v1/tenants/{tenant_id}/modules
+                        PUT /api/v1/tenants/{tenant_id}/modules
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Subscription Verification): Inspects tenant subscription plan tier (Basic, Professional, Enterprise).
+Step 2 (Module Entitlement Resolution): Queries tenant_modules table to verify active feature licenses.
+Step 3 (Add-on Module Provisioning): Activates premium modules (KDS, Advanced Loyalty, Table Reservations).
+Step 4 (Feature Gatekeeper Enforcement): Enforces API route access blocking if requested module is not licensed.
+Step 5 (Expiration & Grace Period Handling): Manages automated module suspension upon subscription expiration.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0081 - Scheduled Cron Meeting Reminder Dispatcher Command
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0081
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Console/Commands/SendMeetingRemindersCommand.php
+Related Model / Service:DB table meetings, DB table meeting_notifications
+Method / Entry Point:   SendMeetingRemindersCommand::handle()
+Command / API Route:    Command: php artisan meetings:send-reminders
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Schedule Window Scanning): Scans meeting schedule table for meetings starting within the next 15 minutes.
+Step 2 (Deduplication Check): Ensures reminders are only sent once per recipient per meeting event.
+Step 3 (Multi-Channel Dispatch): Sends push alerts via Telegram bot, email, and WebSockets.
+Step 4 (Failure Handling & Retry): Logs delivery failures and attempts secondary notification channel fallback.
+Step 5 (Execution Summary): Outputs summary table of sent notifications and affected participants to console.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0082 - Scheduled Auto-Release for Unclaimed Meeting Rooms Command
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0082
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Console/Commands/AutoReleaseMeetingsCommand.php
+Related Model / Service:DB table meetings, DB table meeting_rooms
+Method / Entry Point:   AutoReleaseMeetingsCommand::handle()
+Command / API Route:    Command: php artisan meetings:auto-release
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Unclaimed Room Detection): Identifies active meeting reservations with no check-in after 15 minutes.
+Step 2 (Reservation Cancellation): Automatically cancels the unclaimed reservation to prevent ghost bookings.
+Step 3 (Room Status Release): Marks room as available immediately for on-demand booking by other staff.
+Step 4 (Organizer Notification): Dispatches notification to original organizer informing them of the auto-release.
+Step 5 (Audit Logging): Records automatic release event in system audit trail for facility management analytics.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0083 - Machine-to-Machine API Key Verification & Rate Protection Middleware
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0083
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Middleware/ApiKeyMiddleware.php
+Related Model / Service:App\Models\ApiKey, DB table api_keys
+Method / Entry Point:   ApiKeyMiddleware::handle()
+Command / API Route:    Middleware: api_key
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Header Extraction): Extracts X-API-KEY from incoming HTTP request headers.
+Step 2 (Hash Verification): Computes cryptographic hash and looks up active API key record in database.
+Step 3 (Expiration & Status Check): Rejects expired, revoked, or suspended API keys with HTTP 401.
+Step 4 (Tenant & Scope Context Injection): Injects authenticated tenant_id and permitted scopes into request context.
+Step 5 (Rate Limit Enforcement): Verifies key-specific per-minute quota before forwarding request to controller.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0084 - HTTP Request Audit Logger & Forensic Request Interceptor
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0084
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Middleware/LogRequestActivity.php
+Related Model / Service:DB table audit_logs
+Method / Entry Point:   LogRequestActivity::handle()
+Command / API Route:    Middleware: log_activity
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Request Ingestion): Intercepts inbound HTTP request, method, URI, IP address, and user-agent.
+Step 2 (Sensitive Data Redaction): Strips passwords, pin codes, and credit card numbers from payload logs.
+Step 3 (Downstream Execution): Forwards sanitized request down the pipeline to destination controller.
+Step 4 (Response Capture): Captures HTTP status code, response time latency, and memory footprint.
+Step 5 (Asynchronous Audit Storage): Writes structured audit record to audit_logs table or log stream.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0085 - Brute Force Protection & Sliding-Window Throttling Middleware
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0085
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Middleware/RateLimitAuthMiddleware.php
+Related Model / Service:Illuminate\Support\Facades\RateLimiter
+Method / Entry Point:   RateLimitAuthMiddleware::handle()
+Command / API Route:    Middleware: rate_limit_auth
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Client Fingerprinting): Builds unique rate limit key combining client IP address and target account identity.
+Step 2 (Sliding Window Counter): Increments Redis or cache-backed hit counter within current rate limit window.
+Step 3 (Threshold Evaluation): Verifies if request count exceeds maximum threshold (e.g. 5 attempts per 60 seconds).
+Step 4 (HTTP 429 Throttle Response): Rejects excessive attempts with HTTP 429 Too Many Requests and Retry-After header.
+Step 5 (Counter Decay & Reset): Automatically decays counter on successful authentication or window expiration.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0086 - Role Verification & Tenant Privilege Boundary Guard Middleware
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0086
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Middleware/EnsureRole.php
+Related Model / Service:App\Models\User, App\Models\Role
+Method / Entry Point:   EnsureRole::handle()
+Command / API Route:    Middleware: role:role_name
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Authenticated User Extraction): Retrieves authenticated user from JWT token context.
+Step 2 (Parameter Role Matching): Compares allowed role parameters against user's assigned roles in user_roles pivot.
+Step 3 (Superadmin Bypass): Grants automatic passthrough for platform superadmin role.
+Step 4 (Unauthorized Rejection): Halts request with HTTP 403 Forbidden if user lacks required role credentials.
+Step 5 (Request Context Enrichment): Injects verified role slug into request for downstream controller logic.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0087 - Cloudinary Digital Asset & Media CDN Storage Service
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0087
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Services/CloudinaryService.php
+Related Model / Service:Cloudinary\Cloudinary API, App\Models\User
+Method / Entry Point:   CloudinaryService::uploadImage(), deleteImage()
+Command / API Route:    Service Layer: App\Services\CloudinaryService
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Environment Configuration): Loads Cloudinary API credentials, cloud name, and upload presets.
+Step 2 (File Validation): Validates MIME type, file extension, and maximum upload size limits.
+Step 3 (Secure Cloud Upload): Transmits image/document to Cloudinary storage via authenticated API SDK.
+Step 4 (CDN URL Resolution): Generates optimized CDN delivery URLs with responsive image transformations.
+Step 5 (Asset Purging & Cleanup): Deletes remote assets when user avatars or receipts are removed or replaced.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0088 - Store Credit & Customer Wallet Checkout Settlement Service
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0088
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Services/CheckoutService.php
+Related Model / Service:App\Models\StoreCreditInvoice, DB table customers
+Method / Entry Point:   CheckoutService::applyStoreCredit(), releaseHold()
+Command / API Route:    Service Layer: App\Services\CheckoutService
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Wallet Balance Check): Verifies customer has sufficient store credit tranches for requested purchase.
+Step 2 (Tranche Locking): Places a temporary hold lock on targeted credit tranche rows during checkout.
+Step 3 (Payment Settlement): Deducts balance atomically upon order finalization and records credit debit invoice.
+Step 4 (Automatic Release): Automatically releases hold lock if checkout session is cancelled or times out.
+Step 5 (Audit Trail Generation): Logs customer balance update and generates verification receipt reference.
+
+================================================================================
+SECTION 2: OPERATIONS & POS MICROSERVICE (codebridge-operations-service) - [35 Tickets]
+================================================================================
+
+--------------------------------------------------------------------------------
+TICKET: BD-0010 - Enterprise Product Catalog, Pricing & Barcode SKU Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0010
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/ProductController.php
+Related Model / Service:App\Models\Product, App\Models\Category, App\Models\Brand
+Method / Entry Point:   GET /api/v1/products, POST /api/v1/products, POST /api/v1/products/bulk
+Command / API Route:    GET /api/v1/products, POST /api/v1/products, POST /api/v1/products/bulk
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. SKU generation, EAN-13 barcode lookups, and category tagging.
+2. Multi-tier retail pricing and cost accounting.
+3. Atomic bulk product ingestion.
+4. Multi-tenant catalog scoping via X-Tenant-Id.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0011 - Dual-Layer Multi-Warehouse Inventory & Movement Ledger Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0011
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/InventoryController.php
+Related Model / Service:N/A
+Method / Entry Point:   GET /api/v1/inventory/balances, GET /api/v1/inventory/movements, POST /api/v1/inventory/adjust
+Command / API Route:    GET /api/v1/inventory/balances, GET /api/v1/inventory/movements, POST /api/v1/inventory/adjust
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Layer 1 (Snapshot): Real-time on_hand, reserved, and available stock levels.
+2. Layer 2 (Append-Only): Immutable movement ledger for receive, sale, transfer, and adjustment.
+3. Low stock threshold warnings and out-of-stock alerts.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0012 - Server-Authoritative POS Checkout & Idempotency Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0012
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/CheckoutController.php
+Related Model / Service:App\Services\CheckoutService
+Method / Entry Point:   POST /api/v1/sales/checkout, GET /api/v1/sales
+Command / API Route:    POST /api/v1/sales/checkout, GET /api/v1/sales
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Client submitted totals are discarded; unit prices fetched from DB.
+2. 10% VAT and line item discounts calculated atomically server-side.
+3. Enforces idempotency_key UNIQUE constraint to prevent duplicate sales.
+4. Inserts sales, sale_lines, decrements stock, and appends movements ledger.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0013 - Dynamic NBC Bakong KHQR, Cash Tender & Payment State Machine Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0013
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/PaymentController.php
+Related Model / Service:App\Services\BakongService
+Method / Entry Point:   POST /api/v1/payments/khqr, POST /api/v1/payments/callback
+Command / API Route:    POST /api/v1/payments/khqr, POST /api/v1/payments/callback
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Generates dynamic Bakong KHQR payloads for secondary customer screens.
+2. Manages 8-state payment lifecycle (created, pending, paid, refunded).
+3. Server-to-server webhook verification and transaction status validation.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0014 - Sales Velocity, Profit Margins & Managerial Analytics Streamer.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0014
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/ReportController.php
+Related Model / Service:App\Services\ExchangeRateService
+Method / Entry Point:   GET /api/v1/reports/sales, GET /api/v1/reports/dashboard
+Command / API Route:    GET /api/v1/reports/sales, GET /api/v1/reports/dashboard
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Aggregates gross revenue, 10% VAT, net margins, and discount costs.
+2. Feeds real-time executive dashboard KPIs to Next.js portal.
+3. Dual-currency financial reporting in USD ($) and NBC KHR (៛).
+
+--------------------------------------------------------------------------------
+TICKET: BD-0015 - Bank & Payment Gateway Settlement Reconciliation Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0015
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/ReconciliationController.php
+Related Model / Service:N/A
+Method / Entry Point:   POST /api/v1/reconciliation/run, GET /api/v1/reconciliation/batches
+Command / API Route:    POST /api/v1/reconciliation/run, GET /api/v1/reconciliation/batches
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Matches internal sales payments against external ABA / Bakong settlements.
+2. Flags discrepancies into reconciliation_exceptions table.
+3. Accountant approval and resolution workflows.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0016 - Inter-Outlet Multi-Warehouse Stock Transfer & Dispatch Controller.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0016
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/TransferController.php
+Related Model / Service:N/A
+Method / Entry Point:   GET /api/v1/transfers, POST /api/v1/transfers, POST /api/v1/transfers/{id}/receive
+Command / API Route:    GET /api/v1/transfers, POST /api/v1/transfers, POST /api/v1/transfers/{id}/receive
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Creates transfer requests between source and destination outlets.
+2. Deducts from origin warehouse and marks stock as in_transit.
+3. Atomic stock receiving at destination warehouse via barcode scan verification.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0050 - Multi-Currency Dynamic Exchange Rate Sync & Conversion APIs.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0050
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/ExchangeRateController.php
+Related Model / Service:App\Services\ExchangeRateService
+Method / Entry Point:   API Routes: /api/v1/currencies/
+Command / API Route:    API Routes: /api/v1/currencies/
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Controller or service execution entry point invoked.
+2. Multi-tenant boundary isolation enforced.
+3. Core business logic and database transaction committed.
+4. Standard response formatted and delivered.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0053 - Offline POS Batch Synchronization & Conflict Resolution Engine.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0053
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/OfflineSyncController.php
+Related Model / Service:App\Models\OfflineSyncConflict, App\Models\Sale
+Method / Entry Point:   POST /api/v1/offline-sync, GET /api/v1/offline-sync/conflicts
+Command / API Route:    POST /api/v1/offline-sync, GET /api/v1/offline-sync/conflicts
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Idempotent replay of offline sales using offline_id constraint.
+2. Multi-register stock collision detection when on_hand inventory drops below zero.
+3. Managerial resolution workflows (force_fulfill, split_backorder, refund_customer).
+
+--------------------------------------------------------------------------------
+TICKET: BD-0055 - Shift Management, Till Float & Automated Variance Notification APIs.
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0055
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/ShiftController.php
+Related Model / Service:App\Services\CashDrawerNotificationService
+Method / Entry Point:   API Routes: /api/v1/shifts/
+Command / API Route:    API Routes: /api/v1/shifts/
+Date & Time:            2026-10-23T15:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Starting float & cash drawer kick authorization.
+2. Mid-shift cash drops & pay-outs.
+3. End-of-shift Z-Report reconciliation.
+4. Automated threshold-based cash discrepancy variance alerts dispatched to managers.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0090 - Product Brand Catalog & Brand Asset Management Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0090
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/BrandController.php
+Related Model / Service:App\Models\Brand, App\Models\Product
+Method / Entry Point:   BrandController::index(), store(), show(), update(), destroy()
+Command / API Route:    GET    /api/v1/brands
+                        POST   /api/v1/brands
+                        GET    /api/v1/brands/{id}
+                        PUT    /api/v1/brands/{id}
+                        DELETE /api/v1/brands/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Multi-Tenant Scoping): Enforces tenant_id isolation for brand catalog directory.
+Step 2 (Brand Search & Pagination): Returns paginated list of registered brands with logo URLs and product counts.
+Step 3 (Brand Creation & Validation): Validates unique brand name and slug within tenant.
+Step 4 (Update & Media Linking): Updates brand details and links official brand logo assets.
+Step 5 (Cascading Safe Deletion): Checks for linked products before permitting brand deletion.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0091 - Active POS Cart State, Line Item Hold & Retrieval Engine Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0091
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/CartController.php
+Related Model / Service:DB table pos_carts, App\Models\Product
+Method / Entry Point:   CartController::getCart(), addItem(), updateItem(), removeItem(), parkCart(), restoreCart()
+Command / API Route:    GET  /api/v1/cart
+                        POST /api/v1/cart/items
+                        PUT  /api/v1/cart/items/{id}
+                        DELETE /api/v1/cart/items/{id}
+                        POST /api/v1/cart/park
+                        POST /api/v1/cart/restore
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Register Session Scoping): Scopes cart state to specific cashier terminal, shift, and outlet.
+Step 2 (Item Addition & Quantity Math): Adds products to cart, validates stock levels, and applies line modifiers.
+Step 3 (Pricing & Tax Calculation): Recalculates subtotal, discounts, and applicable VAT/sales taxes in real-time.
+Step 4 (Cart Park / Hold): Saves suspended cart with table or customer tag for later recall by cashier.
+Step 5 (Cart Resumption & Clear): Restores held cart back to active POS terminal or flushes upon completed order.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0092 - Multi-Level Product Category & Tax Group Taxonomy Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0092
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/CategoryController.php
+Related Model / Service:App\Models\Category, App\Models\Product
+Method / Entry Point:   CategoryController::index(), store(), show(), update(), destroy()
+Command / API Route:    GET    /api/v1/categories
+                        POST   /api/v1/categories
+                        GET    /api/v1/categories/{id}
+                        PUT    /api/v1/categories/{id}
+                        DELETE /api/v1/categories/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Scoping): Restricts category tree to authenticated tenant organization.
+Step 2 (Hierarchical Category Tree): Retrieves nested parent-child categories for POS menu navigation.
+Step 3 (Category Creation): Validates category name, color code, icon, and parent category ID.
+Step 4 (Tax Group Association): Links default sales tax rates to categories for automated tax calculation.
+Step 5 (Menu Sorting & Display Order): Updates display sort ordering for POS touch-screen grids.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0093 - Promotional Coupon Rules, Usage Quotas & Redemption Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0093
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/CouponController.php
+Related Model / Service:App\Models\Coupon, DB table coupon_usages
+Method / Entry Point:   CouponController::index(), store(), show(), update(), destroy(), validateCoupon()
+Command / API Route:    GET  /api/v1/coupons
+                        POST /api/v1/coupons
+                        GET  /api/v1/coupons/{id}
+                        PUT  /api/v1/coupons/{id}
+                        POST /api/v1/coupons/validate
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Isolation): Validates promotional coupon codes within tenant scope.
+Step 2 (Code & Validity Evaluation): Checks coupon start date, end date, minimum spend, and customer restrictions.
+Step 3 (Quota & Per-User Limit Check): Verifies remaining usage quota and maximum redeems per customer account.
+Step 4 (Discount Application): Computes fixed-amount or percentage discount deduction against eligible cart items.
+Step 5 (Redemption Counter Increment): Records atomic redemption log entry upon successful checkout completion.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0094 - Real-time Operations KPI Analytics & Store Executive Metrics Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0094
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/DashboardController.php
+Related Model / Service:App\Models\Order, App\Models\Payment, App\Models\Product
+Method / Entry Point:   DashboardController::summary(), salesVelocity(), topSellingProducts()
+Command / API Route:    GET /api/v1/dashboard/summary
+                        GET /api/v1/dashboard/velocity
+                        GET /api/v1/dashboard/top-products
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant & Outlet Scoping): Scopes KPI metrics to requested tenant and specific outlet branch.
+Step 2 (Real-Time Revenue Aggregation): Computes gross sales, net sales, refund totals, and tax collections for current day.
+Step 3 (Transaction Volume Metrics): Aggregates completed order count, average ticket size, and hourly sales velocity.
+Step 4 (Low Stock Inventory Warnings): Identifies items with stock on hand falling below reorder threshold points.
+Step 5 (Top-Selling Products): Ranks top 5 revenue-generating items and top categories for executive oversight.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0095 - Automated Discount Engines, Happy Hour & Volume Pricing Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0095
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/DiscountController.php
+Related Model / Service:App\Models\Discount, App\Models\Product
+Method / Entry Point:   DiscountController::index(), store(), show(), update(), destroy()
+Command / API Route:    GET    /api/v1/discounts
+                        POST   /api/v1/discounts
+                        GET    /api/v1/discounts/{id}
+                        PUT    /api/v1/discounts/{id}
+                        DELETE /api/v1/discounts/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Scoping): Isolates discount rules and promotional matrices per tenant.
+Step 2 (Discount Definition): Configures percentage discounts, fixed reductions, and buy-X-get-Y (BOGO) rules.
+Step 3 (Schedule & Happy Hour Trigger): Restricts discounts to specific days of week and time windows.
+Step 4 (Target Item Matching): Matches discount applicability against individual SKUs, categories, or order totals.
+Step 5 (Manager Authorization Override): Enforces supervisor PIN approval for ad-hoc cashier manual discounts.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0096 - Cash Flow, Revenue Accounts & Financial Ledger Management Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0096
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/FinanceController.php
+Related Model / Service:DB table ledger_entries, App\Models\Shift
+Method / Entry Point:   FinanceController::index(), recordCashMovement(), dailySummary()
+Command / API Route:    GET  /api/v1/finance/ledger
+                        POST /api/v1/finance/cash-movement
+                        GET  /api/v1/finance/daily-summary
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Ledger Scoping): Enforces tenant financial data isolation across chart of accounts.
+Step 2 (Cash Drawer In/Out Recording): Records cash drops, float additions, and petty cash payouts with cashier reason notes.
+Step 3 (Revenue Account Mapping): Maps checkout payment methods (Cash, Card, Bakong KHQR) to financial accounts.
+Step 4 (Daily Summary Generation): Generates end-of-day revenue summaries and cash-on-hand audit totals.
+Step 5 (Financial Export): Exports ledger entries to standardized CSV/accounting formats for bookkeeping.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0097 - Kitchen Display System Kitchen Ticket Routing & Cooking Status Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0097
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/KdsController.php
+Related Model / Service:App\Models\Order, DB table kds_tickets
+Method / Entry Point:   KdsController::getActiveTickets(), updateItemStatus(), bumpTicket()
+Command / API Route:    GET  /api/v1/kds/tickets
+                        POST /api/v1/kds/items/{id}/status
+                        POST /api/v1/kds/tickets/{id}/bump
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Outlet Station Routing): Routes order line items to specific kitchen prep stations (Grill, Bar, Salad, Dessert).
+Step 2 (Real-Time Ticket Queue): Provides WebSocket/polling feed of incoming orders sorted by elapsed order time.
+Step 3 (Preparation State Machine): Transitions item status through pending -> preparing -> ready -> served.
+Step 4 (Ticket Timing & Expediting): Calculates kitchen prep latency and visually alerts expediter on delayed tickets.
+Step 5 (Kitchen Item Bump): Bumps completed orders from display and triggers server runner pickup alerts.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0098 - Omnichannel E-Commerce & Third-party Delivery Ingestion Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0098
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/OnlineOrderController.php
+Related Model / Service:App\Models\Order, DB table online_orders
+Method / Entry Point:   OnlineOrderController::index(), ingestOrder(), updateDeliveryStatus()
+Command / API Route:    GET  /api/v1/online-orders
+                        POST /api/v1/online-orders/ingest
+                        PUT  /api/v1/online-orders/{id}/status
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Webhook Ingestion): Receives incoming orders from e-commerce storefronts and delivery aggregator APIs.
+Step 2 (Customer & Address Resolution): Creates or resolves customer profile and delivery address coordinates.
+Step 3 (Inventory Reservation): Atomically holds inventory stock for incoming online order lines.
+Step 4 (Kitchen Order Injection): Injects validated online orders into active KDS and POS queues with pickup timestamps.
+Step 5 (Order Status Webhook Dispatch): Dispatches status change events (Confirmed, Out for Delivery, Completed) back to client.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0099 - Bulk CSV/Excel Product Catalog & Barcode Export Engine Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0099
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/ProductExportController.php
+Related Model / Service:App\Models\Product, App\Models\Category
+Method / Entry Point:   ProductExportController::exportCsv(), exportExcel(), exportBarcodes()
+Command / API Route:    GET /api/v1/products/export/csv
+                        GET /api/v1/products/export/excel
+                        GET /api/v1/products/export/barcodes
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Tenant Scoping): Restricts export data strictly to requesting tenant's product database.
+Step 2 (Export Filter Criteria): Applies filters by category, brand, active status, and stock availability.
+Step 3 (Streaming Cursor Generation): Streams large product catalogs without memory exhaustion via database chunking.
+Step 4 (Column Formatting & Barcode Generation): Formats SKU, barcode, cost price, retail price, and category names.
+Step 5 (File Download Response): Generates downloadable CSV/XLSX file with standard RFC 4180 compliance.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0100 - Supplier Purchase Orders, Goods Receipt & Cost Tracking Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0100
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/PurchaseController.php
+Related Model / Service:DB table purchase_orders, DB table purchase_order_items
+Method / Entry Point:   PurchaseController::index(), store(), show(), receiveGoods(), cancel()
+Command / API Route:    GET  /api/v1/purchases
+                        POST /api/v1/purchases
+                        GET  /api/v1/purchases/{id}
+                        POST /api/v1/purchases/{id}/receive
+                        POST /api/v1/purchases/{id}/cancel
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Purchase Order Creation): Drafts supplier purchase orders with requested SKU quantities and agreed unit costs.
+Step 2 (Approval Workflow): Enforces manager approval for purchase orders exceeding configured expenditure thresholds.
+Step 3 (Goods Receipt Inspection): Records physical received quantities at warehouse/outlet against ordered PO items.
+Step 4 (Inventory Stock Increment): Atomically increments on-hand stock and updates weighted average unit cost.
+Step 5 (Discrepancy & Return Handling): Records damaged goods, short shipments, and supplier credit notes.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0101 - Thermal ESC/POS & Digital Receipt Generator Engine Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0101
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/ReceiptController.php
+Related Model / Service:App\Models\Order, App\Models\Payment
+Method / Entry Point:   ReceiptController::getReceipt(), printThermal(), sendDigitalReceipt()
+Command / API Route:    GET  /api/v1/receipts/{order_id}
+                        POST /api/v1/receipts/{order_id}/print
+                        POST /api/v1/receipts/{order_id}/digital
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Order Summary Retrieval): Fetches completed order details, items, tax breakdown, payments, and discounts.
+Step 2 (Outlet Header & Branding): Injects tenant business logo, branch address, VAT identification number, and phone.
+Step 3 (Dual-Currency Representation): Formats transaction total in primary currency (USD) and local currency (KHR).
+Step 4 (ESC/POS Formatting): Generates thermal receipt command stream for 58mm and 80mm ESC/POS hardware printers.
+Step 5 (Digital Receipt & QR Generation): Generates public verification URL and QR code for paperless digital receipts.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0102 - Omnichannel Returns, Partial Restock & Refund Processing Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0102
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/RefundController.php
+Related Model / Service:App\Models\Order, DB table refunds
+Method / Entry Point:   RefundController::index(), processRefund(), show()
+Command / API Route:    GET  /api/v1/refunds
+                        POST /api/v1/refunds/process
+                        GET  /api/v1/refunds/{id}
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Original Transaction Lookup): Retrieves original sales receipt, line items, and original payment methods.
+Step 2 (Return Eligibility Validation): Verifies return window policy (e.g. within 30 days) and non-refundable flags.
+Step 3 (Line Item Selection & Restock Option): Allows partial line returns and prompts whether item is restocked or damaged.
+Step 4 (Reversal Calculation): Calculates proportional tax, discount clawbacks, and net refund payout amount.
+Step 5 (Financial Refund Execution): Processes refund to original payment gateway, cash drawer payout, or store credit balance.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0103 - Dine-in Floor Plan, Table Status & Seating Management Controller
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0103
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Controllers/Api/V1/TableController.php
+Related Model / Service:DB table dining_tables, App\Models\Order
+Method / Entry Point:   TableController::index(), store(), update(), updateStatus(), transferTable()
+Command / API Route:    GET  /api/v1/tables
+                        POST /api/v1/tables
+                        PUT  /api/v1/tables/{id}
+                        POST /api/v1/tables/{id}/status
+                        POST /api/v1/tables/{id}/transfer
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Outlet Floor Plan Directory): Organizes dining tables into zones/rooms (Main Hall, Patio, VIP Room, Bar).
+Step 2 (Real-Time Table Status): Monitors table states (available, occupied, billed, cleaning, reserved).
+Step 3 (Guest Seating & Order Linking): Binds active order cart to specific table number and records guest cover count.
+Step 4 (Table Transfer & Split): Supports moving orders between tables or splitting checks across guests.
+Step 5 (Bill Print & Table Clearance): Marks table billed upon receipt printing and resets to available upon payment.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0104 - National Bank of Cambodia Forex Rate Scheduled Sync Command
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0104
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Console/Commands/SyncNbcExchangeRateCommand.php
+Related Model / Service:App\Services\ExchangeRateService, DB table exchange_rates
+Method / Entry Point:   SyncNbcExchangeRateCommand::handle()
+Command / API Route:    Command: php artisan exchange-rate:sync-nbc
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Scheduled Cron Trigger): Executes daily scheduled job at 08:30 AM to capture official NBC exchange rates.
+Step 2 (External API Ingestion): Queries National Bank of Cambodia API or official bank exchange rate feed.
+Step 3 (Rate Parsing & Validation): Validates USD/KHR currency pair rate against safety bounds (e.g. 4000 to 4200 KHR).
+Step 4 (Database Upsert): Updates exchange_rates table with official buy, sell, and mid market rates for today.
+Step 5 (Cache Invalidation): Clears distributed Redis exchange rate caches so POS terminals immediately use updated rates.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0105 - Physical Cash Drawer Float Alerting & Event Notification Service
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0105
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Services/CashDrawerNotificationService.php
+Related Model / Service:App\Models\Shift, App\Models\Payment
+Method / Entry Point:   CashDrawerNotificationService::notifyManualDrawerKick(), checkCashLimitThreshold()
+Command / API Route:    Service Layer: App\Services\CashDrawerNotificationService
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Cash Drawer Event Capture): Listens for physical drawer open commands, manual kicks, or unexpected drawer openings.
+Step 2 (Threshold Evaluation): Evaluates current cash on hand against maximum drawer cash limit policies.
+Step 3 (Cash Skim / Drop Alert): Dispatches automated alert to store manager when cash on hand exceeds threshold.
+Step 4 (Audit Trail Recording): Records every physical drawer kick event with timestamp, cashier ID, and reason.
+Step 5 (Shift Reconciliation Check): Verifies opening float and expected closing cash balance against actual drawer count.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0106 - National Bank of Cambodia Bakong KHQR Settlement Gateway Service
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0106
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Services/BakongService.php
+Related Model / Service:App\Models\Payment, Bakong Open API Gateway
+Method / Entry Point:   BakongService::generateKhqr(), verifyPayment(), checkStatus()
+Command / API Route:    Service Layer: App\Services\BakongService
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (KHQR Payload Generation): Generates EMVCo-compliant KHQR string containing merchant ID, currency (USD/KHR), and amount.
+Step 2 (Dynamic QR Code Encoding): Renders dynamic QR code image or deep link for customer banking app scanning.
+Step 3 (Real-Time Payment Polling): Polls Bakong Open API gateway or listens for real-time payment webhook notifications.
+Step 4 (Cryptographic Signature Validation): Verifies Bakong RSA/HMAC webhook signature to prevent fraudulent confirmations.
+Step 5 (Order Settlement Finalization): Marks order payment as settled, records Bakong external transaction ID, and releases cart.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0107 - Inter-Service HTTP Client & Tenant Token Validator Service
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0107
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Services/AuthServiceClient.php
+Related Model / Service:Illuminate\Support\Facades\Http, auth-service endpoints
+Method / Entry Point:   AuthServiceClient::validateToken(), getTenantQuota(), verifyUser()
+Command / API Route:    Service Layer: App\Services\AuthServiceClient
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Microservice URL Resolution): Resolves internal auth-service endpoint URL via Docker network or environment config.
+Step 2 (Bearer Token Propagation): Passes incoming user JWT token or service-to-service API key in Authorization header.
+Step 3 (Remote Token Validation): Calls auth-service /api/v1/auth/verify to validate user session and permissions.
+Step 4 (Tenant Context Caching): Caches verified tenant quotas and permissions locally in Redis for 60 seconds.
+Step 5 (Circuit Breaker Fallback): Handles network timeouts gracefully and reports auth service connectivity health.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0108 - Currency Conversion Math & Multi-Currency Price Resolution Service
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0108
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Services/ExchangeRateService.php
+Related Model / Service:App\Models\ExchangeRate, DB table exchange_rates
+Method / Entry Point:   ExchangeRateService::getActiveRate(), convertUsdToKhr(), convertKhrToUsd()
+Command / API Route:    Service Layer: App\Services\ExchangeRateService
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Active Rate Resolution): Fetches current active exchange rate for currency pair (USD <-> KHR) from database or cache.
+Step 2 (Precision Conversion Math): Executes high-precision decimal multiplication/division to avoid floating-point inaccuracies.
+Step 3 (Currency Rounding Rules): Applies Cambodian Riel standard rounding (rounding to nearest 100 KHR).
+Step 4 (Dual-Currency Display Structuring): Formats price objects returning amount_usd, amount_khr, and formatted display strings.
+Step 5 (Cash Change Calculation): Computes customer cash change in mixed currencies (e.g. paid in USD, change in KHR).
+
+--------------------------------------------------------------------------------
+TICKET: BD-0109 - Point-of-Sale Order Calculation & Multi-Payment Settlement Engine
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0109
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Services/CheckoutService.php
+Related Model / Service:App\Models\Order, App\Models\Payment, App\Models\Product
+Method / Entry Point:   CheckoutService::processCheckout(), calculateTotals(), handleSplitPayment()
+Command / API Route:    Service Layer: App\Services\CheckoutService
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Cart Inventory Lock): Verifies real-time stock levels and places transactional lock on cart item SKUs.
+Step 2 (Tiered Price & Tax Calculation): Applies discounts, coupons, service charges, and VAT breakdown.
+Step 3 (Multi-Tender Payment Execution): Routes payments across cash, credit card, Bakong KHQR, or customer store credit.
+Step 4 (Order & Receipt Creation): Generates sequential invoice order number, stores line items, and commits transaction.
+Step 5 (Inventory Decrement & KDS Dispatch): Atomically decrements stock and transmits order tickets to kitchen display displays.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0110 - Operations Cloudinary Asset Uploader & Product Image CDN Service
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0110
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Services/CloudinaryService.php
+Related Model / Service:Cloudinary\Cloudinary API, App\Models\Product
+Method / Entry Point:   CloudinaryService::uploadImage(), deleteImage()
+Command / API Route:    Service Layer: App\Services\CloudinaryService
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Asset Inspection): Inspects product photos, category icons, and brand logos for allowable formats and dimensions.
+Step 2 (Image Optimization): Resizes and compresses images for high-speed POS display and e-commerce web clients.
+Step 3 (Secure Cloudinary Transport): Uploads image binary securely to Cloudinary with tenant-specific folder prefixes.
+Step 4 (CDN URL Storage): Returns HTTPS CDN URL to caller for storage in products or categories table.
+Step 5 (Remote Asset Deletion): Deletes obsolete product imagery from Cloudinary CDN when items are deleted.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0111 - Operations Distributed JWT Authentication & Verification Middleware
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0111
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Middleware/AuthenticateJwt.php
+Related Model / Service:App\Services\JwtService, App\Services\AuthServiceClient
+Method / Entry Point:   AuthenticateJwt::handle()
+Command / API Route:    Middleware: jwt.auth
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Bearer Token Parsing): Extracts Authorization Bearer token header from incoming microservice request.
+Step 2 (Cryptographic Signature Verification): Validates token signature locally using shared HMAC-SHA256 secret.
+Step 3 (Expiration & Claims Check): Verifies token expiration timestamp (exp) and issuer claims.
+Step 4 (Tenant Scoping Injection): Injects user_id, tenant_id, and outlet_id into request attributes.
+Step 5 (Security Guard Fallback): Blocks unauthenticated requests with HTTP 401 Unauthorized.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0112 - Operations HTTP Audit & Request Activity Logging Middleware
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0112
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Middleware/LogRequestActivity.php
+Related Model / Service:DB table audit_logs
+Method / Entry Point:   LogRequestActivity::handle()
+Command / API Route:    Middleware: log_activity
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Request Capture): Captures request method, path, tenant_id, cashier identity, and client IP address.
+Step 2 (Sensitive Parameter Masking): Masks card PINs, CVVs, and sensitive credentials.
+Step 3 (Pipeline Execution): Executes request downstream and measures response execution time.
+Step 4 (Response Code Auditing): Records HTTP status code and operational error payloads.
+Step 5 (Audit Log Persistence): Appends execution record asynchronously to operations audit ledger.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0113 - Operations Role-Based Access Control Enforcement Middleware
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0113
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Http/Middleware/EnsureRole.php
+Related Model / Service:App\Services\JwtService
+Method / Entry Point:   EnsureRole::handle()
+Command / API Route:    Middleware: role:role_name
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Token Role Extraction): Decodes user role slug from verified JWT payload.
+Step 2 (Privilege Matrix Matching): Checks whether user role matches the required endpoint permission role.
+Step 3 (Manager Override Evaluation): Permits tenant owner and manager roles to access supervisor functions.
+Step 4 (Forbidden Interception): Returns HTTP 403 Forbidden with security error message on unauthorized access.
+Step 5 (Downstream Forwarding): Passes authorized request forward to target controller.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0114 - Operations Local JWT Decoding & Signature Verification Service
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0114
+Component / Service:    operations-service
+File Path:              codebridge-services/operations-service/app/Services/JwtService.php
+Related Model / Service:Firebase\JWT\JWT, config/jwt.php
+Method / Entry Point:   JwtService::decode(), verify(), getTenantId()
+Command / API Route:    Service Layer: App\Services\JwtService
+Date & Time:            2026-10-23T15:40:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Secret Key Initialization): Retrieves JWT secret key from service environment configuration.
+Step 2 (Base64URL Header & Payload Decoding): Splits token into header, payload, and cryptographic signature.
+Step 3 (Signature Math Verification): Re-hashes header and payload to compare against incoming signature.
+Step 4 (Claim Extraction): Returns structured claim payload (sub, tenant_id, outlet_id, role, exp).
+Step 5 (Token Exception Handling): Translates expired and malformed tokens into standard domain exceptions.
+
+================================================================================
+END OF CODEBRIDGE SYSTEM MASTER TICKETS SPECIFICATION
+================================================================================

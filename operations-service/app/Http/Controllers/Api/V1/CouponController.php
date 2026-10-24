@@ -6,6 +6,29 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0093] Promotional Coupon Rules, Usage Quotas & Redemption Controller
+ *
+ * @ticket BD-0093
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/CouponController.php
+ * @related-model App\Models\Coupon, DB table coupon_usages
+ * @entry-point CouponController::index(), store(), show(), update(), destroy(), validateCoupon()
+ * @routes
+ *  - GET  /api/v1/coupons
+ *  - POST /api/v1/coupons
+ *  - GET  /api/v1/coupons/{id}
+ *  - PUT  /api/v1/coupons/{id}
+ *  - POST /api/v1/coupons/validate
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Isolation): Validates promotional coupon codes within tenant scope.
+ * Step 2 (Code & Validity Evaluation): Checks coupon start date, end date, minimum spend, and customer restrictions.
+ * Step 3 (Quota & Per-User Limit Check): Verifies remaining usage quota and maximum redeems per customer account.
+ * Step 4 (Discount Application): Computes fixed-amount or percentage discount deduction against eligible cart items.
+ * Step 5 (Redemption Counter Increment): Records atomic redemption log entry upon successful checkout completion.
+ */
 class CouponController extends Controller
 {
     /**

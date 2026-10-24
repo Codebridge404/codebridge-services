@@ -6,6 +6,28 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0067] Meeting Action Items & Task Delegation Controller
+ *
+ * @ticket BD-0067
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingActionItemController.php
+ * @related-model DB table meeting_action_items, App\Models\User
+ * @entry-point MeetingActionItemController::index(), store(), update(), destroy()
+ * @routes
+ *  - GET    /api/v1/meetings/{meeting_id}/action-items
+ *  - POST   /api/v1/meetings/{meeting_id}/action-items
+ *  - PUT    /api/v1/action-items/{id}
+ *  - DELETE /api/v1/action-items/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Meeting Ownership Verification): Validates parent meeting existence within current tenant partition.
+ * Step 2 (Action Item Assignment): Assigns follow-up tasks to specific staff members with strict deadlines.
+ * Step 3 (Status Tracking): Updates progress states (pending, in_progress, completed, deferred).
+ * Step 4 (Automated Escalation): Flags overdue action items in daily meeting summaries.
+ * Step 5 (Completion Verification): Records sign-off timestamp and completion notes.
+ */
 class MeetingActionItemController extends Controller
 {
     /**

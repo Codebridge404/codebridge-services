@@ -7,6 +7,22 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0008] Corporate Meeting Scheduling, Room Collision & Ghost Auto-Release Controller.
+ *
+ * @ticket BD-0008
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingController.php
+ * @table meeting_bookings, meeting_rooms, meeting_attendees
+ * @entry-point GET /api/v1/meetings, POST /api/v1/meetings, POST /api/v1/meetings/{id}/checkin
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Zero double-booking collision algorithm with turnover buffers.
+ * 2. 15-minute unattended ghost-room auto-cancellation and resource recovery.
+ * 3. Digital door tablet check-in and QR ad-hoc reservations.
+ * 4. Multi-channel Telegram bot and RFC 5545 iCalendar dispatching.
+ */
 class MeetingController extends Controller
 {
     /**

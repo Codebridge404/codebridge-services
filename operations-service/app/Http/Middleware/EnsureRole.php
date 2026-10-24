@@ -6,6 +6,25 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
+/**
+ * [BD-0113] Operations Role-Based Access Control Enforcement Middleware
+ *
+ * @ticket BD-0113
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Middleware/EnsureRole.php
+ * @related-model App\Services\JwtService
+ * @entry-point EnsureRole::handle()
+ * @routes
+ *  - Middleware: role:role_name
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Token Role Extraction): Decodes user role slug from verified JWT payload.
+ * Step 2 (Privilege Matrix Matching): Checks whether user role matches the required endpoint permission role.
+ * Step 3 (Manager Override Evaluation): Permits tenant owner and manager roles to access supervisor functions.
+ * Step 4 (Forbidden Interception): Returns HTTP 403 Forbidden with security error message on unauthorized access.
+ * Step 5 (Downstream Forwarding): Passes authorized request forward to target controller.
+ */
 class EnsureRole
 {
     /**

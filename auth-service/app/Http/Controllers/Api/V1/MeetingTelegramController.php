@@ -8,6 +8,27 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
+/**
+ * [BD-0074] Telegram Bot Meeting Integration & Real-time Alerts Controller
+ *
+ * @ticket BD-0074
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingTelegramController.php
+ * @related-model DB table telegram_integrations, App\Models\User
+ * @entry-point MeetingTelegramController::webhook(), linkAccount(), sendTestAlert()
+ * @routes
+ *  - POST /api/v1/meetings/telegram/webhook
+ *  - POST /api/v1/meetings/telegram/link
+ *  - POST /api/v1/meetings/telegram/test
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Telegram Webhook Verification): Validates incoming Telegram bot requests with secure secret token.
+ * Step 2 (User Chat Linking): Links staff Telegram Chat ID to internal employee user account via OTP verification.
+ * Step 3 (Instant Meeting Alerts): Dispatches instant push messages to Telegram groups or direct chats for upcoming meetings.
+ * Step 4 (Interactive Responses): Processes inline button responses (Accept, Decline, Reschedule) from Telegram.
+ * Step 5 (Command Handling): Handles bot commands (/schedule, /today, /status) directly inside Telegram channels.
+ */
 class MeetingTelegramController extends Controller
 {
     /**

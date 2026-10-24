@@ -6,6 +6,29 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0072] Conference Room Scheduling & Conflict Resolution Controller
+ *
+ * @ticket BD-0072
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingRoomController.php
+ * @related-model DB table meeting_rooms, App\Models\Outlet
+ * @entry-point MeetingRoomController::index(), store(), update(), destroy(), availability()
+ * @routes
+ *  - GET    /api/v1/meeting-rooms
+ *  - POST   /api/v1/meeting-rooms
+ *  - PUT    /api/v1/meeting-rooms/{id}
+ *  - DELETE /api/v1/meeting-rooms/{id}
+ *  - GET    /api/v1/meeting-rooms/{id}/availability
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Room Directory): Lists physical conference rooms, boardrooms, and meeting pods per store/outlet.
+ * Step 2 (Capacity & Amenity Filtering): Filters rooms by attendee seating capacity and audiovisual capabilities.
+ * Step 3 (Overlap & Conflict Detection): Validates proposed booking time intervals against existing reservations.
+ * Step 4 (Room Reservation Lock): Locks room slot and issues confirmation details to meeting organizer.
+ * Step 5 (Room Maintenance Schedule): Blocks rooms during scheduled cleaning, maintenance, or refurbishments.
+ */
 class MeetingRoomController extends Controller
 {
     /**

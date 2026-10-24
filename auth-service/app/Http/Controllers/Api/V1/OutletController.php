@@ -7,6 +7,21 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0004] Multi-Outlet & Physical Branch Management Controller.
+ *
+ * @ticket BD-0004
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/OutletController.php
+ * @related-model App\Models\Outlet, App\Models\User
+ * @entry-point GET /api/v1/outlets, POST /api/v1/outlets, PUT /api/v1/outlets/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Automatic generation of UUIDv4 for new outlets.
+ * 2. Links staff members via outlet_uuid.
+ * 3. Enforces multi-tenant workspace isolation.
+ */
 class OutletController extends Controller
 {
     public function index(Request $request)
@@ -46,7 +61,7 @@ class OutletController extends Controller
                 'o.is_cfd_enabled',
                 'o.terminal_settings',
                 'o.created_at',
-                DB::raw('(SELECT COUNT(*) FROM users WHERE outlet_id = o.id) as staff_count'),
+                DB::raw('(SELECT COUNT(*) FROM users WHERE outlet_uuid = o.uuid) as staff_count'),
                 DB::raw('(SELECT COUNT(*) FROM registers WHERE outlet_id = o.id) as registers_count')
             )
             ->orderBy('o.name', 'asc')

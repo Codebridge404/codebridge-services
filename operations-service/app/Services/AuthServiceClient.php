@@ -11,6 +11,25 @@ use Illuminate\Support\Facades\Log;
  * Facilitates inter-service HTTP communication and event dispatching
  * from Operations Service to Auth Service (Database-per-service pattern).
  */
+/**
+ * [BD-0107] Inter-Service HTTP Client & Tenant Token Validator Service
+ *
+ * @ticket BD-0107
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Services/AuthServiceClient.php
+ * @related-model Illuminate\Support\Facades\Http, auth-service endpoints
+ * @entry-point AuthServiceClient::validateToken(), getTenantQuota(), verifyUser()
+ * @routes
+ *  - Service Layer: App\Services\AuthServiceClient
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Microservice URL Resolution): Resolves internal auth-service endpoint URL via Docker network or environment config.
+ * Step 2 (Bearer Token Propagation): Passes incoming user JWT token or service-to-service API key in Authorization header.
+ * Step 3 (Remote Token Validation): Calls auth-service /api/v1/auth/verify to validate user session and permissions.
+ * Step 4 (Tenant Context Caching): Caches verified tenant quotas and permissions locally in Redis for 60 seconds.
+ * Step 5 (Circuit Breaker Fallback): Handles network timeouts gracefully and reports auth service connectivity health.
+ */
 class AuthServiceClient
 {
     protected string $baseUrl;
@@ -23,10 +42,27 @@ class AuthServiceClient
     }
 
     /**
-     * Verify a Bearer token with Auth Service
+     * Verify a Bearer token with Auth Service (Stateless JWT first, then HTTP fallback)
      */
     public function verifyToken(string $token): ?array
     {
+        // 1. Fast-path: Stateless cryptographic JWT verification
+        if (substr_count($token, '.') === 2) {
+            $claims = app(JwtService::class)->verify($token);
+            if ($claims && !empty($claims['sub'])) {
+                return [
+                    'id' => (int) $claims['sub'],
+                    'name' => $claims['name'] ?? 'User',
+                    'email' => $claims['email'] ?? '',
+                    'role' => $claims['role'] ?? 'cashier',
+                    'tenant_id' => $claims['tenant_id'] ?? null,
+                    'outlet_id' => $claims['outlet_id'] ?? null,
+                    'permissions' => $claims['permissions'] ?? [],
+                ];
+            }
+        }
+
+        // 2. Fallback: HTTP call to Auth Service /me
         try {
             $response = Http::timeout($this->timeout)
                 ->withToken($token)

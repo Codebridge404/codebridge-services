@@ -22,10 +22,18 @@ class Meeting extends Model
     ];
 
     protected $casts = [
+        'tenant_id' => 'integer',
+        'room_id' => 'integer',
+        'organizer_id' => 'integer',
         'start_time' => 'datetime',
         'end_time' => 'datetime',
         'checked_in_at' => 'datetime',
     ];
+
+    public function tenant()
+    {
+        return $this->belongsTo(Tenant::class, 'tenant_id');
+    }
 
     public function room()
     {

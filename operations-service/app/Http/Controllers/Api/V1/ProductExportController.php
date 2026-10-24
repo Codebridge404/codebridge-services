@@ -6,6 +6,27 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0099] Bulk CSV/Excel Product Catalog & Barcode Export Engine Controller
+ *
+ * @ticket BD-0099
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/ProductExportController.php
+ * @related-model App\Models\Product, App\Models\Category
+ * @entry-point ProductExportController::exportCsv(), exportExcel(), exportBarcodes()
+ * @routes
+ *  - GET /api/v1/products/export/csv
+ *  - GET /api/v1/products/export/excel
+ *  - GET /api/v1/products/export/barcodes
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Scoping): Restricts export data strictly to requesting tenant's product database.
+ * Step 2 (Export Filter Criteria): Applies filters by category, brand, active status, and stock availability.
+ * Step 3 (Streaming Cursor Generation): Streams large product catalogs without memory exhaustion via database chunking.
+ * Step 4 (Column Formatting & Barcode Generation): Formats SKU, barcode, cost price, retail price, and category names.
+ * Step 5 (File Download Response): Generates downloadable CSV/XLSX file with standard RFC 4180 compliance.
+ */
 class ProductExportController extends Controller
 {
     protected function getTenantId(Request $request): ?string

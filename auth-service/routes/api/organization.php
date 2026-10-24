@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\DepartmentController;
 use App\Http\Controllers\Api\V1\EmployeeController;
 use App\Http\Controllers\Api\V1\GiftCardController;
 use App\Http\Controllers\Api\V1\OutletController;
+use App\Http\Controllers\Api\V1\StoreCreditInvoiceController;
 use App\Http\Controllers\Api\V1\SupplierController;
 use Illuminate\Support\Facades\Route;
 
@@ -55,6 +56,18 @@ Route::middleware('role:organization,admin,super_admin,outlet_manager')->group(f
     Route::post('/customers/{id}/loyalty', [CustomerLoyaltyController::class, 'adjustLoyaltyPoints']);
     Route::post('/customers/{id}/convert-points', [CustomerLoyaltyController::class, 'convertPointsToCredit']);
     Route::get('/customers/{id}/history', [CustomerLoyaltyController::class, 'getHistory']);
+
+    // Customer Store Credit Top-Up Invoicing, Statements & Expirations
+    Route::post('/customers/{id}/credit/topup-invoice', [StoreCreditInvoiceController::class, 'topUp']);
+    Route::get('/customers/{id}/credit/invoices', [StoreCreditInvoiceController::class, 'customerInvoices']);
+    Route::get('/customers/credit/invoices/{invoiceId}', [StoreCreditInvoiceController::class, 'showInvoice']);
+    Route::get('/customers/{id}/credit/statement', [StoreCreditInvoiceController::class, 'statement']);
+    Route::post('/customers/credit/process-expirations', [StoreCreditInvoiceController::class, 'expireNow']);
+
+    // Digital Vouchers Issuing & Redemptions
+    Route::get('/vouchers', [StoreCreditInvoiceController::class, 'vouchers']);
+    Route::post('/vouchers/issue', [StoreCreditInvoiceController::class, 'issueVoucher']);
+    Route::post('/vouchers/redeem', [StoreCreditInvoiceController::class, 'redeemVoucher']);
 
     // Employees CRUD
     Route::get('/employees', [EmployeeController::class, 'index']);

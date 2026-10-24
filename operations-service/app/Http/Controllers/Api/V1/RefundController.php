@@ -7,6 +7,27 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
+/**
+ * [BD-0102] Omnichannel Returns, Partial Restock & Refund Processing Controller
+ *
+ * @ticket BD-0102
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/RefundController.php
+ * @related-model App\Models\Order, DB table refunds
+ * @entry-point RefundController::index(), processRefund(), show()
+ * @routes
+ *  - GET  /api/v1/refunds
+ *  - POST /api/v1/refunds/process
+ *  - GET  /api/v1/refunds/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Original Transaction Lookup): Retrieves original sales receipt, line items, and original payment methods.
+ * Step 2 (Return Eligibility Validation): Verifies return window policy (e.g. within 30 days) and non-refundable flags.
+ * Step 3 (Line Item Selection & Restock Option): Allows partial line returns and prompts whether item is restocked or damaged.
+ * Step 4 (Reversal Calculation): Calculates proportional tax, discount clawbacks, and net refund payout amount.
+ * Step 5 (Financial Refund Execution): Processes refund to original payment gateway, cash drawer payout, or store credit balance.
+ */
 class RefundController extends Controller
 {
     /**

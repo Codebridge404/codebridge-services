@@ -7,6 +7,26 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0076] Global Platform Microservice Modules & Features Controller
+ *
+ * @ticket BD-0076
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/PlatformModuleController.php
+ * @related-model DB table platform_modules, App\Models\Tenant
+ * @entry-point PlatformModuleController::index(), updateModuleStatus()
+ * @routes
+ *  - GET /api/v1/platform-modules
+ *  - PUT /api/v1/platform-modules/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Superadmin Authorization): Requires superadmin platform credentials to configure system modules.
+ * Step 2 (Module Registry Listing): Returns all platform modules (KDS, Tables, Loyalty, Multi-currency, Store Credit).
+ * Step 3 (Feature Flag Definition): Defines availability flags, beta release toggles, and minimum service version requirements.
+ * Step 4 (Dependency Validation): Verifies required base services before enabling advanced platform add-ons.
+ * Step 5 (Global Catalog Distribution): Synchronizes enabled module registry with downstream microservices.
+ */
 class PlatformModuleController extends Controller
 {
     /**

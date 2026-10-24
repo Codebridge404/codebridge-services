@@ -3,11 +3,37 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\ShiftVarianceAlert;
+use App\Services\CashDrawerNotificationService;
+use Dedoc\Scramble\Attributes\Group;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0055] Shift Management, Till Float & Automated Variance Notification APIs.
+ *
+ * @ticket BD-0055
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/ShiftController.php
+ * @related-service App\Services\CashDrawerNotificationService
+ * @related-model App\Models\ShiftVarianceAlert
+ * @entry-point API Routes: /api/v1/shifts/*
+ * @date-time 2026-10-23T15:35:00+07:00
+ *
+ * Capabilities:
+ * - Starting float & cash drawer kick authorization.
+ * - Mid-shift cash drops & pay-outs.
+ * - End-of-shift Z-Report reconciliation.
+ * - Automated threshold-based cash discrepancy variance alerts dispatched to managers.
+ *
+ * @tags Shifts & Cash Drawer
+ */
+#[Group('Shifts & Cash Drawer')]
 class ShiftController extends Controller
 {
+    public function __construct(
+        protected CashDrawerNotificationService $notificationService
+    ) {}
     private function getShiftMetrics($shiftId, $openingFloat)
     {
         $cashSales = (float) DB::table('sales as s')
@@ -175,6 +201,17 @@ class ShiftController extends Controller
             'updated_at' => now(),
         ]);
 
+        // Automated Telegram & Email Variance Threshold Notification Dispatch
+        $alertResult = $this->notificationService->checkAndDispatchVarianceAlert(
+            shift: $shift,
+            cashVariance: $cashVariance,
+            expectedCash: $m['expectedCash'],
+            countedCash: $countedCash,
+            closingNote: $closingNote,
+            cashier: $request->user(),
+            customTolerance: $request->input('tolerance_threshold') ? (float) $request->input('tolerance_threshold') : null
+        );
+
         return response()->json([
             'status' => 'success',
             'message' => 'Shift closed successfully.',
@@ -183,6 +220,7 @@ class ShiftController extends Controller
                 'expected_cash' => $m['expectedCash'],
                 'counted_cash' => $countedCash,
                 'cash_variance' => $cashVariance,
+                'variance_alert' => $alertResult,
             ],
         ]);
     }
@@ -242,5 +280,93 @@ class ShiftController extends Controller
             ->get();
 
         return response()->json(['status' => 'success', 'data' => ['shifts' => $shifts]]);
+    }
+
+    /**
+     * Get recent Shift Cash Drawer Variance Alerts.
+     * GET /api/v1/shifts/variance-alerts
+     */
+    public function varianceAlerts(Request $request)
+    {
+        $alerts = DB::table('shift_variance_alerts as a')
+            ->leftJoin('shifts as s', 'a.shift_id', '=', 's.id')
+            ->leftJoin('users as u', 'a.user_id', '=', 'u.id')
+            ->select('a.*', 'u.name as cashier_name', 's.opened_at', 's.closed_at')
+            ->orderBy('a.id', 'desc')
+            ->limit(50)
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'alerts' => $alerts,
+            ],
+        ]);
+    }
+
+    /**
+     * Get Cash Drawer Float Variance Notification Configuration.
+     * GET /api/v1/shifts/variance-config
+     */
+    public function varianceConfig(Request $request)
+    {
+        $tolerance = (float) config('services.cash_drawer.variance_tolerance', env('CASH_DRAWER_VARIANCE_TOLERANCE', 5.00));
+        $telegramToken = config('services.telegram.bot_token', env('TELEGRAM_BOT_TOKEN'));
+        $telegramChat = config('services.telegram.chat_id', env('TELEGRAM_ALERT_CHAT_ID', env('TELEGRAM_CHAT_ID')));
+        $emailRecipient = config('services.cash_drawer.alert_email', env('SHIFT_ALERT_EMAIL', env('MAIL_FROM_ADDRESS', 'manager@codebridges.io')));
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'tolerance_threshold' => $tolerance,
+                'channels' => [
+                    'telegram' => [
+                        'configured' => !empty($telegramToken) && !empty($telegramChat),
+                        'chat_id' => !empty($telegramChat) ? substr($telegramChat, 0, 4) . '***' : null,
+                    ],
+                    'email' => [
+                        'configured' => !empty($emailRecipient),
+                        'recipient' => $emailRecipient,
+                    ],
+                ],
+            ],
+        ]);
+    }
+
+    /**
+     * Test Cash Drawer Float Variance Automated Notification.
+     * POST /api/v1/shifts/test-variance-alert
+     */
+    public function testVarianceAlert(Request $request)
+    {
+        $validated = $request->validate([
+            'variance_amount' => 'nullable|numeric',
+            'outlet_name' => 'nullable|string',
+            'note' => 'nullable|string',
+        ]);
+
+        $mockShift = (object) [
+            'id' => rand(100, 999),
+            'user_id' => $request->user()->id,
+            'outlet_id' => 1,
+        ];
+
+        $variance = (float) ($validated['variance_amount'] ?? -15.00);
+
+        $result = $this->notificationService->checkAndDispatchVarianceAlert(
+            shift: $mockShift,
+            cashVariance: $variance,
+            expectedCash: 200.00,
+            countedCash: 200.00 + $variance,
+            closingNote: $validated['note'] ?? 'Test shift float discrepancy dispatch',
+            cashier: $request->user(),
+            customTolerance: 5.00
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Automated shift float variance test notification dispatched.',
+            'data' => $result,
+        ]);
     }
 }

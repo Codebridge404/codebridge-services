@@ -6,6 +6,26 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0080] Per-Tenant Module Entitlements & Subscription Tiers Controller
+ *
+ * @ticket BD-0080
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/TenantModuleController.php
+ * @related-model DB table tenant_modules, App\Models\Tenant
+ * @entry-point TenantModuleController::index(), updateModule()
+ * @routes
+ *  - GET /api/v1/tenants/{tenant_id}/modules
+ *  - PUT /api/v1/tenants/{tenant_id}/modules
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Subscription Verification): Inspects tenant subscription plan tier (Basic, Professional, Enterprise).
+ * Step 2 (Module Entitlement Resolution): Queries tenant_modules table to verify active feature licenses.
+ * Step 3 (Add-on Module Provisioning): Activates premium modules (KDS, Advanced Loyalty, Table Reservations).
+ * Step 4 (Feature Gatekeeper Enforcement): Enforces API route access blocking if requested module is not licensed.
+ * Step 5 (Expiration & Grace Period Handling): Manages automated module suspension upon subscription expiration.
+ */
 class TenantModuleController extends Controller
 {
     /**

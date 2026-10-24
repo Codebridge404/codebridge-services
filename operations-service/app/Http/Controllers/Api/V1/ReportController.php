@@ -3,11 +3,30 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\ExchangeRateService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0014] Sales Velocity, Profit Margins & Managerial Analytics Streamer.
+ *
+ * @ticket BD-0014
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/ReportController.php
+ * @related-service App\Services\ExchangeRateService
+ * @entry-point GET /api/v1/reports/sales, GET /api/v1/reports/dashboard
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Aggregates gross revenue, 10% VAT, net margins, and discount costs.
+ * 2. Feeds real-time executive dashboard KPIs to Next.js portal.
+ * 3. Dual-currency financial reporting in USD ($) and NBC KHR (៛).
+ */
 class ReportController extends Controller
 {
+    public function __construct(
+        protected ExchangeRateService $exchangeRateService
+    ) {}
     /**
      * Sales & Profit Margin Financial Report API
      */
@@ -187,8 +206,9 @@ class ReportController extends Controller
         $taxableSales = (float) $sales->sum('subtotal');
         $vatCollected = (float) $sales->sum('tax_total');
         $grandTotalUsd = (float) $sales->sum('grand_total');
-        $khrEquivalent = round($grandTotalUsd * 4100);
-        $vatKhrEquivalent = round($vatCollected * 4100);
+        $activeRate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $request->header('X-Tenant-Id'));
+        $khrEquivalent = round($grandTotalUsd * $activeRate);
+        $vatKhrEquivalent = round($vatCollected * $activeRate);
 
         return response()->json([
             'status' => 'success',
@@ -200,7 +220,7 @@ class ReportController extends Controller
                 'vat_rate' => '10%',
                 'grand_total_khr' => $khrEquivalent,
                 'vat_collected_khr' => $vatKhrEquivalent,
-                'exchange_rate' => '1 USD = 4,100 KHR',
+                'exchange_rate' => '1 USD = ' . number_format($activeRate) . ' KHR',
             ],
         ]);
     }

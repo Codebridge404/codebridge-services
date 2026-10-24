@@ -7,6 +7,22 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
+/**
+ * [BD-0003] Multi-Tenant Organization Provisioning & Management Controller.
+ *
+ * @ticket BD-0003
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/TenantController.php
+ * @related-model App\Models\Tenant, App\Models\TenantSubscription, App\Models\Outlet
+ * @entry-point POST /api/v1/tenants/register, GET /api/v1/tenants/my, GET /api/v1/tenants/{id}/settings
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * 1. Self-service organization registration with slug auto-generation.
+ * 2. Automated provisioning of 14-day trial in tenant_subscriptions table.
+ * 3. Primary outlet creation (Main Branch) and default terminal REG-01.
+ * 4. Tenant switcher context resolver and subscription quota management.
+ */
 class TenantController extends Controller
 {
     /**
@@ -174,17 +190,30 @@ class TenantController extends Controller
                 ->orderBy('created_at', 'desc')
                 ->first();
 
-            $tenant->owner = DB::table('users')
-                ->where('tenant_id', $tenant->id)
-                ->whereIn('role', ['organization', 'admin', 'administrator', 'owner'])
-                ->select('id', 'name', 'email', 'phone', 'role', 'is_active', 'created_at')
+            $tenant->owner = DB::table('users as u')
+                ->leftJoin('user_roles as ur', function ($j) {
+                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                })
+                ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                ->where('u.tenant_id', $tenant->id)
+                ->where(function ($q) {
+                    $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+                        $q->orWhereIn('u.role', ['organization', 'admin', 'administrator', 'owner']);
+                    }
+                })
+                ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
                 ->first();
 
             if (!$tenant->owner) {
-                $tenant->owner = DB::table('users')
-                    ->where('tenant_id', $tenant->id)
-                    ->select('id', 'name', 'email', 'phone', 'role', 'is_active', 'created_at')
-                    ->orderBy('created_at', 'asc')
+                $tenant->owner = DB::table('users as u')
+                    ->leftJoin('user_roles as ur', function ($j) {
+                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                    })
+                    ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                    ->where('u.tenant_id', $tenant->id)
+                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                    ->orderBy('u.created_at', 'asc')
                     ->first();
             }
 
@@ -247,12 +276,28 @@ class TenantController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
-        $tenant->owner = DB::table('users')
-            ->where('tenant_id', $id)
-            ->whereIn('role', ['organization', 'admin', 'administrator', 'owner'])
-            ->select('id', 'name', 'email', 'phone', 'role', 'is_active', 'created_at')
+        $tenant->owner = DB::table('users as u')
+            ->leftJoin('user_roles as ur', function ($j) {
+                $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+            })
+            ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+            ->where('u.tenant_id', $id)
+            ->where(function ($q) {
+                $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
+                if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+                    $q->orWhereIn('u.role', ['organization', 'admin', 'administrator', 'owner']);
+                }
+            })
+            ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
             ->first()
-            ?? DB::table('users')->where('tenant_id', $id)->select('id', 'name', 'email', 'phone', 'role', 'is_active', 'created_at')->first();
+            ?? DB::table('users as u')
+                ->leftJoin('user_roles as ur', function ($j) {
+                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                })
+                ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                ->where('u.tenant_id', $id)
+                ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                ->first();
 
         $tenant->users_count = DB::table('users')->where('tenant_id', $id)->count();
         try {
@@ -312,10 +357,19 @@ class TenantController extends Controller
                 'role'      => 'organization',
                 'updated_at'=> now(),
             ]);
-        } elseif ($request->filled('owner_name') || $request->filled('owner_email') || $request->filled('owner_phone')) {
-            $owner = DB::table('users')
-                ->where('tenant_id', $id)
-                ->whereIn('role', ['organization', 'admin', 'administrator', 'owner'])
+            $owner = DB::table('users as u')
+                ->leftJoin('user_roles as ur', function ($j) {
+                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                })
+                ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                ->where('u.tenant_id', $id)
+                ->where(function ($q) {
+                    $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+                        $q->orWhereIn('u.role', ['organization', 'admin', 'administrator', 'owner']);
+                    }
+                })
+                ->select('u.id', 'u.name', 'u.email', 'u.phone', 'u.is_active')
                 ->first()
                 ?? DB::table('users')->where('tenant_id', $id)->first();
 
@@ -328,27 +382,47 @@ class TenantController extends Controller
 
                 DB::table('users')->where('id', $owner->id)->update($ownerUpdates);
             } else if ($request->filled('owner_email')) {
+                $orgRoleId = DB::table('roles')->whereIn('slug', ['organization', 'admin'])->value('id');
                 $existingUser = DB::table('users')->where('email', $request->owner_email)->first();
                 if ($existingUser) {
-                    DB::table('users')->where('id', $existingUser->id)->update([
+                    $ownerUpdate = [
                         'tenant_id' => $id,
                         'name'      => $request->owner_name ?? $existingUser->name,
                         'phone'     => $request->owner_phone ?? $existingUser->phone,
-                        'role'      => 'organization',
                         'updated_at'=> now(),
-                    ]);
+                    ];
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+                        $ownerUpdate['role'] = 'organization';
+                    }
+                    DB::table('users')->where('id', $existingUser->id)->update($ownerUpdate);
+                    $ownerId = $existingUser->id;
                 } else {
-                    DB::table('users')->insert([
+                    $ownerInsert = [
+                        'uuid'       => (string) \Illuminate\Support\Str::uuid(),
                         'tenant_id'  => $id,
                         'name'       => $request->owner_name ?? 'Store Owner',
                         'email'      => $request->owner_email,
                         'phone'      => $request->owner_phone,
                         'password'   => Hash::make('password'),
-                        'role'       => 'organization',
                         'is_active'  => true,
                         'created_at' => now(),
                         'updated_at' => now(),
-                    ]);
+                    ];
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+                        $ownerInsert['role'] = 'organization';
+                    }
+                    $ownerId = DB::table('users')->insertGetId($ownerInsert);
+                }
+
+                if ($orgRoleId) {
+                    DB::table('user_roles')->updateOrInsert(
+                        ['user_id' => $ownerId, 'role_id' => $orgRoleId],
+                        [
+                            'tenant_id' => $id,
+                            'is_active' => true,
+                            'updated_at' => now(),
+                        ]
+                    );
                 }
             }
         }
@@ -481,7 +555,18 @@ class TenantController extends Controller
         $maxOutlets = $tenant->max_outlets ?? ($tier === 'enterprise_org' ? 50 : ($tier === 'business_runner' ? 5 : 1));
         $maxRegisters = $tenant->max_registers ?? ($tier === 'enterprise_org' ? 200 : ($tier === 'business_runner' ? 15 : 2));
 
-        $usersCount = DB::table('users')->where('role', '!=', 'super_admin')->count();
+        $usersCount = DB::table('users as u')
+            ->leftJoin('user_roles as ur', function ($j) {
+                $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+            })
+            ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+            ->where(function ($q) {
+                $q->whereNull('r.slug')->orWhere('r.slug', '!=', 'super_admin');
+                if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+                    $q->orWhere('u.role', '!=', 'super_admin');
+                }
+            })
+            ->count();
         $outletsCount = DB::table('outlets')->count();
         $registersCount = DB::table('registers')->count();
 

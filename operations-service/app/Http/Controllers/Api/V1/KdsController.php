@@ -6,6 +6,27 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0097] Kitchen Display System Kitchen Ticket Routing & Cooking Status Controller
+ *
+ * @ticket BD-0097
+ * @component operations-service
+ * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/KdsController.php
+ * @related-model App\Models\Order, DB table kds_tickets
+ * @entry-point KdsController::getActiveTickets(), updateItemStatus(), bumpTicket()
+ * @routes
+ *  - GET  /api/v1/kds/tickets
+ *  - POST /api/v1/kds/items/{id}/status
+ *  - POST /api/v1/kds/tickets/{id}/bump
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Outlet Station Routing): Routes order line items to specific kitchen prep stations (Grill, Bar, Salad, Dessert).
+ * Step 2 (Real-Time Ticket Queue): Provides WebSocket/polling feed of incoming orders sorted by elapsed order time.
+ * Step 3 (Preparation State Machine): Transitions item status through pending -> preparing -> ready -> served.
+ * Step 4 (Ticket Timing & Expediting): Calculates kitchen prep latency and visually alerts expediter on delayed tickets.
+ * Step 5 (Kitchen Item Bump): Bumps completed orders from display and triggers server runner pickup alerts.
+ */
 class KdsController extends Controller
 {
     /**

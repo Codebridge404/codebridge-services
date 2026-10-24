@@ -35,4 +35,9 @@ class Sale extends Model
     {
         return $this->hasMany(SaleLine::class);
     }
+
+    public function offlineConflicts()
+    {
+        return $this->hasMany(OfflineSyncConflict::class, 'sale_id');
+    }
 }

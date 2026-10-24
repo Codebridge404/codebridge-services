@@ -6,6 +6,28 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
+/**
+ * [BD-0064] Organizational Structure & Departmental Hierarchy Controller
+ *
+ * @ticket BD-0064
+ * @component auth-service
+ * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/DepartmentController.php
+ * @related-model App\Models\Department, App\Models\Employee
+ * @entry-point DepartmentController::index(), store(), update(), destroy()
+ * @routes
+ *  - GET    /api/v1/departments
+ *  - POST   /api/v1/departments
+ *  - PUT    /api/v1/departments/{id}
+ *  - DELETE /api/v1/departments/{id}
+ * @date-time 2026-10-23T15:40:00+07:00
+ *
+ * Process Capabilities:
+ * Step 1 (Tenant Boundary Check): Verifies tenant context for departmental structure.
+ * Step 2 (Department Directory Listing): Lists all operational divisions (Kitchen, Service, Accounting, Management).
+ * Step 3 (Creation & Validation): Validates unique department code and name per tenant.
+ * Step 4 (Hierarchy & Role Linkage): Maps department associations to staff profiles and supervisory managers.
+ * Step 5 (Deletion & Orphan Safeguard): Prevents deletion of departments with actively assigned personnel.
+ */
 class DepartmentController extends Controller
 {
     protected function getTenantId(Request $request): ?string
