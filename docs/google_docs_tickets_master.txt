@@ -83,6 +83,24 @@ Process Steps in Code:
 3. Enforces multi-tenant workspace isolation.
 
 --------------------------------------------------------------------------------
+TICKET: BD-0019 - POS Business Operating Profile & Feature Toggles API
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0019
+Component / Service:    auth-service
+File Path:              codebridge-services/auth-service/app/Http/Controllers/Api/V1/OutletController.php
+Related Model / Service:App\Services\PosBusinessProfileService, App\Models\Outlet, App\Models\Tenant
+Method / Entry Point:   GET /api/v1/outlets/business-profiles, GET /api/v1/outlets/{id}/business-profile, PATCH /api/v1/outlets/{id}/business-profile, PATCH /api/v1/outlets/{id}/terminal-settings
+Command / API Route:    GET /api/v1/outlets/business-profiles, GET /api/v1/outlets/{id}/business-profile, PATCH /api/v1/outlets/{id}/business-profile, PATCH /api/v1/outlets/{id}/terminal-settings
+Date & Time:            2026-10-25T09:45:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+1. Validates and stores business_type ('retail_mart' | 'restaurant_fnb' | 'cafe_qsr' | 'boutique_retail') per tenant and outlet.
+2. PosBusinessProfileService resolves presets for table occupancy, KDS routing, CFD projection, and continuous barcode scanning.
+3. Automatically adapts sidebar navigation and cashier terminal layouts dynamically based on store operating profile.
+4. Returns complete business profile and feature toggles in terminal settings responses.
+
+--------------------------------------------------------------------------------
 TICKET: BD-0005 - Dynamic RBAC Roles & Granular Permissions Controller.
 --------------------------------------------------------------------------------
 Ticket ID:              BD-0005

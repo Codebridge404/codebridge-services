@@ -3,24 +3,26 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\PosBusinessProfileService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
- * [BD-0004] Multi-Outlet & Physical Branch Management Controller.
+ * [BD-0004 & BD-0019] Multi-Outlet & POS Business Operating Profile Management Controller.
  *
- * @ticket BD-0004
+ * @ticket BD-0004, BD-0019
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/OutletController.php
- * @related-model App\Models\Outlet, App\Models\User
- * @entry-point GET /api/v1/outlets, POST /api/v1/outlets, PUT /api/v1/outlets/{id}
- * @date-time 2026-10-23T15:40:00+07:00
+ * @related-model App\Models\Outlet, App\Models\User, App\Services\PosBusinessProfileService
+ * @entry-point GET /api/v1/outlets, POST /api/v1/outlets, PUT /api/v1/outlets/{id}, PATCH /api/v1/outlets/{id}/terminal-settings, PATCH /api/v1/outlets/{id}/business-profile
+ * @date-time 2026-10-25T09:45:00+07:00
  *
  * Process Capabilities:
  * 1. Automatic generation of UUIDv4 for new outlets.
  * 2. Links staff members via outlet_uuid.
  * 3. Enforces multi-tenant workspace isolation.
+ * 4. Stores and returns POS business operating profile & feature toggles (retail_mart, restaurant_fnb, cafe_qsr, boutique_retail).
  */
 class OutletController extends Controller
 {
@@ -51,6 +53,7 @@ class OutletController extends Controller
                 'o.id',
                 'o.tenant_id',
                 'o.name',
+                'o.business_type',
                 'o.code',
                 'o.address',
                 'o.phone',
@@ -79,6 +82,7 @@ class OutletController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'code' => 'required|string|max:50|unique:outlets,code',
+            'business_type' => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
             'phone' => 'nullable|string|max:50',
             'address' => 'nullable|string|max:500',
             'receipt_header' => 'nullable|string|max:255',
@@ -89,18 +93,28 @@ class OutletController extends Controller
         ]);
 
         $tenantId = $user ? $user->tenant_id : null;
+        $businessType = $validated['business_type'] ?? 'retail_mart';
+        $profile = PosBusinessProfileService::getProfile($businessType);
+
+        $isKdsEnabled = $validated['is_kds_enabled'] ?? $profile['presets']['kds_enabled'];
+        $isCfdEnabled = $validated['is_cfd_enabled'] ?? $profile['presets']['cfd_enabled'];
+
+        $terminalSettings = $validated['terminal_settings'] ?? [];
+        $terminalSettings['businessType'] = $businessType;
+        $terminalSettings['tablesEnabled'] = $profile['presets']['tables_enabled'];
 
         $id = DB::table('outlets')->insertGetId([
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
+            'business_type' => $businessType,
             'code' => $validated['code'],
             'phone' => $validated['phone'] ?? null,
             'address' => $validated['address'] ?? null,
             'receipt_header' => $validated['receipt_header'] ?? 'Thank you for shopping!',
             'receipt_footer' => $validated['receipt_footer'] ?? 'Please come again!',
-            'is_kds_enabled' => $validated['is_kds_enabled'] ?? true,
-            'is_cfd_enabled' => $validated['is_cfd_enabled'] ?? true,
-            'terminal_settings' => isset($validated['terminal_settings']) ? json_encode($validated['terminal_settings']) : null,
+            'is_kds_enabled' => $isKdsEnabled,
+            'is_cfd_enabled' => $isCfdEnabled,
+            'terminal_settings' => json_encode($terminalSettings),
             'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
@@ -109,7 +123,11 @@ class OutletController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'Store outlet created successfully.',
-            'data' => ['id' => $id],
+            'data' => [
+                'id' => $id,
+                'business_type' => $businessType,
+                'business_profile' => $profile,
+            ],
         ], 201);
     }
 
@@ -117,6 +135,7 @@ class OutletController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
+            'business_type' => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
             'phone' => 'nullable|string|max:50',
             'address' => 'nullable|string|max:500',
             'receipt_header' => 'nullable|string|max:255',
@@ -134,6 +153,10 @@ class OutletController extends Controller
             'receipt_footer' => $validated['receipt_footer'] ?? null,
             'updated_at' => now(),
         ];
+
+        if (array_key_exists('business_type', $validated) && $validated['business_type']) {
+            $updates['business_type'] = $validated['business_type'];
+        }
 
         if (array_key_exists('is_kds_enabled', $validated)) {
             $updates['is_kds_enabled'] = $validated['is_kds_enabled'];
@@ -154,6 +177,105 @@ class OutletController extends Controller
     }
 
     /**
+     * Get all supported POS business profiles and their feature presets.
+     * GET /api/v1/outlets/business-profiles
+     */
+    public function listBusinessProfiles()
+    {
+        return response()->json([
+            'status' => 'success',
+            'data' => PosBusinessProfileService::getAllProfiles(),
+        ]);
+    }
+
+    /**
+     * Get active POS Business Profile and feature toggles for an outlet.
+     * GET /api/v1/outlets/{id}/business-profile
+     */
+    public function getBusinessProfile($id)
+    {
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
+        }
+
+        $businessType = $outlet->business_type ?? 'retail_mart';
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'outlet_id' => $outlet->id,
+                'outlet_name' => $outlet->name,
+                'business_type' => $businessType,
+                'business_profile' => PosBusinessProfileService::getProfile($businessType),
+                'is_kds_enabled' => (bool) $outlet->is_kds_enabled,
+                'is_cfd_enabled' => (bool) $outlet->is_cfd_enabled,
+            ],
+        ]);
+    }
+
+    /**
+     * Update active POS Business Operating Profile for an outlet.
+     * PATCH|PUT /api/v1/outlets/{id}/business-profile
+     */
+    public function updateBusinessProfile(Request $request, $id)
+    {
+        $validated = $request->validate([
+            'business_type' => 'required|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
+        ]);
+
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
+        }
+
+        $businessType = $validated['business_type'];
+        $profile = PosBusinessProfileService::getProfile($businessType);
+
+        $currentSettings = $outlet->terminal_settings;
+        if (is_string($currentSettings)) {
+            $currentSettings = json_decode($currentSettings, true) ?? [];
+        } else {
+            $currentSettings = is_array($currentSettings) ? $currentSettings : [];
+        }
+
+        $currentSettings['businessType'] = $businessType;
+        $currentSettings['tablesEnabled'] = $profile['presets']['tables_enabled'];
+        $currentSettings['kdsEnabled'] = $profile['presets']['kds_enabled'];
+        $currentSettings['cfdEnabled'] = $profile['presets']['cfd_enabled'];
+        $currentSettings['barcodeContinuousMode'] = $profile['presets']['barcode_continuous_mode'];
+
+        DB::table('outlets')->where('id', $id)->update([
+            'business_type' => $businessType,
+            'is_kds_enabled' => $profile['presets']['kds_enabled'],
+            'is_cfd_enabled' => $profile['presets']['cfd_enabled'],
+            'terminal_settings' => json_encode($currentSettings),
+            'updated_at' => now(),
+        ]);
+
+        if (!empty($outlet->tenant_id)) {
+            DB::table('tenants')->where('id', $outlet->tenant_id)->update([
+                'business_type' => $businessType,
+                'updated_at' => now(),
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "Operating profile updated to '{$profile['title']}' successfully.",
+            'data' => [
+                'outlet_id' => $outlet->id,
+                'outlet_name' => $outlet->name,
+                'business_type' => $businessType,
+                'business_profile' => $profile,
+                'is_kds_enabled' => (bool) $profile['presets']['kds_enabled'],
+                'is_cfd_enabled' => (bool) $profile['presets']['cfd_enabled'],
+                'terminal_settings' => $currentSettings,
+            ],
+        ]);
+    }
+
+    /**
      * Get POS Terminal & Peripheral Settings for a specific outlet.
      * GET /api/v1/outlets/{id}/terminal-settings
      */
@@ -164,6 +286,7 @@ class OutletController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
 
+        $businessType = $outlet->business_type ?? 'retail_mart';
         $terminalSettings = $outlet->terminal_settings;
         if (is_string($terminalSettings)) {
             $terminalSettings = json_decode($terminalSettings, true);
@@ -174,6 +297,8 @@ class OutletController extends Controller
             'data' => [
                 'outlet_id' => $outlet->id,
                 'outlet_name' => $outlet->name,
+                'business_type' => $businessType,
+                'business_profile' => PosBusinessProfileService::getProfile($businessType),
                 'is_kds_enabled' => (bool) $outlet->is_kds_enabled,
                 'is_cfd_enabled' => (bool) $outlet->is_cfd_enabled,
                 'terminal_settings' => $terminalSettings ?? [],
@@ -188,6 +313,7 @@ class OutletController extends Controller
     public function updateTerminalSettings(Request $request, $id)
     {
         $validated = $request->validate([
+            'business_type' => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
             'is_kds_enabled' => 'nullable|boolean',
             'is_cfd_enabled' => 'nullable|boolean',
             'terminal_settings' => 'nullable|array',
@@ -202,22 +328,52 @@ class OutletController extends Controller
             'updated_at' => now(),
         ];
 
+        $currentSettings = $outlet->terminal_settings;
+        if (is_string($currentSettings)) {
+            $currentSettings = json_decode($currentSettings, true) ?? [];
+        } else {
+            $currentSettings = is_array($currentSettings) ? $currentSettings : [];
+        }
+
+        if (array_key_exists('business_type', $validated) && $validated['business_type']) {
+            $businessType = $validated['business_type'];
+            $updates['business_type'] = $businessType;
+            $profile = PosBusinessProfileService::getProfile($businessType);
+
+            // If kds/cfd not explicitly overridden, preset from profile
+            if (!array_key_exists('is_kds_enabled', $validated)) {
+                $updates['is_kds_enabled'] = $profile['presets']['kds_enabled'];
+            }
+            if (!array_key_exists('is_cfd_enabled', $validated)) {
+                $updates['is_cfd_enabled'] = $profile['presets']['cfd_enabled'];
+            }
+
+            $currentSettings['businessType'] = $businessType;
+            $currentSettings['tablesEnabled'] = $profile['presets']['tables_enabled'];
+            $currentSettings['barcodeContinuousMode'] = $profile['presets']['barcode_continuous_mode'];
+
+            // Also keep tenant default aligned
+            if (!empty($outlet->tenant_id)) {
+                DB::table('tenants')->where('id', $outlet->tenant_id)->update([
+                    'business_type' => $businessType,
+                    'updated_at' => now(),
+                ]);
+            }
+        }
+
         if (array_key_exists('is_kds_enabled', $validated)) {
             $updates['is_kds_enabled'] = $validated['is_kds_enabled'];
+            $currentSettings['kdsEnabled'] = (bool) $validated['is_kds_enabled'];
         }
         if (array_key_exists('is_cfd_enabled', $validated)) {
             $updates['is_cfd_enabled'] = $validated['is_cfd_enabled'];
+            $currentSettings['cfdEnabled'] = (bool) $validated['is_cfd_enabled'];
         }
-        if (array_key_exists('terminal_settings', $validated)) {
-            $currentSettings = $outlet->terminal_settings;
-            if (is_string($currentSettings)) {
-                $currentSettings = json_decode($currentSettings, true) ?? [];
-            } else {
-                $currentSettings = is_array($currentSettings) ? $currentSettings : [];
-            }
-            $mergedSettings = array_merge($currentSettings, $validated['terminal_settings']);
-            $updates['terminal_settings'] = json_encode($mergedSettings);
+        if (array_key_exists('terminal_settings', $validated) && is_array($validated['terminal_settings'])) {
+            $currentSettings = array_merge($currentSettings, $validated['terminal_settings']);
         }
+
+        $updates['terminal_settings'] = json_encode($currentSettings);
 
         DB::table('outlets')->where('id', $id)->update($updates);
 
@@ -227,11 +383,15 @@ class OutletController extends Controller
             $storedSettings = json_decode($storedSettings, true);
         }
 
+        $effectiveBusinessType = $freshOutlet->business_type ?? 'retail_mart';
+
         return response()->json([
             'status' => 'success',
             'message' => 'Outlet terminal settings updated successfully.',
             'data' => [
                 'outlet_id' => $freshOutlet->id,
+                'business_type' => $effectiveBusinessType,
+                'business_profile' => PosBusinessProfileService::getProfile($effectiveBusinessType),
                 'is_kds_enabled' => (bool) $freshOutlet->is_kds_enabled,
                 'is_cfd_enabled' => (bool) $freshOutlet->is_cfd_enabled,
                 'terminal_settings' => $storedSettings ?? [],
