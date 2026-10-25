@@ -1,0 +1,59 @@
+services:
+
+  # 1. MinIO S3-Compatible Object Storage Service
+  minio:
+    image: minio/minio:latest
+    container_name: codebridge-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"   # MinIO S3 API Endpoint
+      - "9001:9001"   # MinIO Web Console Dashboard
+    volumes:
+      - minio-data:/data
+    networks:
+      codebridge-network:
+        aliases:
+          - minio
+          - s3
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # 2. MinIO Automated Bucket Initializer
+  minio-init:
+    image: minio/minio:latest
+    container_name: codebridge-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      echo 'Waiting for MinIO server...';
+      until curl -s -f http://minio:9000/minio/health/live; do sleep 1; done;
+      echo 'Setting MinIO alias...';
+      mc alias set myminio http://minio:9000 $${MINIO_ROOT_USER:-minioadmin} $${MINIO_ROOT_PASSWORD:-minioadmin123};
+      echo 'Creating enterprise buckets...';
+      mc mb myminio/codebridge-auth --ignore-existing;
+      mc mb myminio/codebridge-operations --ignore-existing;
+      mc anonymous set download myminio/codebridge-auth/avatars || true;
+      mc anonymous set download myminio/codebridge-operations/products || true;
+      echo 'MinIO buckets initialized successfully.';
+      exit 0;
+      "
+    networks:
+      - codebridge-network
+
+networks:
+  codebridge-network:
+    name: codebridge-network
+    external: true
+
+volumes:
+  minio-data:
