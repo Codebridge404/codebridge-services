@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Meeting\StoreOrUpdateMeetingMinutesRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -52,16 +53,9 @@ class MeetingMinutesController extends Controller
      * Save or publish minutes and action items.
      * When status is 'published', broadcasts notifications to all attendees and records audit trail.
      */
-    public function storeOrUpdate(Request $request, $meetingId)
+    public function storeOrUpdate(StoreOrUpdateMeetingMinutesRequest $request, $meetingId)
     {
-        $validated = $request->validate([
-            'content' => 'required|string',
-            'action_items' => 'nullable|array',
-            'status' => 'nullable|string|in:draft,published',
-            'agenda' => 'nullable|string',
-            'summary' => 'nullable|string',
-            'key_decisions' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $currentUser = $request->user();
         $actionItemsJson = !empty($validated['action_items']) ? json_encode($validated['action_items']) : null;

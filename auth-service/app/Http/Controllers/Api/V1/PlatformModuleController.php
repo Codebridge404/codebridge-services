@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Platform\StorePlatformModuleRequest;
+use App\Http\Requests\Platform\UpdatePlatformModuleRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -114,23 +116,9 @@ class PlatformModuleController extends Controller
      * Register a new platform module.
      * POST /api/v1/super-admin/platform-modules
      */
-    public function store(Request $request)
+    public function store(StorePlatformModuleRequest $request)
     {
-        $validated = $request->validate([
-            'id'          => 'nullable|string|max:64|unique:platform_modules,id',
-            'name'        => 'required|string|max:128',
-            'monogram'    => 'nullable|string|max:8',
-            'category'    => 'required|string|max:64',
-            'description' => 'required|string',
-            'icon'        => 'nullable|string|max:64',
-            'logo_url'    => 'nullable|string|max:255',
-            'href'        => 'required|string|max:255',
-            'bg_pill'     => 'nullable|string|max:128',
-            'card_bg'     => 'nullable|string|max:255',
-            'is_core'     => 'nullable|boolean',
-            'is_active'   => 'nullable|boolean',
-            'sort_order'  => 'nullable|integer',
-        ]);
+        $validated = $request->validated();
 
         $id = !empty($validated['id']) ? Str::slug($validated['id']) : Str::slug($validated['name']);
         
@@ -189,7 +177,7 @@ class PlatformModuleController extends Controller
      * Update an existing platform module.
      * PUT /api/v1/super-admin/platform-modules/{id}
      */
-    public function update(Request $request, $id)
+    public function update(UpdatePlatformModuleRequest $request, $id)
     {
         $module = DB::table('platform_modules')->where('id', $id)->first();
         if (!$module) {
@@ -199,20 +187,7 @@ class PlatformModuleController extends Controller
             ], 404);
         }
 
-        $validated = $request->validate([
-            'name'        => 'sometimes|required|string|max:128',
-            'monogram'    => 'nullable|string|max:8',
-            'category'    => 'sometimes|required|string|max:64',
-            'description' => 'sometimes|required|string',
-            'icon'        => 'nullable|string|max:64',
-            'logo_url'    => 'nullable|string|max:255',
-            'href'        => 'sometimes|required|string|max:255',
-            'bg_pill'     => 'nullable|string|max:128',
-            'card_bg'     => 'nullable|string|max:255',
-            'is_core'     => 'nullable|boolean',
-            'is_active'   => 'nullable|boolean',
-            'sort_order'  => 'nullable|integer',
-        ]);
+        $validated = $request->validated();
 
         $updates = [];
         foreach ($validated as $key => $val) {

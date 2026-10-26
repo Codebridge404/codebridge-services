@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Meeting\UpdateTelegramConfigRequest;
+use App\Http\Requests\Meeting\UpdateTelegramTemplateRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -99,15 +101,9 @@ class MeetingTelegramController extends Controller
      * Update Telegram Bot configuration.
      * PUT /api/v1/meetings/telegram/config
      */
-    public function updateConfig(Request $request)
+    public function updateConfig(UpdateTelegramConfigRequest $request)
     {
-        $validated = $request->validate([
-            'bot_enabled' => 'nullable|boolean',
-            'bot_token' => 'nullable|string',
-            'bot_username' => 'nullable|string|max:100',
-            'default_chat_id' => 'nullable|string|max:100',
-            'default_reminder_minutes' => 'nullable|integer|min:1|max:120',
-        ]);
+        $validated = $request->validated();
 
         $currentUser = $request->user();
         $tenantId = $currentUser?->tenant_id;
@@ -307,11 +303,9 @@ class MeetingTelegramController extends Controller
      * Update notification template.
      * PUT /api/v1/meetings/telegram/templates/{type}
      */
-    public function updateTemplate(Request $request, string $type)
+    public function updateTemplate(UpdateTelegramTemplateRequest $request, string $type)
     {
-        $validated = $request->validate([
-            'content' => 'required|string',
-        ]);
+        $validated = $request->validated();
 
         $tenantId = $request->user()?->tenant_id;
         DB::table('meeting_notification_templates')->updateOrInsert(

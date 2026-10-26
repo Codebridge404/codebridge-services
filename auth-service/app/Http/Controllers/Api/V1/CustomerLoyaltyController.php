@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Customer\AdjustLoyaltyPointsRequest;
+use App\Http\Requests\Customer\AdjustStoreCreditRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Exception;
@@ -34,14 +36,9 @@ class CustomerLoyaltyController extends Controller
     /**
      * Adjust Customer Store Credit (Add Deposit, Refund Credit, or Use Balance)
      */
-    public function adjustStoreCredit(Request $request, $id)
+    public function adjustStoreCredit(AdjustStoreCreditRequest $request, $id)
     {
-        $validated = $request->validate([
-            'amount_change' => 'required|numeric',
-            'entry_type' => 'required|string|in:deposit,refund_credit,checkout_use,points_conversion,adjustment',
-            'reference_id' => 'nullable|string',
-            'notes' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         return DB::transaction(function () use ($id, $validated) {
             $customer = DB::table('customers')->where('id', $id)->first();
@@ -97,12 +94,9 @@ class CustomerLoyaltyController extends Controller
     /**
      * Accrue or Redeem Customer Loyalty Points
      */
-    public function adjustLoyaltyPoints(Request $request, $id)
+    public function adjustLoyaltyPoints(AdjustLoyaltyPointsRequest $request, $id)
     {
-        $validated = $request->validate([
-            'points_change' => 'required|integer',
-            'reason' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         $customer = DB::table('customers')->where('id', $id)->first();
         if (!$customer) {

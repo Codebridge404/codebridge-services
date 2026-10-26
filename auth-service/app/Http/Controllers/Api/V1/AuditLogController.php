@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\AuditLog\AuditLogResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -46,7 +47,7 @@ class AuditLogController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $logs,
+            'data' => AuditLogResource::collection($logs),
         ]);
     }
 

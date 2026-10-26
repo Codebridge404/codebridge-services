@@ -3,6 +3,11 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreCredit\IssueVoucherRequest;
+use App\Http\Requests\StoreCredit\RedeemVoucherRequest;
+use App\Http\Requests\StoreCredit\TopUpStoreCreditRequest;
+use App\Http\Resources\StoreCredit\DigitalVoucherResource;
+use App\Http\Resources\StoreCredit\StoreCreditInvoiceResource;
 use App\Models\Customer;
 use App\Models\DigitalVoucher;
 use App\Models\StoreCreditInvoice;
@@ -48,17 +53,9 @@ class StoreCreditInvoiceController extends Controller
      * Issue Customer Store Credit Top-Up Invoice.
      * POST /api/v1/customers/{id}/credit/topup-invoice
      */
-    public function topUp(Request $request, $id)
+    public function topUp(TopUpStoreCreditRequest $request, $id)
     {
-        $validated = $request->validate([
-            'amount_paid' => 'required|numeric|min:0.01',
-            'bonus_credit' => 'nullable|numeric|min:0',
-            'payment_method' => 'nullable|string|in:cash,card,khqr,transfer',
-            'payment_reference' => 'nullable|string|max:100',
-            'validity_days' => 'nullable|integer|min:1|max:1825', // up to 5 years
-            'notes' => 'nullable|string|max:255',
-            'outlet_id' => 'nullable|integer',
-        ]);
+        $validated = $request->validated();
 
         $customer = Customer::find($id);
         if (!$customer) {
@@ -109,7 +106,7 @@ class StoreCreditInvoiceController extends Controller
             'status' => 'success',
             'data' => [
                 'customer_id' => $customer->id,
-                'invoices' => $invoices,
+                'invoices' => StoreCreditInvoiceResource::collection($invoices),
             ],
         ]);
     }
@@ -131,7 +128,7 @@ class StoreCreditInvoiceController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $invoice,
+            'data' => new StoreCreditInvoiceResource($invoice),
         ]);
     }
 
@@ -139,15 +136,9 @@ class StoreCreditInvoiceController extends Controller
      * Issue a new digital gift voucher.
      * POST /api/v1/vouchers/issue
      */
-    public function issueVoucher(Request $request)
+    public function issueVoucher(IssueVoucherRequest $request)
     {
-        $validated = $request->validate([
-            'value' => 'required|numeric|min:0.01',
-            'title' => 'nullable|string|max:100',
-            'validity_days' => 'nullable|integer|min:1|max:730',
-            'customer_id' => 'nullable|integer|exists:customers,id',
-            'notes' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         $tenantId = $this->getTenantId($request);
 
@@ -172,12 +163,9 @@ class StoreCreditInvoiceController extends Controller
      * Redeem a digital voucher.
      * POST /api/v1/vouchers/redeem
      */
-    public function redeemVoucher(Request $request)
+    public function redeemVoucher(RedeemVoucherRequest $request)
     {
-        $validated = $request->validate([
-            'voucher_code' => 'required|string',
-            'customer_id' => 'required|integer|exists:customers,id',
-        ]);
+        $validated = $request->validated();
 
         $customer = Customer::find($validated['customer_id']);
 
@@ -230,7 +218,7 @@ class StoreCreditInvoiceController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $vouchers,
+            'data' => DigitalVoucherResource::collection($vouchers),
         ]);
     }
 

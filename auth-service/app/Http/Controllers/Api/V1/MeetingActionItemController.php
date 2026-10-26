@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Meeting\StoreActionItemRequest;
+use App\Http\Requests\Meeting\UpdateActionItemStatusRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -80,15 +82,9 @@ class MeetingActionItemController extends Controller
      * Create action item for meeting.
      * POST /api/v1/meetings/{id}/actions
      */
-    public function store(Request $request, $meetingId)
+    public function store(StoreActionItemRequest $request, $meetingId)
     {
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'assigned_to' => 'nullable|integer',
-            'due_date' => 'nullable|date',
-            'status' => 'nullable|string|max:30',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
         $meeting = DB::table('meetings')->where('id', $meetingId)->first();
@@ -131,11 +127,9 @@ class MeetingActionItemController extends Controller
      * Toggle or update action item status.
      * PATCH /api/v1/meetings/actions/{id}/status
      */
-    public function updateStatus(Request $request, $id)
+    public function updateStatus(UpdateActionItemStatusRequest $request, $id)
     {
-        $validated = $request->validate([
-            'status' => 'required|string|in:pending,in_progress,completed,cancelled',
-        ]);
+        $validated = $request->validated();
 
         DB::table('meeting_action_items')->where('id', $id)->update([
             'status' => $validated['status'],

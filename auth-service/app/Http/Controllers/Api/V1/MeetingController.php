@@ -3,6 +3,13 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Meeting\CancelMeetingRequest;
+use App\Http\Requests\Meeting\PreviewRecurringMeetingRequest;
+use App\Http\Requests\Meeting\RsvpMeetingRequest;
+use App\Http\Requests\Meeting\StoreAttachmentRequest;
+use App\Http\Requests\Meeting\StoreMeetingRequest;
+use App\Http\Requests\Meeting\UpdateMeetingRequest;
+use App\Http\Resources\Meeting\MeetingResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -76,29 +83,15 @@ class MeetingController extends Controller
             $meeting->has_minutes = DB::table('meeting_minutes')->where('meeting_id', $meeting->id)->exists();
         }
 
-        return response()->json(['status' => 'success', 'data' => $meetings]);
+        return response()->json(['status' => 'success', 'data' => MeetingResource::collection($meetings)]);
     }
 
     /**
      * Create a new meeting with Zero-Conflict checking, equipment allocation, and boardroom threshold governance.
      */
-    public function store(Request $request)
+    public function store(StoreMeetingRequest $request)
     {
-        $validated = $request->validate([
-            'room_id' => 'required|integer',
-            'title' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'start_time' => 'required|date',
-            'end_time' => 'required|date|after:start_time',
-            'meeting_type' => 'nullable|string',
-            'meeting_link' => 'nullable|string',
-            'attendees' => 'nullable|array',
-            'materials' => 'nullable|array', // [{ material_id: 1, quantity: 2 }]
-            'staff_ids' => 'nullable|array', // [1, 2]
-            'is_recurring' => 'nullable|boolean',
-            'recurrence_type' => 'nullable|string|in:none,daily,weekly,bi_weekly,monthly',
-            'occurrences_count' => 'nullable|integer|min:1|max:52',
-        ]);
+        $validated = $request->validated();
 
         $currentUser = $request->user();
         $tenantId = $currentUser?->tenant_id;
@@ -325,20 +318,14 @@ class MeetingController extends Controller
     /**
      * Update meeting details.
      */
-    public function update(Request $request, $id)
+    public function update(UpdateMeetingRequest $request, $id)
     {
         $meeting = DB::table('meetings')->where('id', $id)->first();
         if (!$meeting) {
             return response()->json(['status' => 'error', 'message' => 'Meeting not found.'], 404);
         }
 
-        $validated = $request->validate([
-            'title' => 'sometimes|string|max:255',
-            'description' => 'nullable|string',
-            'start_time' => 'sometimes|date',
-            'end_time' => 'sometimes|date|after:start_time',
-            'room_id' => 'sometimes|integer',
-        ]);
+        $validated = $request->validated();
 
         DB::table('meetings')->where('id', $id)->update(array_merge($validated, ['updated_at' => now()]));
 
@@ -488,11 +475,9 @@ class MeetingController extends Controller
      * Reason-based Cancellation with Auto-Restock Guarantee.
      * PATCH /api/v1/meetings/{id}/cancel
      */
-    public function cancel(Request $request, $id)
+    public function cancel(CancelMeetingRequest $request, $id)
     {
-        $validated = $request->validate([
-            'cancellation_reason' => 'nullable|string|max:500',
-        ]);
+        $validated = $request->validated();
 
         $meeting = DB::table('meetings as m')
             ->leftJoin('meeting_rooms as r', 'm.room_id', '=', 'r.id')
@@ -553,11 +538,9 @@ class MeetingController extends Controller
      * Update participant RSVP response.
      * PATCH /api/v1/meetings/{id}/rsvp
      */
-    public function rsvp(Request $request, $id)
+    public function rsvp(RsvpMeetingRequest $request, $id)
     {
-        $validated = $request->validate([
-            'rsvp_status' => 'required|string|in:accepted,declined,tentative',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
         DB::table('meeting_attendees')
@@ -575,15 +558,9 @@ class MeetingController extends Controller
      * Pre-flight Recurring Conflict Preview: evaluates future occurrences against existing bookings.
      * POST /api/v1/meetings/recurring/preview
      */
-    public function previewRecurring(Request $request)
+    public function previewRecurring(PreviewRecurringMeetingRequest $request)
     {
-        $validated = $request->validate([
-            'room_id' => 'required|integer',
-            'start_time' => 'required|date',
-            'end_time' => 'required|date|after:start_time',
-            'recurrence_type' => 'required|string|in:daily,weekly,bi_weekly,monthly',
-            'occurrences_count' => 'required|integer|min:1|max:52',
-        ]);
+        $validated = $request->validated();
 
         $occurrences = [];
         $conflictsCount = 0;
@@ -642,14 +619,9 @@ class MeetingController extends Controller
         return response()->json(['status' => 'success', 'data' => $attachments]);
     }
 
-    public function storeAttachment(Request $request, $id)
+    public function storeAttachment(StoreAttachmentRequest $request, $id)
     {
-        $validated = $request->validate([
-            'file_name' => 'required|string|max:255',
-            'file_url' => 'nullable|string',
-            'file_type' => 'nullable|string|max:100',
-            'file_size' => 'nullable|integer',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
         $meeting = DB::table('meetings')->where('id', $id)->first();

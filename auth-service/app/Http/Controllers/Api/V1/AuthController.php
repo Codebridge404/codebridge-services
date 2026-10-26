@@ -3,6 +3,13 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\AcceptInviteRequest;
+use App\Http\Requests\Auth\LoginRequest;
+use App\Http\Requests\Auth\QuickSwitchRequest;
+use App\Http\Requests\Auth\RegisterRequest;
+use App\Http\Requests\Auth\UpdatePasswordRequest;
+use App\Http\Requests\Auth\UpdateProfileRequest;
+use App\Http\Resources\User\UserResource;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -32,13 +39,9 @@ class AuthController extends Controller
     /**
      * Standard Email/Phone + Password Login.
      */
-    public function login(Request $request)
+    public function login(LoginRequest $request)
     {
-        $request->validate([
-            'email' => 'required',
-            'password' => 'required',
-            'device_name' => 'nullable|string',
-        ]);
+
 
         $loginInput = str_replace("\0", '', trim($request->email));
 
@@ -132,7 +135,7 @@ class AuthController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'user' => $user,
+            'user' => new UserResource($user),
             'token' => $jwtToken,
             'access_token' => $jwtToken,
             'token_type' => 'Bearer',
@@ -145,13 +148,9 @@ class AuthController extends Controller
      * Cashier Fast PIN Quick-Switch (Physical Register Quick-Switch).
      * POST /api/v1/auth/quick-switch
      */
-    public function quickSwitch(Request $request)
+    public function quickSwitch(QuickSwitchRequest $request)
     {
-        $request->validate([
-            'pin_code' => 'required|string|min:4|max:8',
-            'outlet_id' => 'nullable|string',
-            'device_name' => 'nullable|string',
-        ]);
+
 
         $pin = trim($request->pin_code);
 
@@ -217,7 +216,7 @@ class AuthController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => "Welcome back, {$user->name}!",
-            'user' => $user,
+            'user' => new UserResource($user),
             'token' => $jwtToken,
             'access_token' => $jwtToken,
             'token_type' => 'Bearer',
@@ -357,15 +356,9 @@ class AuthController extends Controller
      * Accept Invitation & Complete Staff Setup.
      * POST /api/v1/auth/accept-invite
      */
-    public function acceptInvite(Request $request)
+    public function acceptInvite(AcceptInviteRequest $request)
     {
-        $validated = $request->validate([
-            'token' => 'required|string',
-            'name' => 'required|string|max:255',
-            'password' => 'required|string|min:6',
-            'pin_code' => 'nullable|string|min:4|max:8',
-            'phone' => 'nullable|string|max:30',
-        ]);
+        $validated = $request->validated();
 
         $invitation = DB::table('user_invitations')
             ->where('token', $validated['token'])
@@ -444,15 +437,9 @@ class AuthController extends Controller
         ]);
     }
 
-    public function register(Request $request)
+    public function register(RegisterRequest $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'nullable|string',
-            'phone' => 'nullable|string|max:30',
-            'password' => 'required|string|min:6',
-            'role' => 'nullable|string',
-        ]);
+
 
         $email = $request->email;
         $phone = $request->phone;
@@ -520,7 +507,7 @@ class AuthController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'user' => $user,
+            'user' => new UserResource($user),
         ]);
     }
 
@@ -528,21 +515,14 @@ class AuthController extends Controller
      * Update user profile attributes and avatar.
      * PUT|POST /api/v1/auth/profile
      */
-    public function updateProfile(Request $request)
+    public function updateProfile(UpdateProfileRequest $request)
     {
         $user = $request->user();
         if (!$user) {
             return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
         }
 
-        $validated = $request->validate([
-            'name'          => 'sometimes|string|max:255',
-            'phone'         => 'sometimes|nullable|string|max:30',
-            'pin_code'      => 'sometimes|nullable|string|max:10',
-            'avatar_url'    => 'sometimes|nullable|string',
-            'remove_avatar' => 'sometimes|nullable|boolean',
-            'avatar'        => 'sometimes|nullable|file|mimes:jpeg,png,jpg,webp,gif,svg|max:10240',
-        ]);
+        $validated = $request->validated();
 
         $updateData = [];
         if (isset($validated['name'])) $updateData['name'] = trim($validated['name']);
@@ -612,17 +592,14 @@ class AuthController extends Controller
         ]);
     }
 
-    public function updatePassword(Request $request)
+    public function updatePassword(UpdatePasswordRequest $request)
     {
         $user = $request->user();
         if (!$user) {
             return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
         }
 
-        $validated = $request->validate([
-            'current_password' => 'required|string',
-            'new_password' => 'required|string|min:6',
-        ]);
+        $validated = $request->validated();
 
         if (!Hash::check($validated['current_password'], $user->password)) {
             return response()->json([

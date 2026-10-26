@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Attendance\ClockInRequest;
+use App\Http\Requests\Attendance\ClockOutRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -89,15 +91,10 @@ class AttendanceController extends Controller
         ]);
     }
 
-    public function clockIn(Request $request)
+    public function clockIn(ClockInRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'user_id' => 'nullable',
-            'employee_id' => 'nullable',
-            'outlet_id' => 'nullable',
-            'notes' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         $userId = $validated['user_id'] ?? $request->user()?->id;
         $employeeId = $validated['employee_id'] ?? null;
@@ -142,12 +139,9 @@ class AttendanceController extends Controller
         ], 201);
     }
 
-    public function clockOut(Request $request)
+    public function clockOut(ClockOutRequest $request)
     {
-        $validated = $request->validate([
-            'attendance_id' => 'nullable',
-            'notes' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         $userId = $request->user()?->id;
         $query = DB::table('attendances');

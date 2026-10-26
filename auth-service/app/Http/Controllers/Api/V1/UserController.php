@@ -3,6 +3,13 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\User\AttachUserRequest;
+use App\Http\Requests\User\InviteUserRequest;
+use App\Http\Requests\User\ResetPasswordRequest;
+use App\Http\Requests\User\StoreUserRequest;
+use App\Http\Requests\User\UpdateUserRequest;
+use App\Http\Requests\User\VerifyPinRequest;
+use App\Http\Resources\User\UserResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -86,7 +93,7 @@ class UserController extends Controller
             'u.created_at', 'o.name as outlet_name'
         )->orderBy('u.created_at', 'desc')->get();
 
-        return response()->json(['status' => 'success', 'data' => $users]);
+        return response()->json(['status' => 'success', 'data' => UserResource::collection($users)]);
     }
 
     public function permissions()
@@ -103,9 +110,13 @@ class UserController extends Controller
         ]]);
     }
 
-    private function getAllowedRoles(): array
+    public static function getAllowedRoles(): array
     {
-        $dynamic = DB::table('roles')->pluck('slug')->toArray();
+        try {
+            $dynamic = DB::table('roles')->pluck('slug')->toArray();
+        } catch (\Throwable $e) {
+            $dynamic = [];
+        }
         return array_unique(array_merge([
             'super_admin', 'organization', 'employee', 'admin', 'administrator', 'outlet_manager',
             'cashier', 'inventory_clerk', 'accountant', 'meeting_organizer', 'supervisor', 'user'
@@ -165,19 +176,12 @@ class UserController extends Controller
                 ];
             });
 
-        return response()->json(['status' => 'success', 'data' => $users]);
+        return response()->json(['status' => 'success', 'data' => UserResource::collection($users)]);
     }
 
-    public function attach(Request $request)
+    public function attach(AttachUserRequest $request)
     {
-        $validated = $request->validate([
-            'user_id' => 'nullable|integer',
-            'email' => 'nullable|email',
-            'role' => ['required', 'string', Rule::in($this->getAllowedRoles())],
-            'role_id' => 'nullable|integer',
-            'outlet_id' => 'nullable|string',
-            'pin_code' => 'nullable|string|max:10',
-        ]);
+        $validated = $request->validated();
 
         $query = DB::table('users');
         if (!empty($validated['user_id'])) {
@@ -248,18 +252,9 @@ class UserController extends Controller
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreUserRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255|unique:users,email',
-            'password' => 'required|string|min:6',
-            'role' => ['required', 'string', Rule::in($this->getAllowedRoles())],
-            'role_id' => 'nullable|integer',
-            'outlet_id' => 'nullable|string',
-            'pin_code' => 'nullable|string|max:10',
-            'phone' => 'nullable|string|max:30',
-        ]);
+        $validated = $request->validated();
 
         $currentUser = $request->user();
         $tenantId = $currentUser?->tenant_id;
@@ -315,13 +310,9 @@ class UserController extends Controller
         return response()->json(['status' => 'success', 'message' => 'User account created successfully.', 'data' => ['id' => $userId]], 201);
     }
 
-    public function invite(Request $request)
+    public function invite(InviteUserRequest $request)
     {
-        $validated = $request->validate([
-            'email' => 'required|email|max:255',
-            'role' => ['required', 'string', Rule::in($this->getAllowedRoles())],
-            'outlet_id' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $currentUser = $request->user();
         $tenantId = $currentUser?->tenant_id;
@@ -364,19 +355,9 @@ class UserController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateUserRequest $request, $id)
     {
-        $validated = $request->validate([
-            'name' => 'sometimes|string|max:255',
-            'email' => ['sometimes', 'email', 'max:255', Rule::unique('users')->ignore($id)],
-            'phone' => 'sometimes|nullable|string|max:30',
-            'password' => 'nullable|string|min:6',
-            'role' => ['sometimes', 'string', Rule::in($this->getAllowedRoles())],
-            'role_id' => 'sometimes|nullable|integer',
-            'outlet_id' => 'sometimes|nullable|string',
-            'pin_code' => 'sometimes|nullable|string|max:10',
-            'is_active' => 'sometimes|boolean',
-        ]);
+        $validated = $request->validated();
 
         $updateData = [];
         foreach (['name', 'email', 'phone', 'pin_code', 'is_active'] as $field) {
@@ -421,16 +402,16 @@ class UserController extends Controller
         return response()->json(['status' => 'success', 'message' => 'User account updated successfully.']);
     }
 
-    public function resetPassword(Request $request, $id)
+    public function resetPassword(ResetPasswordRequest $request, $id)
     {
-        $validated = $request->validate(['new_password' => 'required|string|min:6']);
+        $validated = $request->validated();
         DB::table('users')->where('id', $id)->update(['password' => Hash::make($validated['new_password']), 'updated_at' => now()]);
         return response()->json(['status' => 'success', 'message' => 'User password reset successfully.']);
     }
 
-    public function verifyPin(Request $request)
+    public function verifyPin(VerifyPinRequest $request)
     {
-        $validated = $request->validate(['pin_code' => 'required|string']);
+        $validated = $request->validated();
         $supervisor = DB::table('users as u')
             ->leftJoin('user_roles as ur', function ($j) {
                 $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
