@@ -48,37 +48,66 @@ return new class extends Migration
                 if (!$roleId && !empty($user->role)) {
                     $roleId = $roles->get($user->role)?->id;
                     if (!$roleId) {
-                        $roleId = DB::table('roles')->insertGetId([
+                        $roleData = [
                             'name' => ucfirst($user->role),
                             'slug' => $user->role,
-                            'tenant_id' => $user->tenant_id ?? null,
-                            'is_active' => true,
                             'created_at' => now(),
                             'updated_at' => now(),
-                        ]);
+                        ];
+                        if (Schema::hasColumn('roles', 'tenant_id')) {
+                            $roleData['tenant_id'] = $user->tenant_id ?? null;
+                        }
+                        if (Schema::hasColumn('roles', 'is_active')) {
+                            $roleData['is_active'] = true;
+                        }
+                        if (Schema::hasColumn('roles', 'parent_role')) {
+                            $roleData['parent_role'] = 'employee';
+                        }
+                        $roleId = DB::table('roles')->insertGetId($roleData);
                     }
                 }
 
                 if ($roleId) {
+                    $pivotData = [
+                        'is_active' => $user->is_active ?? true,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                    if (Schema::hasColumn('user_roles', 'tenant_id')) {
+                        $pivotData['tenant_id'] = $user->tenant_id ?? null;
+                    }
                     DB::table('user_roles')->updateOrInsert(
                         ['user_id' => $user->id, 'role_id' => $roleId],
-                        [
-                            'tenant_id' => $user->tenant_id ?? null,
-                            'is_active' => $user->is_active ?? true,
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ]
+                        $pivotData
                     );
                 }
             }
         }
 
-        // 4. Migrate outlet_id to outlet_uuid
-        if (Schema::hasTable('users') && Schema::hasColumn('users', 'outlet_id') && Schema::hasColumn('users', 'outlet_uuid')) {
-            $outletMap = DB::table('outlets')->pluck('uuid', 'id');
-            foreach ($outletMap as $oid => $ouuid) {
-                if ($ouuid) {
-                    DB::table('users')->where('outlet_id', $oid)->whereNull('outlet_uuid')->update(['outlet_uuid' => $ouuid]);
+        // 4. Ensure uuid and outlet_uuid exist on users table, then migrate outlet_id to outlet_uuid
+        if (Schema::hasTable('users')) {
+            if (!Schema::hasColumn('users', 'uuid')) {
+                Schema::table('users', function (Blueprint $table) {
+                    $table->char('uuid', 36)->nullable()->unique()->after('id');
+                });
+                $existingUsers = DB::table('users')->get();
+                foreach ($existingUsers as $u) {
+                    DB::table('users')->where('id', $u->id)->update(['uuid' => (string) Str::uuid()]);
+                }
+            }
+
+            if (!Schema::hasColumn('users', 'outlet_uuid')) {
+                Schema::table('users', function (Blueprint $table) {
+                    $table->char('outlet_uuid', 36)->nullable()->index()->after('tenant_id');
+                });
+            }
+
+            if (Schema::hasColumn('users', 'outlet_id')) {
+                $outletMap = DB::table('outlets')->pluck('uuid', 'id');
+                foreach ($outletMap as $oid => $ouuid) {
+                    if ($ouuid) {
+                        DB::table('users')->where('outlet_id', $oid)->whereNull('outlet_uuid')->update(['outlet_uuid' => $ouuid]);
+                    }
                 }
             }
         }

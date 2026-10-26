@@ -641,7 +641,7 @@ class TenantController extends Controller
     public function updateModules(Request $request)
     {
         $request->validate([
-            'modules'   => 'required|array',
+            'modules'   => 'present|array',
             'tenant_id' => 'nullable|string',
             'org_name'  => 'nullable|string',
         ]);
@@ -699,7 +699,10 @@ class TenantController extends Controller
                 'currency'       => $tenant->currency ?? 'USD',
                 'client_tier'    => $tenant->client_tier ?? 'free_personal',
                 'status'         => $tenant->status ?? 'active',
+                'business_type'  => $tenant->business_type ?? 'retail_mart',
+                'business_profile' => \App\Services\PosBusinessProfileService::getProfile($tenant->business_type ?? 'retail_mart'),
                 'enabled_modules'=> is_string($tenant->enabled_modules) ? json_decode($tenant->enabled_modules, true) : ($tenant->enabled_modules ?? []),
+                'payment_settings' => is_string($tenant->payment_settings ?? null) ? json_decode($tenant->payment_settings, true) : ($tenant->payment_settings ?? null),
             ],
         ]);
     }
@@ -720,6 +723,7 @@ class TenantController extends Controller
 
         $request->validate([
             'name'           => 'sometimes|required|string|max:255',
+            'business_type'  => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
             'legal_name'     => 'nullable|string|max:255',
             'logo_url'       => 'nullable|string',
             'logo'           => 'nullable|file|mimes:jpeg,png,jpg,webp,svg|max:10240',
@@ -739,6 +743,9 @@ class TenantController extends Controller
         if ($request->has('legal_name')) {
             $updateData['legal_name'] = $request->legal_name;
         }
+        if ($request->has('business_type') && filled($request->business_type)) {
+            $updateData['business_type'] = $request->business_type;
+        }
         if ($request->has('receipt_footer')) {
             $updateData['receipt_footer'] = $request->receipt_footer;
         }
@@ -756,6 +763,15 @@ class TenantController extends Controller
         }
         if ($request->has('currency')) {
             $updateData['currency'] = $request->currency;
+        }
+        if ($request->has('payment_settings')) {
+            $settingsVal = $request->input('payment_settings');
+            if (is_string($settingsVal)) {
+                $decoded = json_decode($settingsVal, true);
+                $updateData['payment_settings'] = $decoded !== null ? json_encode($decoded) : $settingsVal;
+            } else {
+                $updateData['payment_settings'] = json_encode($settingsVal);
+            }
         }
 
         // Handle uploaded file or direct logo URL / Base64 Data URL
@@ -817,6 +833,7 @@ class TenantController extends Controller
                 'currency'       => $updatedTenant->currency ?? 'USD',
                 'client_tier'    => $updatedTenant->client_tier ?? 'free_personal',
                 'status'         => $updatedTenant->status ?? 'active',
+                'payment_settings' => is_string($updatedTenant->payment_settings ?? null) ? json_decode($updatedTenant->payment_settings, true) : ($updatedTenant->payment_settings ?? null),
             ],
         ]);
     }

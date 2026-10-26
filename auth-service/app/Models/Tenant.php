@@ -12,6 +12,7 @@ class Tenant extends Model
     protected $fillable = [
         'uuid',
         'name',
+        'business_type',
         'legal_name',
         'slug',
         'company_code',

@@ -31,10 +31,15 @@ Route::middleware('role:organization,admin,super_admin,outlet_manager')->group(f
     Route::get('/gift-cards', [GiftCardController::class, 'index']);
     Route::post('/gift-cards', [GiftCardController::class, 'store']);
 
-    // Outlets CRUD
+    // Outlets CRUD & POS Business Profiles
+    Route::get('/outlets/business-profiles', [OutletController::class, 'listBusinessProfiles']);
     Route::post('/outlets', [OutletController::class, 'store'])->middleware('quota:outlets');
     Route::put('/outlets/{id}', [OutletController::class, 'update']);
     Route::delete('/outlets/{id}', [OutletController::class, 'destroy']);
+    Route::get('/outlets/{id}/terminal-settings', [OutletController::class, 'getTerminalSettings']);
+    Route::patch('/outlets/{id}/terminal-settings', [OutletController::class, 'updateTerminalSettings']);
+    Route::get('/outlets/{id}/business-profile', [OutletController::class, 'getBusinessProfile']);
+    Route::patch('/outlets/{id}/business-profile', [OutletController::class, 'updateBusinessProfile']);
 
     // Departments CRUD
     Route::post('/departments', [DepartmentController::class, 'store']);

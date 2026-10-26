@@ -4,6 +4,7 @@ include:
   - ./gateway/docker-compose.yml
   - ./auth-service/docker-compose.yml
   - ./operations-service/docker-compose.yml
+  - ./storage/docker-compose.yml
 
 networks:
   codebridge-network:

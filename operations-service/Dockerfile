@@ -1,4 +1,4 @@
-FROM php:8.4-fpm
+FROM php:8.4.27-fpm
 
 WORKDIR /var/www/html
 
@@ -30,6 +30,7 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 # Custom PHP & FPM configurations
 COPY docker/php/uploads.ini /usr/local/etc/php/conf.d/uploads.ini
 COPY docker/php/opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+COPY docker/php/security.ini /usr/local/etc/php/conf.d/security.ini
 COPY docker/php/www.conf /usr/local/etc/php-fpm.d/zz-docker.conf
 COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
