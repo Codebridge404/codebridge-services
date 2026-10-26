@@ -305,4 +305,150 @@ class TransferController extends Controller
             'message' => "Stock transfer {$transfer->transfer_number} marked as received.",
         ]);
     }
+
+    /**
+     * File a dispute for damaged, short-shipped, or missing items during transfer
+     * PATCH /api/v1/transfers/{id}/dispute
+     */
+    public function dispute(Request $request, $id)
+    {
+        $transfer = DB::table('stock_transfers')->where('id', $id)->first();
+        if (!$transfer) {
+            return response()->json(['status' => 'error', 'message' => 'Stock transfer not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'dispute_notes' => 'required|string|max:1000',
+            'items' => 'required|array|min:1',
+            'items.*.product_id' => 'required|integer',
+            'items.*.disputed_quantity' => 'required|integer|min:1',
+            'items.*.dispute_reason' => 'required|string|in:damaged_in_transit,short_shipped,expired_in_transit,wrong_item,crushed_box',
+        ]);
+
+        $userId = $request->user()?->id ?? 1;
+
+        DB::transaction(function () use ($transfer, $validated, $userId) {
+            DB::table('stock_transfers')
+                ->where('id', $transfer->id)
+                ->update([
+                    'status' => 'disputed',
+                    'dispute_status' => 'disputed',
+                    'dispute_notes' => $validated['dispute_notes'],
+                    'disputed_by' => $userId,
+                    'updated_at' => now(),
+                ]);
+
+            foreach ($validated['items'] as $disputeItem) {
+                $line = DB::table('stock_transfer_lines')
+                    ->where('transfer_id', $transfer->id)
+                    ->where('product_id', $disputeItem['product_id'])
+                    ->first();
+
+                if ($line) {
+                    $disputedQty = min($disputeItem['disputed_quantity'], $line->quantity);
+                    $receivedQty = max(0, $line->quantity - $disputedQty);
+
+                    DB::table('stock_transfer_lines')
+                        ->where('id', $line->id)
+                        ->update([
+                            'disputed_quantity' => $disputedQty,
+                            'received_quantity' => $receivedQty,
+                            'dispute_reason' => $disputeItem['dispute_reason'],
+                            'updated_at' => now(),
+                        ]);
+
+                    // Log transit loss / discrepancy movement
+                    DB::table('inventory_movements')->insert([
+                        'tenant_id' => $transfer->tenant_id,
+                        'outlet_id' => $transfer->to_outlet_id,
+                        'product_id' => $disputeItem['product_id'],
+                        'user_id' => $userId,
+                        'movement_type' => 'adjustment',
+                        'quantity' => 0,
+                        'reference_type' => 'stock_transfer_dispute',
+                        'reference_id' => $transfer->transfer_number,
+                        'notes' => "In-transit dispute: {$disputedQty} units flagged as {$disputeItem['dispute_reason']}",
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+            }
+        });
+
+        $updated = DB::table('stock_transfers')->where('id', $id)->first();
+        $lines = DB::table('stock_transfer_lines')->where('transfer_id', $id)->get();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "Dispute filed for stock transfer {$transfer->transfer_number}.",
+            'data' => [
+                'transfer' => $updated,
+                'lines' => $lines,
+            ],
+        ]);
+    }
+
+    /**
+     * Resolve an in-transit transfer dispute
+     * PATCH /api/v1/transfers/{id}/resolve-dispute
+     */
+    public function resolveDispute(Request $request, $id)
+    {
+        $transfer = DB::table('stock_transfers')->where('id', $id)->first();
+        if (!$transfer) {
+            return response()->json(['status' => 'error', 'message' => 'Stock transfer not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'resolution_action' => 'required|string|in:accept_shortage,write_off_shrinkage,return_to_origin',
+            'resolution_notes' => 'required|string|max:1000',
+        ]);
+
+        $userId = $request->user()?->id ?? 1;
+
+        DB::transaction(function () use ($transfer, $validated, $userId) {
+            DB::table('stock_transfers')
+                ->where('id', $transfer->id)
+                ->update([
+                    'dispute_status' => 'resolved',
+                    'status' => 'received',
+                    'received_at' => now(),
+                    'notes' => DB::raw("CONCAT(COALESCE(notes, ''), '\n[Resolution]: ', " . DB::getPdo()->quote($validated['resolution_notes']) . ")"),
+                    'updated_at' => now(),
+                ]);
+
+            $lines = DB::table('stock_transfer_lines')->where('transfer_id', $transfer->id)->get();
+            foreach ($lines as $line) {
+                $receivedQty = $line->received_quantity ?? ($line->quantity - $line->disputed_quantity);
+                if ($receivedQty > 0) {
+                    $balance = DB::table('inventory_balances')
+                        ->where('outlet_id', $transfer->to_outlet_id)
+                        ->where('product_id', $line->product_id)
+                        ->first();
+
+                    if ($balance) {
+                        DB::table('inventory_balances')->where('id', $balance->id)->increment('on_hand', $receivedQty);
+                    } else {
+                        DB::table('inventory_balances')->insert([
+                            'tenant_id' => $transfer->tenant_id,
+                            'outlet_id' => $transfer->to_outlet_id,
+                            'product_id' => $line->product_id,
+                            'on_hand' => $receivedQty,
+                            'reserved' => 0,
+                            'available' => $receivedQty,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
+                }
+            }
+        });
+
+        $updated = DB::table('stock_transfers')->where('id', $id)->first();
+        return response()->json([
+            'status' => 'success',
+            'message' => "Transfer dispute for {$transfer->transfer_number} resolved.",
+            'data' => $updated,
+        ]);
+    }
 }

@@ -174,4 +174,37 @@ class CheckoutController extends Controller
             ], 400);
         }
     }
+
+    /**
+     * [BD-0014 / Task #9] Restaurant Table Dine-In Split-Bill API
+     */
+    public function splitBill(Request $request)
+    {
+        $validated = $request->validate([
+            'table_id' => 'nullable',
+            'sale_id' => 'nullable',
+            'split_type' => 'required|in:equal,itemized',
+            'splits_count' => 'nullable|integer|min:2|max:20',
+            'default_tender_type' => 'nullable|string',
+            'splits' => 'nullable|array',
+            'splits.*.customer_name' => 'nullable|string',
+            'splits.*.tender_type' => 'nullable|string',
+            'splits.*.items' => 'nullable|array',
+        ]);
+
+        try {
+            $result = $this->checkoutService->processSplitBill($validated, $request->user());
+
+            return response()->json([
+                'status' => 'success',
+                'message' => $result['message'],
+                'data' => $result,
+            ], 200);
+        } catch (Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $e->getMessage(),
+            ], 400);
+        }
+    }
 }

@@ -371,4 +371,81 @@ class InventoryController extends Controller
             'data' => $items,
         ]);
     }
+
+    /**
+     * [BD-0015 / Task #11] Real-time Multi-Outlet Stock Aggregation API
+     */
+    public function crossOutletStock(Request $request)
+    {
+        $productId = $request->query('product_id');
+        $search = $request->query('q') ?? $request->query('search');
+
+        if (empty($productId) && empty($search)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Either product_id or search query parameter is required.',
+            ], 400);
+        }
+
+        $productQuery = DB::table('products')->where('is_active', true);
+        if (!empty($productId)) {
+            $productQuery->where('id', $productId);
+        } else {
+            $productQuery->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('sku', 'like', "%{$search}%")
+                  ->orWhere('barcode', 'like', "%{$search}%");
+            });
+        }
+
+        $product = $productQuery->first();
+        if (!$product) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Product not found.',
+            ], 404);
+        }
+
+        // Fetch all active branch outlets with their respective inventory balance
+        $branches = DB::table('outlets as o')
+            ->leftJoin('inventory_balances as ib', function ($join) use ($product) {
+                $join->on('o.id', '=', 'ib.outlet_id')
+                     ->where('ib.product_id', '=', $product->id);
+            })
+            ->select(
+                'o.id as outlet_id',
+                'o.name as outlet_name',
+                'o.code as outlet_code',
+                'o.address',
+                'o.phone',
+                DB::raw('COALESCE(ib.on_hand, 0) as on_hand'),
+                DB::raw('COALESCE(ib.reserved, 0) as reserved'),
+                DB::raw('GREATEST(0, COALESCE(ib.on_hand, 0) - COALESCE(ib.reserved, 0)) as available')
+            )
+            ->where('o.is_active', true)
+            ->orderBy('o.name', 'asc')
+            ->get();
+
+        $totalCompanyOnHand = $branches->sum('on_hand');
+        $totalCompanyAvailable = $branches->sum('available');
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'product' => [
+                    'id' => $product->id,
+                    'name' => $product->name,
+                    'sku' => $product->sku,
+                    'barcode' => $product->barcode,
+                    'selling_price' => $product->selling_price,
+                ],
+                'company_totals' => [
+                    'on_hand' => $totalCompanyOnHand,
+                    'available' => $totalCompanyAvailable,
+                    'branch_count' => $branches->count(),
+                ],
+                'branches' => $branches,
+            ],
+        ]);
+    }
 }

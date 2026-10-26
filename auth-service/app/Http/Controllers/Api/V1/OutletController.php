@@ -283,6 +283,9 @@ class OutletController extends Controller
                 'business_profile' => PosBusinessProfileService::getProfile($businessType),
                 'is_kds_enabled' => (bool) $outlet->is_kds_enabled,
                 'is_cfd_enabled' => (bool) $outlet->is_cfd_enabled,
+                'receipt_header' => $outlet->receipt_header ?? null,
+                'receipt_footer' => $outlet->receipt_footer ?? null,
+                'receipt_logo_url' => $outlet->receipt_logo_url ?? null,
                 'terminal_settings' => $terminalSettings ?? [],
             ],
         ]);
@@ -386,6 +389,70 @@ class OutletController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'Store outlet deactivated.',
+        ]);
+    }
+
+    /**
+     * Update thermal receipt custom branding (logo, header, footer, tax tin)
+     * POST /api/v1/outlets/{id}/receipt-branding
+     */
+    public function updateReceiptBranding(Request $request, $id)
+    {
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'receipt_header' => 'nullable|string|max:500',
+            'receipt_footer' => 'nullable|string|max:500',
+            'receipt_logo_url' => 'nullable|string|max:500',
+            'vat_tin' => 'nullable|string|max:50',
+            'phone' => 'nullable|string|max:50',
+            'address' => 'nullable|string|max:500',
+        ]);
+
+        $updateData = [
+            'updated_at' => now(),
+        ];
+
+        if ($request->has('receipt_header')) $updateData['receipt_header'] = $validated['receipt_header'];
+        if ($request->has('receipt_footer')) $updateData['receipt_footer'] = $validated['receipt_footer'];
+        if ($request->has('phone')) $updateData['phone'] = $validated['phone'];
+        if ($request->has('address')) $updateData['address'] = $validated['address'];
+
+        // If logo file is uploaded
+        if ($request->hasFile('logo')) {
+            $path = $request->file('logo')->store('receipt_logos', 'public');
+            $updateData['receipt_logo_url'] = '/storage/' . $path;
+        } elseif ($request->filled('receipt_logo_url')) {
+            $updateData['receipt_logo_url'] = $validated['receipt_logo_url'];
+        }
+
+        // Store VAT TIN or tax number in terminal_settings JSON
+        $terminalSettings = json_decode($outlet->terminal_settings ?? '{}', true) ?: [];
+        if ($request->has('vat_tin')) {
+            $terminalSettings['vat_tin'] = $validated['vat_tin'];
+            $updateData['terminal_settings'] = json_encode($terminalSettings);
+        }
+
+        DB::table('outlets')->where('id', $id)->update($updateData);
+
+        $fresh = DB::table('outlets')->where('id', $id)->first();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Thermal receipt branding updated successfully.',
+            'data' => [
+                'id' => $fresh->id,
+                'name' => $fresh->name,
+                'receipt_header' => $fresh->receipt_header,
+                'receipt_footer' => $fresh->receipt_footer,
+                'receipt_logo_url' => $fresh->receipt_logo_url ?? ($updateData['receipt_logo_url'] ?? null),
+                'phone' => $fresh->phone,
+                'address' => $fresh->address,
+                'vat_tin' => $terminalSettings['vat_tin'] ?? null,
+            ],
         ]);
     }
 }

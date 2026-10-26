@@ -203,4 +203,160 @@ class PurchaseController extends Controller
         $updated = DB::table('purchase_orders')->where('id', $id)->first();
         return response()->json(['status' => 'success', 'data' => $updated, 'message' => 'PO received and stock updated.']);
     }
+
+    /**
+     * Compute automated re-order suggestions for products below safety threshold
+     * GET /api/v1/purchase-orders/reorder-suggestions
+     */
+    public function reorderSuggestions(Request $request)
+    {
+        $tenantId = $this->getTenantId($request);
+        $outletId = $request->query('outlet_id');
+
+        $productsQuery = DB::table('products as p')
+            ->leftJoin('brands as b', 'p.brand_id', '=', 'b.id')
+            ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
+            ->where('p.is_active', true)
+            ->where('p.min_reorder_point', '>', 0);
+
+        if (!empty($tenantId) && $tenantId !== 'all') {
+            $productsQuery->where(function ($q) use ($tenantId) {
+                $q->where('p.tenant_id', $tenantId)->orWhereNull('p.tenant_id');
+            });
+        }
+
+        $products = $productsQuery->select(
+            'p.id',
+            'p.tenant_id',
+            'p.name',
+            'p.sku',
+            'p.barcode',
+            'p.cost_price',
+            'p.selling_price',
+            'p.min_reorder_point',
+            'b.name as brand_name',
+            'c.name as category_name'
+        )->get();
+
+        $defaultSupplier = DB::table('suppliers')->where('is_active', true)->first();
+        $defaultSupplierName = $defaultSupplier?->name ?? 'Standard Distribution Co.';
+
+        $suggestionsBySupplier = [];
+        $totalSuggestedItems = 0;
+        $totalEstReplenishmentCost = 0;
+
+        foreach ($products as $product) {
+            $balanceQuery = DB::table('inventory_balances')->where('product_id', $product->id);
+            if ($outletId) {
+                $balanceQuery->where('outlet_id', $outletId);
+            }
+            $currentOnHand = (int) $balanceQuery->sum('on_hand');
+
+            if ($currentOnHand <= $product->min_reorder_point) {
+                $targetSafetyStock = max($product->min_reorder_point * 2, 10);
+                $suggestedQty = max($targetSafetyStock - $currentOnHand, 5);
+
+                $unitCost = (float) $product->cost_price;
+                if ($unitCost <= 0) {
+                    $unitCost = (float) $product->selling_price > 0 ? (float) $product->selling_price * 0.70 : 5.00;
+                }
+                $estTotalCost = round($suggestedQty * $unitCost, 2);
+
+                $supplierName = $product->brand_name ? "{$product->brand_name} Supplies" : $defaultSupplierName;
+
+                if (!isset($suggestionsBySupplier[$supplierName])) {
+                    $suggestionsBySupplier[$supplierName] = [
+                        'supplier' => $supplierName,
+                        'items' => [],
+                        'items_count' => 0,
+                        'est_total' => 0.00,
+                    ];
+                }
+
+                $suggestionsBySupplier[$supplierName]['items'][] = [
+                    'product_id' => $product->id,
+                    'name' => $product->name,
+                    'sku' => $product->sku,
+                    'current_on_hand' => $currentOnHand,
+                    'min_reorder_point' => $product->min_reorder_point,
+                    'suggested_quantity' => $suggestedQty,
+                    'unit_cost' => $unitCost,
+                    'est_cost' => $estTotalCost,
+                ];
+
+                $suggestionsBySupplier[$supplierName]['items_count']++;
+                $suggestionsBySupplier[$supplierName]['est_total'] += $estTotalCost;
+
+                $totalSuggestedItems++;
+                $totalEstReplenishmentCost += $estTotalCost;
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'total_suppliers' => count($suggestionsBySupplier),
+                'total_items_to_reorder' => $totalSuggestedItems,
+                'total_estimated_cost' => round($totalEstReplenishmentCost, 2),
+                'suppliers' => array_values($suggestionsBySupplier),
+            ],
+        ]);
+    }
+
+    /**
+     * Auto-generate draft Purchase Orders from low stock suggestions
+     * POST /api/v1/purchase-orders/auto-reorder
+     */
+    public function autoReorder(Request $request)
+    {
+        $tenantId = $this->getTenantId($request);
+        $selectedSuppliers = $request->input('suppliers', []);
+
+        $suggestionsResponse = $this->reorderSuggestions($request)->getData(true);
+        $suppliersData = $suggestionsResponse['data']['suppliers'] ?? [];
+
+        if (empty($suppliersData)) {
+            return response()->json([
+                'status' => 'success',
+                'message' => 'All product stock levels are healthy. No purchase orders needed.',
+                'data' => [],
+            ]);
+        }
+
+        $createdPOs = [];
+
+        DB::transaction(function () use ($suppliersData, $selectedSuppliers, $tenantId, &$createdPOs) {
+            foreach ($suppliersData as $suppData) {
+                $supplierName = $suppData['supplier'];
+
+                if (!empty($selectedSuppliers) && !in_array($supplierName, $selectedSuppliers)) {
+                    continue;
+                }
+
+                $poNumber = 'PO-AUTO-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
+
+                $id = DB::table('purchase_orders')->insertGetId([
+                    'tenant_id' => $tenantId,
+                    'po_number' => $poNumber,
+                    'supplier' => $supplierName,
+                    'items_count' => $suppData['items_count'],
+                    'est_total' => $suppData['est_total'],
+                    'status' => 'pending',
+                    'is_auto_generated' => true,
+                    'trigger_reason' => 'Automated replenishment: stock dropped below safety min_reorder_point',
+                    'order_date' => now()->toDateString(),
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+
+                $createdPOs[] = DB::table('purchase_orders')->where('id', $id)->first();
+            }
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'message' => count($createdPOs) . ' automated Purchase Orders generated successfully.',
+            'data' => $createdPOs,
+        ], 201);
+    }
 }

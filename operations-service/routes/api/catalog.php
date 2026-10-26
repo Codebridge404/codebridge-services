@@ -27,7 +27,7 @@ Route::post('/coupons/validate', [CouponController::class, 'validateCoupon']);
 | Catalog Management Mutations (Protected)
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth:sanctum', 'role:admin,super_admin,outlet_manager,inventory_clerk'])->group(function () {
+Route::middleware(['auth:sanctum', 'role:organization,admin,super_admin,outlet_manager,inventory_clerk'])->group(function () {
     // Products CRUD
     Route::post('/products', [ProductController::class, 'store']);
     Route::post('/products/bulk', [ProductController::class, 'bulkStore']);
