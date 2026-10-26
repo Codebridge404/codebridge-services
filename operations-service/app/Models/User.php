@@ -21,7 +21,7 @@ class User extends Authenticatable
      */
     public function getConnectionName()
     {
-        if (config('database.default') === 'sqlite') {
+        if (app()->runningUnitTests() || app()->environment('testing') || config('database.default') === 'sqlite') {
             return parent::getConnectionName();
         }
 
