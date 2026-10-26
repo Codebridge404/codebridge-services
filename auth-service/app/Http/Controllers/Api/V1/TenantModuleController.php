@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Tenant\UpdateModulesRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -105,12 +106,9 @@ class TenantModuleController extends Controller
      * Update module license entitlements for a tenant.
      * PUT /api/v1/tenants/modules
      */
-    public function update(Request $request)
+    public function update(UpdateModulesRequest $request)
     {
-        $request->validate([
-            'modules'   => 'present|array',
-            'modules.*' => 'string',
-        ]);
+
 
         $tenantId = $request->input('tenant_id');
         $orgName = $request->input('org_name');

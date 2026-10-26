@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Meeting\ReportMeetingIssueRequest;
+use App\Http\Requests\Meeting\UpdateMeetingIssueStatusRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -73,13 +75,9 @@ class MeetingIssueController extends Controller
      * Report an in-room equipment or facility issue (Accessible from Tablet Kiosks or Web).
      * POST /api/v1/meetings/rooms/{roomId}/issues
      */
-    public function report(Request $request, $roomId)
+    public function report(ReportMeetingIssueRequest $request, $roomId)
     {
-        $validated = $request->validate([
-            'category' => 'required|string|in:audio_visual,air_conditioning,cleanliness,network,furniture',
-            'priority' => 'nullable|string|in:low,medium,high,critical',
-            'description' => 'required|string|max:1000',
-        ]);
+        $validated = $request->validated();
 
         $user = auth('sanctum')->user() ?? $request->user();
         $room = DB::table('meeting_rooms')->where('id', $roomId)->first();
@@ -111,12 +109,9 @@ class MeetingIssueController extends Controller
      * Update issue status and resolution notes.
      * PATCH /api/v1/meetings/issues/{id}/status
      */
-    public function updateStatus(Request $request, $id)
+    public function updateStatus(UpdateMeetingIssueStatusRequest $request, $id)
     {
-        $validated = $request->validate([
-            'status' => 'required|string|in:reported,under_inspection,resolved,cancelled',
-            'resolution_notes' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $updateData = [
             'status' => $validated['status'],

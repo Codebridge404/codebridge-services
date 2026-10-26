@@ -3,6 +3,12 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Tenant\RegisterTenantRequest;
+use App\Http\Requests\Tenant\UpdateSubscriptionRequest;
+use App\Http\Requests\Tenant\UpdateTenantModulesRequest;
+use App\Http\Requests\Tenant\UpdateTenantProfileRequest;
+use App\Http\Requests\Tenant\UpdateTenantRequest;
+use App\Http\Resources\Tenant\TenantResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -29,16 +35,8 @@ class TenantController extends Controller
      * Public Self-Service Tenant Registration.
      * POST /api/v1/tenants/register
      */
-    public function register(Request $request)
+    public function register(RegisterTenantRequest $request)
     {
-        $request->validate([
-            'name'        => 'required|string|max:255',
-            'email'       => 'nullable|email',
-            'client_tier' => 'nullable|in:free_personal,business_runner,enterprise_org',
-            'phone'       => 'nullable|string|max:30',
-            'address'     => 'nullable|string|max:500',
-            'country'     => 'nullable|string|max:10',
-        ]);
 
         $clientTier = $request->client_tier ?? 'business_runner';
         $slug = Str::slug($request->name);
@@ -255,7 +253,7 @@ class TenantController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => $tenants,
+            'data'    => TenantResource::collection($tenants),
             'stats'   => $stats,
         ]);
     }
@@ -308,7 +306,7 @@ class TenantController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => $tenant,
+            'data'    => new TenantResource($tenant),
         ]);
     }
 
@@ -316,29 +314,12 @@ class TenantController extends Controller
      * Super Admin: Update tenant organization details and owner.
      * PUT /api/v1/super-admin/tenants/{id}
      */
-    public function update(Request $request, $id)
+    public function update(UpdateTenantRequest $request, $id)
     {
         $tenant = DB::table('tenants')->where('id', $id)->first();
         if (!$tenant) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
-
-        $request->validate([
-            'name'          => 'sometimes|required|string|max:255',
-            'client_tier'   => 'sometimes|required|in:free_personal,business_runner,enterprise_org',
-            'status'        => 'sometimes|required|in:active,trial,suspended,expired',
-            'email'         => 'nullable|email|max:255',
-            'phone'         => 'nullable|string|max:50',
-            'address'       => 'nullable|string|max:500',
-            'max_outlets'   => 'nullable|integer|min:1',
-            'max_registers' => 'nullable|integer|min:1',
-            'max_users'     => 'nullable|integer|min:1',
-            'trial_ends_at' => 'nullable|date',
-            'owner_name'    => 'nullable|string|max:255',
-            'owner_email'   => 'nullable|email|max:255',
-            'owner_phone'   => 'nullable|string|max:50',
-            'owner_id'      => 'nullable|string',
-        ]);
 
         $updateData = [];
         foreach (['name', 'client_tier', 'status', 'email', 'phone', 'address', 'max_outlets', 'max_registers', 'max_users', 'trial_ends_at'] as $field) {
@@ -459,20 +440,12 @@ class TenantController extends Controller
      * Super Admin: Update tenant subscription plan.
      * PUT /api/v1/super-admin/tenants/{id}/subscription
      */
-    public function updateSubscription(Request $request, $id)
+    public function updateSubscription(UpdateSubscriptionRequest $request, $id)
     {
         $tenant = DB::table('tenants')->where('id', $id)->first();
         if (!$tenant) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
-
-        $request->validate([
-            'plan_name'     => 'required|string',
-            'price'         => 'required|numeric|min:0',
-            'billing_cycle' => 'required|in:monthly,quarterly,yearly',
-            'expires_at'    => 'nullable|date',
-            'client_tier'   => 'nullable|in:free_personal,business_runner,enterprise_org',
-        ]);
 
         DB::table('tenant_subscriptions')->insert([
             'tenant_id'     => $id,
@@ -638,13 +611,8 @@ class TenantController extends Controller
      * Update enabled modules for the active organization workspace in cloud database.
      * PUT /api/v1/tenants/modules
      */
-    public function updateModules(Request $request)
+    public function updateModules(UpdateTenantModulesRequest $request)
     {
-        $request->validate([
-            'modules'   => 'present|array',
-            'tenant_id' => 'nullable|string',
-            'org_name'  => 'nullable|string',
-        ]);
 
         $tenant = $this->resolveTenant($request);
         if (!$tenant) {
@@ -711,7 +679,7 @@ class TenantController extends Controller
      * Update active tenant organization profile (branding, name, logo, contact).
      * PUT|POST /api/v1/tenants/profile
      */
-    public function updateProfile(Request $request)
+    public function updateProfile(UpdateTenantProfileRequest $request)
     {
         $tenant = $this->resolveTenant($request);
         if (!$tenant) {
@@ -720,20 +688,6 @@ class TenantController extends Controller
                 'message' => 'Workspace not found.',
             ], 404);
         }
-
-        $request->validate([
-            'name'           => 'sometimes|required|string|max:255',
-            'business_type'  => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
-            'legal_name'     => 'nullable|string|max:255',
-            'logo_url'       => 'nullable|string',
-            'logo'           => 'nullable|file|mimes:jpeg,png,jpg,webp,svg|max:10240',
-            'receipt_footer' => 'nullable|string|max:500',
-            'phone'          => 'nullable|string|max:50',
-            'email'          => 'nullable|email|max:255',
-            'address'        => 'nullable|string|max:500',
-            'country'        => 'nullable|string|max:10',
-            'currency'       => 'nullable|string|max:10',
-        ]);
 
         $updateData = [];
 

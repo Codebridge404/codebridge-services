@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Meeting\BatchUpdateMeetingSettingsRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -89,13 +90,9 @@ class MeetingSettingController extends Controller
      * Batch update dynamic settings.
      * PUT /api/v1/meetings/system-settings/batch
      */
-    public function batchUpdate(Request $request)
+    public function batchUpdate(BatchUpdateMeetingSettingsRequest $request)
     {
-        $validated = $request->validate([
-            'settings' => 'required|array',
-            'settings.*.setting_key' => 'required|string',
-            'settings.*.setting_value' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
         $tenantId = $user?->tenant_id;

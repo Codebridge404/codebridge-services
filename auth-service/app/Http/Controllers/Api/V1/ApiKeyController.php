@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ApiKey\StoreApiKeyRequest;
+use App\Http\Resources\ApiKey\ApiKeyResource;
 use App\Models\ApiKey;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -61,7 +63,7 @@ class ApiKeyController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $keys,
+            'data' => ApiKeyResource::collection($keys),
         ]);
     }
 
@@ -69,13 +71,9 @@ class ApiKeyController extends Controller
      * Generate a new Merchant API Key.
      * POST /api/v1/api-keys
      */
-    public function store(Request $request)
+    public function store(StoreApiKeyRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'permissions' => 'nullable|array',
-            'expires_in_days' => 'nullable|integer|min:1|max:365',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
 

@@ -3,6 +3,10 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Crm\StoreActivityRequest;
+use App\Http\Requests\Crm\StoreDealRequest;
+use App\Http\Requests\Crm\StoreLeadRequest;
+use App\Http\Requests\Crm\UpdateDealRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -67,18 +71,10 @@ class CrmController extends Controller
         ]);
     }
 
-    public function storeDeal(Request $request)
+    public function storeDeal(StoreDealRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'title' => 'required|string|max:255',
-            'company' => 'nullable|string|max:255',
-            'value' => 'required|numeric|min:0',
-            'stage' => 'nullable|string|in:lead,qualified,proposal,negotiation,won,lost',
-            'probability' => 'nullable|integer|min:0|max:100',
-            'owner_name' => 'nullable|string|max:255',
-            'expected_close_date' => 'nullable|date',
-        ]);
+        $validated = $request->validated();
 
         $id = DB::table('deals')->insertGetId([
             'tenant_id' => $tenantId,
@@ -102,17 +98,10 @@ class CrmController extends Controller
         ], 201);
     }
 
-    public function updateDeal(Request $request, $id)
+    public function updateDeal(UpdateDealRequest $request, $id)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'title' => 'sometimes|string|max:255',
-            'company' => 'nullable|string|max:255',
-            'value' => 'sometimes|numeric|min:0',
-            'stage' => 'sometimes|string|in:lead,qualified,proposal,negotiation,won,lost',
-            'probability' => 'sometimes|integer|min:0|max:100',
-            'owner_name' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         $query = DB::table('deals')->where('id', $id);
         if (!empty($tenantId) && $tenantId !== 'all') {
@@ -180,18 +169,10 @@ class CrmController extends Controller
         ]);
     }
 
-    public function storeLead(Request $request)
+    public function storeLead(StoreLeadRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'company' => 'nullable|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'phone' => 'nullable|string|max:50',
-            'score' => 'nullable|string|max:50',
-            'source' => 'nullable|string|max:50',
-            'notes' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $id = DB::table('leads')->insertGetId([
             'tenant_id' => $tenantId,
@@ -237,15 +218,10 @@ class CrmController extends Controller
         ]);
     }
 
-    public function storeActivity(Request $request)
+    public function storeActivity(StoreActivityRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'type' => 'required|string|in:call,email,meeting,note',
-            'title' => 'required|string|max:255',
-            'contact' => 'nullable|string|max:255',
-            'summary' => 'required|string',
-        ]);
+        $validated = $request->validated();
 
         $id = DB::table('crm_activities')->insertGetId([
             'tenant_id' => $tenantId,

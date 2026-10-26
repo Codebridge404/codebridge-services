@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Resources\Role\PermissionResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -41,12 +42,12 @@ class PermissionController extends Controller
 
         $grouped = [];
         foreach ($permissions as $perm) {
-            $grouped[$perm->group][] = $perm;
+            $grouped[$perm->group][] = (new PermissionResource($perm))->resolve();
         }
 
         return response()->json([
             'success' => true,
-            'data' => $permissions,
+            'data' => PermissionResource::collection($permissions),
             'grouped' => $grouped,
         ]);
     }

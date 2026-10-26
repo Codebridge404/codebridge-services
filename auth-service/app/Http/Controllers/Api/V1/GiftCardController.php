@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\GiftCard\StoreGiftCardRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -52,14 +53,10 @@ class GiftCardController extends Controller
         return response()->json(['status' => 'success', 'data' => $cards]);
     }
 
-    public function store(Request $request)
+    public function store(StoreGiftCardRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'card_code' => 'nullable|string',
-            'customer' => 'nullable|string',
-            'balance' => 'required|numeric|min:0.01',
-        ]);
+        $validated = $request->validated();
 
         $code = $validated['card_code'] ?? ('GC-' . rand(1000, 9999) . '-' . rand(1000, 9999));
 

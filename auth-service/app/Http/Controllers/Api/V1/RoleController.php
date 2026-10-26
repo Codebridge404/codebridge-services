@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Role\StoreRoleRequest;
+use App\Http\Requests\Role\UpdateRoleRequest;
+use App\Http\Resources\Role\RoleResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -55,22 +58,12 @@ class RoleController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $roles,
+            'data' => RoleResource::collection($roles),
         ]);
     }
 
-    /**
-     * Create a new dynamic custom role.
-     */
-    public function store(Request $request)
+    public function store(StoreRoleRequest $request)
     {
-        $request->validate([
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string',
-            'parent_role' => 'nullable|string',
-            'permission_ids' => 'nullable|array',
-            'permission_ids.*' => 'string',
-        ]);
 
         $currentUser = $request->user();
         $slug = \Illuminate\Support\Str::slug($request->name, '_');
@@ -145,18 +138,12 @@ class RoleController extends Controller
     /**
      * Update an existing custom role and sync permission assignments.
      */
-    public function update(Request $request, $id)
+    public function update(UpdateRoleRequest $request, $id)
     {
         $role = DB::table('roles')->where('id', $id)->first();
         if (!$role) {
             return response()->json(['success' => false, 'message' => 'Role not found.'], 404);
         }
-
-        $request->validate([
-            'name' => 'sometimes|required|string|max:255',
-            'description' => 'nullable|string',
-            'permission_ids' => 'nullable|array',
-        ]);
 
         $updateData = ['updated_at' => now()];
         if ($request->has('name')) {

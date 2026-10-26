@@ -3,6 +3,10 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Meeting\StoreMaterialRequest;
+use App\Http\Requests\Meeting\StoreStaffRequest;
+use App\Http\Requests\Meeting\UpdateMaterialRequest;
+use App\Http\Requests\Meeting\UpdateStaffRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -77,14 +81,9 @@ class MeetingLogisticsController extends Controller
      * Create new material item.
      * POST /api/v1/meetings/materials
      */
-    public function storeMaterial(Request $request)
+    public function storeMaterial(StoreMaterialRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:150',
-            'category' => 'nullable|string|max:50',
-            'quantity_total' => 'required|integer|min:1',
-            'status' => 'nullable|string|max:30',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
         $qty = $validated['quantity_total'];
@@ -108,20 +107,14 @@ class MeetingLogisticsController extends Controller
      * Update material item stock or details.
      * PUT /api/v1/meetings/materials/{id}
      */
-    public function updateMaterial(Request $request, $id)
+    public function updateMaterial(UpdateMaterialRequest $request, $id)
     {
         $item = DB::table('meeting_materials')->where('id', $id)->first();
         if (!$item) {
             return response()->json(['status' => 'error', 'message' => 'Material not found.'], 404);
         }
 
-        $validated = $request->validate([
-            'name' => 'sometimes|string|max:150',
-            'category' => 'sometimes|string|max:50',
-            'quantity_total' => 'sometimes|integer|min:0',
-            'quantity_available' => 'sometimes|integer|min:0',
-            'status' => 'sometimes|string|max:30',
-        ]);
+        $validated = $request->validated();
 
         $updateData = array_merge($validated, ['updated_at' => now()]);
         DB::table('meeting_materials')->where('id', $id)->update($updateData);
@@ -185,15 +178,9 @@ class MeetingLogisticsController extends Controller
      * Create certified staff member.
      * POST /api/v1/meetings/staff
      */
-    public function storeStaff(Request $request)
+    public function storeStaff(StoreStaffRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:150',
-            'role' => 'required|string|max:50',
-            'phone' => 'nullable|string|max:50',
-            'user_id' => 'nullable|integer',
-            'status' => 'nullable|string|max:30',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
 
@@ -216,14 +203,9 @@ class MeetingLogisticsController extends Controller
      * Update support staff.
      * PUT /api/v1/meetings/staff/{id}
      */
-    public function updateStaff(Request $request, $id)
+    public function updateStaff(UpdateStaffRequest $request, $id)
     {
-        $validated = $request->validate([
-            'name' => 'sometimes|string|max:150',
-            'role' => 'sometimes|string|max:50',
-            'phone' => 'sometimes|nullable|string|max:50',
-            'status' => 'sometimes|string|max:30',
-        ]);
+        $validated = $request->validated();
 
         DB::table('meeting_staff')->where('id', $id)->update(array_merge($validated, ['updated_at' => now()]));
         $fresh = DB::table('meeting_staff')->where('id', $id)->first();

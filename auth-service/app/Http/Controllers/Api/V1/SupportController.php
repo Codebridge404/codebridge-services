@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Support\StoreAnnouncementRequest;
+use App\Http\Requests\Support\StoreTicketRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -83,16 +85,8 @@ class SupportController extends Controller
      * Create a new support ticket.
      * POST /api/v1/super-admin/support/tickets
      */
-    public function storeTicket(Request $request)
+    public function storeTicket(StoreTicketRequest $request)
     {
-        $request->validate([
-            'subject'        => 'required|string|max:255',
-            'tenant_name'    => 'required|string|max:255',
-            'requester_name' => 'required|string|max:255',
-            'priority'       => 'nullable|in:urgent,high,normal',
-            'category'       => 'nullable|string|max:100',
-            'description'    => 'nullable|string',
-        ]);
 
         $ticketId = 'TCK-' . rand(1000, 9999);
 
@@ -178,13 +172,8 @@ class SupportController extends Controller
      * Publish a new platform broadcast announcement.
      * POST /api/v1/super-admin/support/announcements
      */
-    public function storeAnnouncement(Request $request)
+    public function storeAnnouncement(StoreAnnouncementRequest $request)
     {
-        $request->validate([
-            'title'    => 'required|string|max:255',
-            'message'  => 'required|string',
-            'severity' => 'required|in:info,warning,critical',
-        ]);
 
         $id = DB::table('platform_announcements')->insertGetId([
             'title'           => $request->title,

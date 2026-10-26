@@ -3,6 +3,11 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Outlet\StoreOutletRequest;
+use App\Http\Requests\Outlet\UpdateBusinessProfileRequest;
+use App\Http\Requests\Outlet\UpdateOutletRequest;
+use App\Http\Requests\Outlet\UpdateTerminalSettingsRequest;
+use App\Http\Resources\Outlet\OutletResource;
 use App\Services\PosBusinessProfileService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -72,25 +77,14 @@ class OutletController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $outlets,
+            'data' => OutletResource::collection($outlets),
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreOutletRequest $request)
     {
         $user = $request->user();
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'code' => 'required|string|max:50|unique:outlets,code',
-            'business_type' => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
-            'phone' => 'nullable|string|max:50',
-            'address' => 'nullable|string|max:500',
-            'receipt_header' => 'nullable|string|max:255',
-            'receipt_footer' => 'nullable|string|max:255',
-            'is_kds_enabled' => 'nullable|boolean',
-            'is_cfd_enabled' => 'nullable|boolean',
-            'terminal_settings' => 'nullable|array',
-        ]);
+        $validated = $request->validated();
 
         $tenantId = $user ? $user->tenant_id : null;
         $businessType = $validated['business_type'] ?? 'retail_mart';
@@ -131,19 +125,9 @@ class OutletController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateOutletRequest $request, $id)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'business_type' => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
-            'phone' => 'nullable|string|max:50',
-            'address' => 'nullable|string|max:500',
-            'receipt_header' => 'nullable|string|max:255',
-            'receipt_footer' => 'nullable|string|max:255',
-            'is_kds_enabled' => 'nullable|boolean',
-            'is_cfd_enabled' => 'nullable|boolean',
-            'terminal_settings' => 'nullable|array',
-        ]);
+        $validated = $request->validated();
 
         $updates = [
             'name' => $validated['name'],
@@ -218,11 +202,9 @@ class OutletController extends Controller
      * Update active POS Business Operating Profile for an outlet.
      * PATCH|PUT /api/v1/outlets/{id}/business-profile
      */
-    public function updateBusinessProfile(Request $request, $id)
+    public function updateBusinessProfile(UpdateBusinessProfileRequest $request, $id)
     {
-        $validated = $request->validate([
-            'business_type' => 'required|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
-        ]);
+        $validated = $request->validated();
 
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
@@ -310,14 +292,9 @@ class OutletController extends Controller
      * Update POS Terminal Feature Flags & Peripherals for an outlet.
      * PATCH /api/v1/outlets/{id}/terminal-settings
      */
-    public function updateTerminalSettings(Request $request, $id)
+    public function updateTerminalSettings(UpdateTerminalSettingsRequest $request, $id)
     {
-        $validated = $request->validate([
-            'business_type' => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
-            'is_kds_enabled' => 'nullable|boolean',
-            'is_cfd_enabled' => 'nullable|boolean',
-            'terminal_settings' => 'nullable|array',
-        ]);
+        $validated = $request->validated();
 
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {

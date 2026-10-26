@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Department\StoreDepartmentRequest;
+use App\Http\Requests\Department\UpdateDepartmentRequest;
+use App\Http\Resources\Department\DepartmentResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -69,18 +72,14 @@ class DepartmentController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $departments,
+            'data' => DepartmentResource::collection($departments),
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreDepartmentRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'code' => 'required|string|max:50',
-            'description' => 'nullable|string|max:500',
-        ]);
+        $validated = $request->validated();
 
         $code = strtoupper(trim($validated['code']));
 
@@ -112,13 +111,10 @@ class DepartmentController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateDepartmentRequest $request, $id)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string|max:500',
-        ]);
+        $validated = $request->validated();
 
         $query = DB::table('departments')->where('id', $id);
         if (!empty($tenantId) && $tenantId !== 'all') {

@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Customer\StoreCustomerRequest;
+use App\Http\Requests\Customer\UpdateCustomerRequest;
+use App\Http\Resources\Customer\CustomerResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -63,19 +66,14 @@ class CustomerController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $customers,
+            'data' => CustomerResource::collection($customers),
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreCustomerRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'phone' => 'nullable|string|max:50',
-            'address' => 'nullable|string|max:500',
-        ]);
+        $validated = $request->validated();
 
         $code = 'CUST-' . strtoupper(substr(uniqid(), -6));
 
@@ -100,16 +98,10 @@ class CustomerController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateCustomerRequest $request, $id)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'phone' => 'nullable|string|max:50',
-            'address' => 'nullable|string|max:500',
-            'loyalty_points' => 'nullable|integer',
-        ]);
+        $validated = $request->validated();
 
         $query = DB::table('customers')->where('id', $id);
         if (!empty($tenantId) && $tenantId !== 'all') {

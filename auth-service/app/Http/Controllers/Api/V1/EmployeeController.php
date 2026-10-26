@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Employee\StoreEmployeeRequest;
+use App\Http\Requests\Employee\UpdateEmployeeRequest;
+use App\Http\Resources\Employee\EmployeeResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -91,25 +94,14 @@ class EmployeeController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $employees,
+            'data' => EmployeeResource::collection($employees),
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreEmployeeRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'phone' => 'nullable|string|max:50',
-            'department_id' => 'nullable',
-            'outlet_id' => 'nullable',
-            'designation' => 'required|string|max:255',
-            'employment_type' => 'required|string|in:Full-time,Part-time,Contract',
-            'hire_date' => 'nullable|date',
-            'salary' => 'nullable|numeric|min:0',
-        ]);
+        $validated = $request->validated();
 
         $code = 'EMP-' . strtoupper(substr(uniqid(), -4));
 
@@ -138,21 +130,10 @@ class EmployeeController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateEmployeeRequest $request, $id)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'phone' => 'nullable|string|max:50',
-            'department_id' => 'nullable',
-            'outlet_id' => 'nullable',
-            'designation' => 'required|string|max:255',
-            'employment_type' => 'required|string|in:Full-time,Part-time,Contract',
-            'hire_date' => 'nullable|date',
-            'salary' => 'nullable|numeric|min:0',
-        ]);
+        $validated = $request->validated();
 
         $query = DB::table('employees')->where('id', $id);
         if (!empty($tenantId) && $tenantId !== 'all') {
