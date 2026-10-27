@@ -31,6 +31,8 @@ Route::middleware(['auth:sanctum', 'role:organization,admin,super_admin,outlet_m
     // Products CRUD
     Route::post('/products', [ProductController::class, 'store']);
     Route::post('/products/bulk', [ProductController::class, 'bulkStore']);
+    Route::post('/products/{id}/image', [ProductController::class, 'uploadImage']);
+    Route::post('/products/{id}', [ProductController::class, 'update']);
     Route::put('/products/{id}', [ProductController::class, 'update']);
     Route::delete('/products/{id}', [ProductController::class, 'destroy']);
 

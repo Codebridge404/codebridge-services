@@ -288,6 +288,8 @@ class ProductController extends Controller
             'min_reorder_point' => 'nullable|integer|min:0',
             'description' => 'nullable|string',
             'initial_stock' => 'nullable|numeric|min:0',
+            'image_url' => 'nullable|string',
+            'image' => 'nullable|file|image|max:10240',
         ]);
 
         // Check if SKU exists for this tenant
@@ -300,6 +302,22 @@ class ProductController extends Controller
                 'status' => 'error',
                 'message' => "SKU '{$validated['sku']}' is already in use for your organization.",
             ], 422);
+        }
+
+        // Upload product image to MinIO S3 bucket (or Cloudinary fallback)
+        $imageUrl = $validated['image_url'] ?? null;
+        if ($request->hasFile('image')) {
+            $cloudinary = new \App\Services\CloudinaryService();
+            $uploadedUrl = $cloudinary->upload($request->file('image'), 'products');
+            if ($uploadedUrl) {
+                $imageUrl = $uploadedUrl;
+            }
+        } elseif (!empty($imageUrl) && str_starts_with($imageUrl, 'data:image/')) {
+            $cloudinary = new \App\Services\CloudinaryService();
+            $uploadedUrl = $cloudinary->upload($imageUrl, 'products');
+            if ($uploadedUrl) {
+                $imageUrl = $uploadedUrl;
+            }
         }
 
         $outlet = DB::table('outlets')->first();
@@ -317,6 +335,7 @@ class ProductController extends Controller
             'expiry_date' => $validated['expiry_date'] ?? null,
             'min_reorder_point' => isset($validated['min_reorder_point']) ? (int)$validated['min_reorder_point'] : 0,
             'description' => $validated['description'] ?? null,
+            'image_url' => $imageUrl,
             'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
@@ -342,6 +361,7 @@ class ProductController extends Controller
                 'tenant_id' => $tenantId,
                 'name' => $validated['name'],
                 'sku' => $validated['sku'],
+                'image_url' => $imageUrl,
             ],
         ], 201);
     }
@@ -360,7 +380,24 @@ class ProductController extends Controller
             'expiry_date' => 'sometimes|nullable|date',
             'min_reorder_point' => 'sometimes|nullable|integer|min:0',
             'description' => 'sometimes|nullable|string',
+            'image_url' => 'sometimes|nullable|string',
+            'image' => 'sometimes|nullable|file|image|max:10240',
         ]);
+
+        if ($request->hasFile('image')) {
+            $cloudinary = new \App\Services\CloudinaryService();
+            $uploadedUrl = $cloudinary->upload($request->file('image'), 'products');
+            if ($uploadedUrl) {
+                $validated['image_url'] = $uploadedUrl;
+            }
+            unset($validated['image']);
+        } elseif (isset($validated['image_url']) && str_starts_with($validated['image_url'], 'data:image/')) {
+            $cloudinary = new \App\Services\CloudinaryService();
+            $uploadedUrl = $cloudinary->upload($validated['image_url'], 'products');
+            if ($uploadedUrl) {
+                $validated['image_url'] = $uploadedUrl;
+            }
+        }
 
         $query = DB::table('products')->where('id', $id);
         if ($tenantId) {
@@ -375,6 +412,53 @@ class ProductController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'Product updated successfully.',
+            'image_url' => $validated['image_url'] ?? null,
+        ]);
+    }
+
+    public function uploadImage(Request $request, $id)
+    {
+        $tenantId = $this->getTenantId($request);
+        $request->validate([
+            'image' => 'required_without:image_url|file|image|max:10240',
+            'image_url' => 'required_without:image|string',
+        ]);
+
+        $query = DB::table('products')->where('id', $id);
+        if ($tenantId) {
+            $query->where(function ($q) use ($tenantId) {
+                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+            });
+        }
+
+        if (!$query->exists()) {
+            return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
+        }
+
+        $imageUrl = null;
+        $cloudinary = new \App\Services\CloudinaryService();
+        if ($request->hasFile('image')) {
+            $imageUrl = $cloudinary->upload($request->file('image'), 'products');
+        } elseif ($request->filled('image_url')) {
+            $imageUrl = $cloudinary->upload($request->input('image_url'), 'products');
+        }
+
+        if (!$imageUrl) {
+            return response()->json(['status' => 'error', 'message' => 'Image upload failed'], 500);
+        }
+
+        $query->update([
+            'image_url' => $imageUrl,
+            'updated_at' => now(),
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Product image uploaded successfully.',
+            'data' => [
+                'id' => $id,
+                'image_url' => $imageUrl,
+            ],
         ]);
     }
 
