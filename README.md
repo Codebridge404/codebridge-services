@@ -64,6 +64,7 @@ graph TD
 | **`codebridge-operations-mysql`** | Dedicated Operations MySQL database | **`3308`** | `3306` |
 | **`codebridge-operations-redis`** | Dedicated Operations cache & queue store | *Network only* | `6379` |
 | **`codebridge-operations-phpmyadmin`**| Database Web GUI (Operations DB) | **`8082`** | `80` |
+| **`codebridge-minio`** | MinIO S3 Object Storage API & Web Console | **`9000`** (API), **`9001`** (Console) | `9000`, `9001` |
 
 ---
 
@@ -94,7 +95,7 @@ cp operations-service/.env.example operations-service/.env
 docker compose up -d --build
 ```
 
-Verify all 11 containers are healthy:
+Verify all 12 containers are healthy:
 ```bash
 docker compose ps
 ```
