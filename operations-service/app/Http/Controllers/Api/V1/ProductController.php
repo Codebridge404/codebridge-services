@@ -250,7 +250,7 @@ class ProductController extends Controller
             ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
             ->where('b.barcode', $code)
             ->where('p.is_active', true)
-            ->select('p.id', 'p.name', 'p.sku', 'p.selling_price as price', 'c.name as category', 'b.barcode')
+            ->select('p.id', 'p.name', 'p.sku', 'p.selling_price as price', 'c.name as category', 'b.barcode', 'p.image_url')
             ->first();
 
         if (!$product) {
@@ -259,7 +259,7 @@ class ProductController extends Controller
                 ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
                 ->where('p.sku', $code)
                 ->where('p.is_active', true)
-                ->select('p.id', 'p.name', 'p.sku', 'p.selling_price as price', 'c.name as category')
+                ->select('p.id', 'p.name', 'p.sku', 'p.selling_price as price', 'c.name as category', 'p.image_url')
                 ->first();
         }
 
