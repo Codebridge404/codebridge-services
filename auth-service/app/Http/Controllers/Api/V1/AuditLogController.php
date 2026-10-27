@@ -56,15 +56,31 @@ class AuditLogController extends Controller
      */
     public static function log($userId, string $userName, string $action, string $module = 'system', ?string $ipAddress = null, $payload = null)
     {
-        DB::table('audit_logs')->insert([
-            'user_id' => $userId,
-            'user_name' => $userName,
-            'action' => $action,
-            'module' => $module,
-            'ip_address' => $ipAddress ?? request()->ip(),
-            'payload' => $payload ? json_encode($payload) : null,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        try {
+            $data = [
+                'user_id' => $userId,
+                'action' => $action,
+                'ip_address' => $ipAddress ?? request()->ip(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ];
+
+            if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'user_name')) {
+                $data['user_name'] = $userName;
+            }
+            if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'module')) {
+                $data['module'] = $module;
+            }
+            if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'payload')) {
+                $data['payload'] = $payload ? json_encode($payload) : null;
+            }
+            if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'new_values') && !isset($data['payload'])) {
+                $data['new_values'] = $payload ? json_encode($payload) : null;
+            }
+
+            DB::table('audit_logs')->insert($data);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('[AuditLog] Failed to record audit log: ' . $e->getMessage());
+        }
     }
 }
