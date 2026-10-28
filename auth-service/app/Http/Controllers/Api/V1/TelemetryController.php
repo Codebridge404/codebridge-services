@@ -124,6 +124,7 @@ class TelemetryController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
+                'version'      => config('app.version', '1.0.0'),
                 'services'     => $services,
                 'dbLatency'    => $dbLatencyMs,
                 'memUsageMb'   => $memUsageMb,

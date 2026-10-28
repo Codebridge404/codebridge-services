@@ -16,7 +16,7 @@ return [
     'api_path' => 'api',
     'api_domain' => null,
     'info' => [
-        'version' => '1.0.0',
+        'version' => env('APP_VERSION', '1.0.0'),
         'description' => 'Auth & Identity Microservice API Documentation',
     ],
 ];

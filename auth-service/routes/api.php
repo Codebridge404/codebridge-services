@@ -16,6 +16,7 @@ Route::prefix('v1')->group(function () {
         return response()->json([
             'status' => 'healthy',
             'service' => 'auth-service',
+            'version' => config('app.version', '1.0.0'),
             'timestamp' => now()->toIso8601String(),
         ]);
     });
