@@ -22,9 +22,11 @@ class ReportMeetingIssueRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'category' => ['required', 'string', 'in:audio_visual,air_conditioning,cleanliness,network,furniture'],
+            'category' => ['nullable', 'string', 'in:audio_visual,air_conditioning,cleanliness,network,furniture'],
             'priority' => ['nullable', 'string', 'in:low,medium,high,critical'],
-            'description' => ['required', 'string', 'max:1000'],
+            'severity' => ['nullable', 'string', 'in:low,normal,medium,high,critical'],
+            'description' => ['nullable', 'string', 'max:1000'],
+            'issue_description' => ['nullable', 'string', 'max:1000'],
         ];
     }
 }

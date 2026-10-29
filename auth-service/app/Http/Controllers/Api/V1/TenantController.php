@@ -11,6 +11,7 @@ use App\Http\Requests\Tenant\UpdateTenantRequest;
 use App\Http\Resources\Tenant\TenantResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
@@ -57,7 +58,12 @@ class TenantController extends Controller
             default           => ['max_outlets' => 1,  'max_registers' => 2,   'max_users' => 5],
         };
 
+        $authUser = auth('sanctum')->user() ?? $request->user();
+        $tenantUuid = (string) Str::uuid();
+
         $id = DB::table('tenants')->insertGetId([
+            'uuid'          => $tenantUuid,
+            'owner_user_id' => $authUser?->id,
             'name'          => $request->name,
             'slug'          => $slug,
             'company_code'  => 'CB-' . strtoupper(Str::random(6)),
@@ -114,14 +120,16 @@ class TenantController extends Controller
             'updated_at'     => now(),
         ]);
 
-        DB::table('registers')->insert([
-            'outlet_id'  => $outletId,
-            'name'       => 'Register #1 (Main)',
-            'code'       => 'REG-01',
-            'is_active'  => true,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        if (\Illuminate\Support\Facades\Schema::hasTable('registers')) {
+            DB::table('registers')->insert([
+                'outlet_id'  => $outletId,
+                'name'       => 'Register #1 (Main)',
+                'code'       => 'REG-01',
+                'is_active'  => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
 
         // Link authenticated user to new tenant workspace and grant admin role as organization owner
         $authUser = auth('sanctum')->user() ?? $request->user();
@@ -129,12 +137,41 @@ class TenantController extends Controller
         if ($authUser) {
             $currentRole = $authUser->role;
             $newRole = in_array($currentRole, ['super_admin', 'organization', 'admin']) ? $currentRole : 'organization';
-            DB::table('users')->where('id', $authUser->id)->update([
-                'tenant_id' => $id,
-                'outlet_id' => $outletId,
-                'role'      => $newRole,
-                'updated_at' => now(),
-            ]);
+
+            // 1. Ensure owner_user_id is set on tenant
+            DB::table('tenants')->where('id', $id)->update(['owner_user_id' => $authUser->id]);
+
+            // 2. Insert active membership in tenant_users (ERD Rule: Owner must be an active tenant member)
+            if (Schema::hasTable('tenant_users')) {
+                DB::table('tenant_users')->updateOrInsert(
+                    ['tenant_id' => $id, 'user_id' => $authUser->id],
+                    [
+                        'status' => 'active',
+                        'joined_at' => now(),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]
+                );
+            }
+
+            // 3. Link user role in user_roles pivot
+            if (Schema::hasTable('user_roles')) {
+                $roleId = DB::table('roles')->where('slug', $newRole)->value('id') ?? DB::table('roles')->where('slug', 'organization')->value('id');
+                if ($roleId) {
+                    DB::table('user_roles')->updateOrInsert(
+                        ['user_id' => $authUser->id, 'role_id' => $roleId],
+                        ['tenant_id' => $id, 'is_active' => true, 'updated_at' => now()]
+                    );
+                }
+            }
+
+            // 4. Update legacy users table if columns exist
+            $legacyUpdates = ['updated_at' => now()];
+            if (Schema::hasColumn('users', 'tenant_id')) $legacyUpdates['tenant_id'] = $id;
+            if (Schema::hasColumn('users', 'outlet_id')) $legacyUpdates['outlet_id'] = $outletId;
+            if (Schema::hasColumn('users', 'role')) $legacyUpdates['role'] = $newRole;
+            DB::table('users')->where('id', $authUser->id)->update($legacyUpdates);
+
             $updatedUser = DB::table('users')->where('id', $authUser->id)->first();
         }
 
@@ -188,28 +225,43 @@ class TenantController extends Controller
                 ->orderBy('created_at', 'desc')
                 ->first();
 
-            $tenant->owner = DB::table('users as u')
-                ->leftJoin('user_roles as ur', function ($j) {
-                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
-                })
-                ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                ->where('u.tenant_id', $tenant->id)
-                ->where(function ($q) {
-                    $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
-                        $q->orWhereIn('u.role', ['organization', 'admin', 'administrator', 'owner']);
-                    }
-                })
-                ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
-                ->first();
+            // Try finding owner via owner_user_id (ERD standard)
+            if (!empty($tenant->owner_user_id)) {
+                $tenant->owner = DB::table('users as u')
+                    ->leftJoin('user_roles as ur', function ($j) use ($tenant) {
+                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $tenant->id);
+                    })
+                    ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                    ->where('u.id', $tenant->owner_user_id)
+                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                    ->first();
+            }
 
             if (!$tenant->owner) {
                 $tenant->owner = DB::table('users as u')
+                    ->join('tenant_users as tu', function ($j) use ($tenant) {
+                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $tenant->id);
+                    })
                     ->leftJoin('user_roles as ur', function ($j) {
                         $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
                     })
                     ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                    ->where('u.tenant_id', $tenant->id)
+                    ->where(function ($q) {
+                        $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
+                    })
+                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                    ->first();
+            }
+
+            if (!$tenant->owner) {
+                $tenant->owner = DB::table('users as u')
+                    ->join('tenant_users as tu', function ($j) use ($tenant) {
+                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $tenant->id);
+                    })
+                    ->leftJoin('user_roles as ur', function ($j) {
+                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                    })
+                    ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
                     ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
                     ->orderBy('u.created_at', 'asc')
                     ->first();
@@ -218,22 +270,24 @@ class TenantController extends Controller
             if (!$tenant->owner && !empty($tenant->email)) {
                 $matchedUser = DB::table('users')->where('email', $tenant->email)->first();
                 if ($matchedUser) {
-                    if (!$matchedUser->tenant_id) {
-                        DB::table('users')->where('id', $matchedUser->id)->update(['tenant_id' => $tenant->id]);
-                    }
+                    DB::table('tenant_users')->updateOrInsert(
+                        ['tenant_id' => $tenant->id, 'user_id' => $matchedUser->id],
+                        ['status' => 'active', 'updated_at' => now()]
+                    );
+                    DB::table('tenants')->where('id', $tenant->id)->update(['owner_user_id' => $matchedUser->id]);
                     $tenant->owner = (object)[
                         'id' => $matchedUser->id,
                         'name' => $matchedUser->name,
                         'email' => $matchedUser->email,
                         'phone' => $matchedUser->phone,
-                        'role' => $matchedUser->role,
+                        'role' => 'organization',
                         'is_active' => (bool)$matchedUser->is_active,
                         'created_at' => $matchedUser->created_at,
                     ];
                 }
             }
 
-            $tenant->users_count = DB::table('users')->where('tenant_id', $tenant->id)->count();
+            $tenant->users_count = DB::table('tenant_users')->where('tenant_id', $tenant->id)->where('status', 'active')->count();
             try {
                 $tenant->outlets_count = DB::table('outlets')->where('tenant_id', $tenant->id)->count();
             } catch (\Throwable $e) {
@@ -274,30 +328,45 @@ class TenantController extends Controller
             ->orderBy('created_at', 'desc')
             ->get();
 
-        $tenant->owner = DB::table('users as u')
-            ->leftJoin('user_roles as ur', function ($j) {
-                $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
-            })
-            ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-            ->where('u.tenant_id', $id)
-            ->where(function ($q) {
-                $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
-                if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
-                    $q->orWhereIn('u.role', ['organization', 'admin', 'administrator', 'owner']);
-                }
-            })
-            ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
-            ->first()
-            ?? DB::table('users as u')
+        $tenant->owner = null;
+        if (!empty($tenant->owner_user_id)) {
+            $tenant->owner = DB::table('users as u')
+                ->leftJoin('user_roles as ur', function ($j) use ($id) {
+                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $id);
+                })
+                ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                ->where('u.id', $tenant->owner_user_id)
+                ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                ->first();
+        }
+
+        if (!$tenant->owner) {
+            $tenant->owner = DB::table('users as u')
+                ->join('tenant_users as tu', function ($j) use ($id) {
+                    $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id);
+                })
                 ->leftJoin('user_roles as ur', function ($j) {
                     $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
                 })
                 ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                ->where('u.tenant_id', $id)
+                ->where(function ($q) {
+                    $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
+                })
                 ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
-                ->first();
+                ->first()
+                ?? DB::table('users as u')
+                    ->join('tenant_users as tu', function ($j) use ($id) {
+                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id);
+                    })
+                    ->leftJoin('user_roles as ur', function ($j) {
+                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                    })
+                    ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                    ->first();
+        }
 
-        $tenant->users_count = DB::table('users')->where('tenant_id', $id)->count();
+        $tenant->users_count = DB::table('tenant_users')->where('tenant_id', $id)->where('status', 'active')->count();
         try {
             $tenant->outlets_count = DB::table('outlets')->where('tenant_id', $id)->count();
         } catch (\Throwable $e) {
@@ -333,26 +402,25 @@ class TenantController extends Controller
 
         // Update Owner details if provided
         if ($request->filled('owner_id')) {
-            DB::table('users')->where('id', $request->owner_id)->update([
-                'tenant_id' => $id,
-                'role'      => 'organization',
-                'updated_at'=> now(),
-            ]);
+            DB::table('tenant_users')->updateOrInsert(
+                ['tenant_id' => $id, 'user_id' => $request->owner_id],
+                ['status' => 'active', 'updated_at' => now()]
+            );
+            DB::table('tenants')->where('id', $id)->update(['owner_user_id' => $request->owner_id]);
+
             $owner = DB::table('users as u')
+                ->join('tenant_users as tu', function ($j) use ($id) {
+                    $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id);
+                })
                 ->leftJoin('user_roles as ur', function ($j) {
                     $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
                 })
                 ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                ->where('u.tenant_id', $id)
                 ->where(function ($q) {
                     $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
-                        $q->orWhereIn('u.role', ['organization', 'admin', 'administrator', 'owner']);
-                    }
                 })
                 ->select('u.id', 'u.name', 'u.email', 'u.phone', 'u.is_active')
-                ->first()
-                ?? DB::table('users')->where('tenant_id', $id)->first();
+                ->first();
 
             if ($owner) {
                 $ownerUpdates = [];
@@ -367,11 +435,13 @@ class TenantController extends Controller
                 $existingUser = DB::table('users')->where('email', $request->owner_email)->first();
                 if ($existingUser) {
                     $ownerUpdate = [
-                        'tenant_id' => $id,
                         'name'      => $request->owner_name ?? $existingUser->name,
                         'phone'     => $request->owner_phone ?? $existingUser->phone,
                         'updated_at'=> now(),
                     ];
+                    if (Schema::hasColumn('users', 'tenant_id')) {
+                        $ownerUpdate['tenant_id'] = $id;
+                    }
                     if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
                         $ownerUpdate['role'] = 'organization';
                     }
@@ -380,7 +450,6 @@ class TenantController extends Controller
                 } else {
                     $ownerInsert = [
                         'uuid'       => (string) \Illuminate\Support\Str::uuid(),
-                        'tenant_id'  => $id,
                         'name'       => $request->owner_name ?? 'Store Owner',
                         'email'      => $request->owner_email,
                         'phone'      => $request->owner_phone,
@@ -389,11 +458,19 @@ class TenantController extends Controller
                         'created_at' => now(),
                         'updated_at' => now(),
                     ];
+                    if (Schema::hasColumn('users', 'tenant_id')) {
+                        $ownerInsert['tenant_id'] = $id;
+                    }
                     if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
                         $ownerInsert['role'] = 'organization';
                     }
                     $ownerId = DB::table('users')->insertGetId($ownerInsert);
                 }
+
+                DB::table('tenant_users')->updateOrInsert(
+                    ['tenant_id' => $id, 'user_id' => $ownerId],
+                    ['status' => 'active', 'updated_at' => now()]
+                );
 
                 if ($orgRoleId) {
                     DB::table('user_roles')->updateOrInsert(
@@ -426,7 +503,10 @@ class TenantController extends Controller
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
 
-        DB::table('users')->where('tenant_id', $id)->update(['tenant_id' => null]);
+        if (Schema::hasColumn('users', 'tenant_id')) {
+            DB::table('users')->where('tenant_id', $id)->update(['tenant_id' => null]);
+        }
+        DB::table('tenant_users')->where('tenant_id', $id)->delete();
         DB::table('tenant_subscriptions')->where('tenant_id', $id)->delete();
         DB::table('tenants')->where('id', $id)->delete();
 
@@ -528,20 +608,21 @@ class TenantController extends Controller
         $maxOutlets = $tenant->max_outlets ?? ($tier === 'enterprise_org' ? 50 : ($tier === 'business_runner' ? 5 : 1));
         $maxRegisters = $tenant->max_registers ?? ($tier === 'enterprise_org' ? 200 : ($tier === 'business_runner' ? 15 : 2));
 
-        $usersCount = DB::table('users as u')
-            ->leftJoin('user_roles as ur', function ($j) {
-                $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+        $usersCount = ($tenant && Schema::hasTable('tenant_users')) ? DB::table('tenant_users as tu')
+            ->join('users as u', 'tu.user_id', '=', 'u.id')
+            ->leftJoin('user_roles as ur', function ($j) use ($tenant) {
+                $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $tenant->id);
             })
             ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+            ->where('tu.tenant_id', $tenant->id)
+            ->where('tu.status', 'active')
             ->where(function ($q) {
                 $q->whereNull('r.slug')->orWhere('r.slug', '!=', 'super_admin');
-                if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
-                    $q->orWhere('u.role', '!=', 'super_admin');
-                }
             })
-            ->count();
-        $outletsCount = DB::table('outlets')->count();
-        $registersCount = DB::table('registers')->count();
+            ->distinct()
+            ->count('u.id') : 0;
+        $outletsCount = ($tenant && Schema::hasTable('outlets')) ? DB::table('outlets')->where('tenant_id', $tenant->id)->count() : 0;
+        $registersCount = ($tenant && Schema::hasTable('registers')) ? DB::table('registers')->join('outlets', 'registers.outlet_id', '=', 'outlets.id')->where('outlets.tenant_id', $tenant->id)->count() : 0;
 
         return response()->json([
             'status' => 'success',

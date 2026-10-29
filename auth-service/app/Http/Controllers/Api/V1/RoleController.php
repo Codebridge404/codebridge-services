@@ -74,15 +74,20 @@ class RoleController extends Controller
             $slug .= '_' . substr(md5(microtime()), 0, 4);
         }
 
-        $companyId = $request->company_id ?? ($currentUser?->tenant_id ?? null);
+        $companyId = ($currentUser && $currentUser->role === 'super_admin')
+            ? ($request->company_id ?? $currentUser->tenant_id)
+            : ($currentUser?->tenant_id ?? null);
         $parentRole = $request->parent_role ?? 'employee';
 
         $insertData = [
+            'uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'tenant_id' => $companyId,
             'company_id' => $companyId,
             'name' => $request->name,
             'slug' => $slug,
             'description' => $request->description,
             'is_system' => false,
+            'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
         ];
@@ -145,6 +150,17 @@ class RoleController extends Controller
             return response()->json(['success' => false, 'message' => 'Role not found.'], 404);
         }
 
+        if ($role->is_system) {
+            return response()->json(['success' => false, 'message' => 'System default roles cannot be modified.'], 422);
+        }
+
+        $currentUser = $request->user();
+        if ($currentUser && $currentUser->role !== 'super_admin' && !empty($currentUser->tenant_id)) {
+            if ($role->company_id && $role->company_id != $currentUser->tenant_id) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized to modify role for another organization.'], 403);
+            }
+        }
+
         $updateData = ['updated_at' => now()];
         if ($request->has('name')) {
             $updateData['name'] = $request->name;
@@ -177,7 +193,7 @@ class RoleController extends Controller
     /**
      * Delete a custom role (protect system roles).
      */
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
         $role = DB::table('roles')->where('id', $id)->first();
         if (!$role) {
@@ -186,6 +202,13 @@ class RoleController extends Controller
 
         if ($role->is_system) {
             return response()->json(['success' => false, 'message' => 'System default roles cannot be deleted.'], 422);
+        }
+
+        $currentUser = $request->user();
+        if ($currentUser && $currentUser->role !== 'super_admin' && !empty($currentUser->tenant_id)) {
+            if ($role->company_id && $role->company_id != $currentUser->tenant_id) {
+                return response()->json(['success' => false, 'message' => 'Unauthorized to delete role for another organization.'], 403);
+            }
         }
 
         DB::table('role_permissions')->where('role_id', $id)->delete();

@@ -37,6 +37,25 @@ class AuthenticateJwt
             $payload = $this->jwtService->verify($token);
 
             if ($payload && !empty($payload['sub'])) {
+                // Check if token has been explicitly revoked
+                if (!empty($payload['jti']) && $this->jwtService->isRevoked($payload['jti'])) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'TOKEN_REVOKED',
+                        'message' => 'Token has been revoked.',
+                    ], 401);
+                }
+
+                // Check if user session has been revoked globally
+                $iat = $payload['iat'] ?? 0;
+                if (!empty($payload['sub']) && $this->jwtService->isUserSessionRevoked($payload['sub'], (int) $iat)) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'TOKEN_REVOKED',
+                        'message' => 'Session has been revoked.',
+                    ], 401);
+                }
+
                 $user = User::find($payload['sub']);
 
                 if (!$user) {
@@ -51,6 +70,23 @@ class AuthenticateJwt
                     ]);
                     $user->id = (int) $payload['sub'];
                     $user->exists = true;
+                } else {
+                    // Verify that the user account is active and not locked out
+                    if (!$user->is_active) {
+                        return response()->json([
+                            'status' => 'error',
+                            'code' => 'ACCOUNT_DEACTIVATED',
+                            'message' => 'User account is deactivated.',
+                        ], 401);
+                    }
+
+                    if ($user->isLockedOut()) {
+                        return response()->json([
+                            'status' => 'error',
+                            'code' => 'ACCOUNT_LOCKED_OUT',
+                            'message' => 'User account is temporarily locked out.',
+                        ], 401);
+                    }
                 }
 
                 Auth::setUser($user);

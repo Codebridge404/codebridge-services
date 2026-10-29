@@ -29,13 +29,12 @@ class JwtAuthenticationTest extends TestCase
             ->assertJsonStructure([
                 'status',
                 'user',
-                'token',
                 'access_token',
                 'token_type',
                 'expires_in',
             ]);
 
-        $token = $response->json('token');
+        $token = $response->json('access_token');
         $this->assertEquals(2, substr_count($token, '.')); // Standard JWT 3 segments
 
         // Verify with JwtService
@@ -83,4 +82,102 @@ class JwtAuthenticationTest extends TestCase
 
         $response->assertStatus(401);
     }
+
+    public function test_login_returns_refresh_token(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'refresh_tester@codebridges.io',
+            'password' => Hash::make('SecretPass123!'),
+        ]);
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'email' => 'refresh_tester@codebridges.io',
+            'password' => 'SecretPass123!',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonStructure([
+                'status',
+                'access_token',
+                'refresh_token',
+                'expires_in',
+            ]);
+
+        $refreshToken = $response->json('refresh_token');
+        $this->assertNotEmpty($refreshToken);
+
+        $jwtService = app(JwtService::class);
+        $payload = $jwtService->verifyRefreshToken($refreshToken);
+        $this->assertNotNull($payload);
+        $this->assertEquals((string) $user->id, $payload['sub']);
+        $this->assertEquals('refresh', $payload['token_use']);
+    }
+
+    public function test_can_refresh_access_token_and_rotate(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'refresh_rotation@codebridges.io',
+            'password' => Hash::make('SecretPass123!'),
+            'role' => 'supervisor',
+        ]);
+
+        $loginResponse = $this->postJson('/api/v1/auth/login', [
+            'email' => 'refresh_rotation@codebridges.io',
+            'password' => 'SecretPass123!',
+        ]);
+
+        $oldRefreshToken = $loginResponse->json('refresh_token');
+
+        // Call /api/v1/auth/refresh
+        $refreshResponse = $this->postJson('/api/v1/auth/refresh', [
+            'refresh_token' => $oldRefreshToken,
+        ]);
+
+        $refreshResponse->assertStatus(200)
+            ->assertJsonStructure([
+                'status',
+                'access_token',
+                'refresh_token',
+                'expires_in',
+                'user',
+            ]);
+
+        $newAccessToken = $refreshResponse->json('access_token');
+        $newRefreshToken = $refreshResponse->json('refresh_token');
+
+        $this->assertNotEquals($oldRefreshToken, $newRefreshToken);
+
+        // Verify new access token works with protected route
+        $meResponse = $this->withHeaders([
+            'Authorization' => "Bearer {$newAccessToken}",
+        ])->getJson('/api/v1/me');
+
+        $meResponse->assertStatus(200)
+            ->assertJson(['status' => 'success']);
+
+        // Verify rotation: old refresh token cannot be reused
+        $reusedResponse = $this->postJson('/api/v1/auth/refresh', [
+            'refresh_token' => $oldRefreshToken,
+        ]);
+
+        $reusedResponse->assertStatus(401)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'INVALID_REFRESH_TOKEN',
+            ]);
+    }
+
+    public function test_refresh_token_validation_failures(): void
+    {
+        // Missing token
+        $emptyResponse = $this->postJson('/api/v1/auth/refresh', []);
+        $emptyResponse->assertStatus(422);
+
+        // Tampered token
+        $invalidResponse = $this->postJson('/api/v1/auth/refresh', [
+            'refresh_token' => 'invalid.token.payload',
+        ]);
+        $invalidResponse->assertStatus(401);
+    }
 }
+

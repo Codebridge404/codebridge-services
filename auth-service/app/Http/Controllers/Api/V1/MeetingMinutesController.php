@@ -75,18 +75,27 @@ class MeetingMinutesController extends Controller
 
         if ($existing) {
             DB::table('meeting_minutes')->where('meeting_id', $meetingId)->update([
+                'author_id' => $currentUser?->id ?? $existing->author_id,
+                'recorded_by' => $currentUser?->id ?? $existing->recorded_by,
                 'content' => $validated['content'],
+                'content_markdown' => $validated['content'],
                 'action_items' => $actionItemsJson,
                 'status' => $status,
+                'is_published' => $status === 'published' ? 1 : ($existing->is_published ?? 0),
+                'published_at' => $status === 'published' ? ($existing->published_at ?? now()) : $existing->published_at,
                 'updated_at' => now(),
             ]);
         } else {
             DB::table('meeting_minutes')->insert([
                 'meeting_id' => $meetingId,
+                'author_id' => $currentUser?->id,
                 'recorded_by' => $currentUser?->id,
                 'content' => $validated['content'],
+                'content_markdown' => $validated['content'],
                 'action_items' => $actionItemsJson,
                 'status' => $status,
+                'is_published' => $status === 'published' ? 1 : 0,
+                'published_at' => $status === 'published' ? now() : null,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
@@ -134,10 +143,12 @@ class MeetingMinutesController extends Controller
             // Record to central audit logs
             try {
                 DB::table('audit_logs')->insert([
+                    'tenant_id' => $meeting->tenant_id,
                     'user_id' => $currentUser?->id,
-                    'user_name' => $currentUser?->name ?? 'User',
                     'action' => 'meeting_minutes_published',
                     'module' => 'meetings',
+                    'entity_type' => 'meeting',
+                    'entity_id' => (string) $meetingId,
                     'ip_address' => $request->ip(),
                     'payload' => json_encode([
                         'meeting_id' => $meetingId,

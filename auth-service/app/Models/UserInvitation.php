@@ -14,9 +14,12 @@ class UserInvitation extends Model
     protected $fillable = [
         'tenant_id',
         'outlet_id',
+        'outlet_uuid',
         'email',
         'role',
+        'role_id',
         'token',
+        'token_hash',
         'invited_by',
         'expires_at',
         'accepted_at',
@@ -44,6 +47,14 @@ class UserInvitation extends Model
     public function outlet()
     {
         return $this->belongsTo(Outlet::class, 'outlet_id');
+    }
+
+    /**
+     * Get the role assigned in this invitation.
+     */
+    public function roleRecord()
+    {
+        return $this->belongsTo(Role::class, 'role_id');
     }
 
     /**

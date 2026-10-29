@@ -29,7 +29,7 @@ class StoreEmployeeRequest extends FormRequest
             'department_id' => ['nullable'],
             'outlet_id' => ['nullable'],
             'designation' => ['required', 'string', 'max:255'],
-            'employment_type' => ['required', 'string', 'in:Full-time,Part-time,Contract'],
+            'employment_type' => ['required', 'string', 'in:Full-time,Part-time,Contract,full_time,part_time,contract'],
             'hire_date' => ['nullable', 'date'],
             'salary' => ['nullable', 'numeric', 'min:0'],
         ];

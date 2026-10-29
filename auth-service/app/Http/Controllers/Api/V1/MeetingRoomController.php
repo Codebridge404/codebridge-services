@@ -8,6 +8,7 @@ use App\Http\Requests\Meeting\UpdateMeetingRoomRequest;
 use App\Http\Resources\Meeting\MeetingRoomResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * [BD-0072] Conference Room Scheduling & Conflict Resolution Controller
@@ -94,14 +95,18 @@ class MeetingRoomController extends Controller
         $currentUser = $request->user();
         $tenantId = $currentUser?->tenant_id;
 
+        $code = !empty($validated['code']) ? $validated['code'] : ('ROOM-' . strtoupper(Str::random(6)));
+
         $id = DB::table('meeting_rooms')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
-            'code' => $validated['code'] ?? null,
+            'code' => $code,
             'floor' => $validated['floor'] ?? null,
             'capacity' => $validated['capacity'],
             'amenities' => $validated['amenities'] ?? null,
             'status' => $validated['status'] ?? 'active',
+            'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
         ]);

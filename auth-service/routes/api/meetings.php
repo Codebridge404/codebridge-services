@@ -40,7 +40,8 @@ Route::whereNumber('id')->group(function () {
     Route::get('/meetings/{id}/minutes', [MeetingMinutesController::class, 'show']);
     Route::post('/meetings/{id}/minutes', [MeetingMinutesController::class, 'storeOrUpdate']);
 
-    Route::get('/meetings/{id}/actions', [MeetingActionItemController::class, 'byMeeting']);
+    Route::get('/meetings/{id}/actions', [MeetingActionItemController::class, 'meetingActions']);
+    Route::post('/meetings/{id}/actions', [MeetingActionItemController::class, 'store']);
 });
 
 // Meeting Rooms
@@ -68,6 +69,7 @@ Route::delete('/meetings/staff/{id}', [MeetingLogisticsController::class, 'delet
 // Room Defect & Facility Issues
 Route::get('/meetings/issues', [MeetingIssueController::class, 'index']);
 Route::post('/meeting-rooms/{roomId}/issues', [MeetingIssueController::class, 'report']);
+Route::post('/meetings/rooms/{roomId}/issues', [MeetingIssueController::class, 'report']);
 Route::patch('/meetings/issues/{id}/status', [MeetingIssueController::class, 'updateStatus']);
 
 // In-App Notifications

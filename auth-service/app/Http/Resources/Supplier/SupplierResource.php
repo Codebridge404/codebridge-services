@@ -16,9 +16,12 @@ class SupplierResource extends JsonResource
     {
         return [
             'id' => data_get($this->resource, 'id'),
+            'uuid' => data_get($this->resource, 'uuid'),
+            'tenant_id' => data_get($this->resource, 'tenant_id'),
             'name' => data_get($this->resource, 'name'),
+            'company_name' => data_get($this->resource, 'company_name'),
             'code' => data_get($this->resource, 'code'),
-            'contact_name' => data_get($this->resource, 'contact_name') ?? data_get($this->resource, 'contact_person'),
+            'contact_name' => data_get($this->resource, 'company_name') ?? data_get($this->resource, 'contact_name') ?? data_get($this->resource, 'contact_person'),
             'email' => data_get($this->resource, 'email'),
             'phone' => data_get($this->resource, 'phone'),
             'address' => data_get($this->resource, 'address'),

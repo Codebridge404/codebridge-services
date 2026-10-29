@@ -24,13 +24,15 @@ class JwtService
     protected string $secret;
     protected string $algo;
     protected int $ttl;
+    protected int $refreshTtl;
     protected string $issuer;
 
     public function __construct()
     {
         $this->secret = config('jwt.secret', env('JWT_SECRET', 'codebridge_enterprise_stateless_jwt_secret_key_2026_secured'));
         $this->algo = config('jwt.algo', env('JWT_ALGO', 'HS256'));
-        $this->ttl = (int) config('jwt.ttl', env('JWT_TTL', 1440));
+        $this->ttl = (int) config('jwt.ttl', env('JWT_ACCESS_TTL', 15));
+        $this->refreshTtl = (int) config('jwt.refresh_ttl', env('JWT_REFRESH_TTL', 43200));
         $this->issuer = config('jwt.issuer', 'codebridge-auth-service');
     }
 
@@ -90,10 +92,104 @@ class JwtService
     }
 
     /**
+     * Mark a JWT token as revoked by its unique JTI.
+     */
+    public function revokeToken(string $jti, ?int $ttl = null): void
+    {
+        $seconds = $ttl ?? $this->getTtlSeconds();
+        \Illuminate\Support\Facades\Cache::put("revoked_jwt:{$jti}", true, $seconds);
+    }
+
+    /**
+     * Check if a JWT token JTI has been revoked.
+     */
+    public function isRevoked(string $jti): bool
+    {
+        return (bool) \Illuminate\Support\Facades\Cache::get("revoked_jwt:{$jti}", false);
+    }
+
+    /**
+     * Mark all tokens issued to a user prior to now as revoked.
+     */
+    public function revokeAllUserTokens(int|string $userId, ?int $ttl = null): void
+    {
+        $seconds = $ttl ?? ($this->refreshTtl * 60);
+        \Illuminate\Support\Facades\Cache::put("revoked_user_sessions:{$userId}", time(), $seconds);
+    }
+
+    /**
+     * Check if a user's tokens issued before a specific timestamp are revoked.
+     */
+    public function isUserSessionRevoked(int|string $userId, int $tokenIssuedAt): bool
+    {
+        $revokedAt = \Illuminate\Support\Facades\Cache::get("revoked_user_sessions:{$userId}");
+        return $revokedAt !== null && $tokenIssuedAt <= (int) $revokedAt;
+    }
+
+    /**
+     * Generate a signed refresh JWT token for an authenticated user.
+     */
+    public function generateRefreshTokenForUser(User $user, array $extraClaims = []): string
+    {
+        $now = time();
+        $exp = $now + $this->getRefreshTtlSeconds();
+
+        $payload = array_merge([
+            'iss' => $this->issuer,
+            'sub' => (string) $user->id,
+            'token_use' => 'refresh',
+            'iat' => $now,
+            'nbf' => $now,
+            'exp' => $exp,
+            'jti' => (string) Str::uuid(),
+        ], $extraClaims);
+
+        return JWT::encode($payload, $this->secret, $this->algo);
+    }
+
+    /**
+     * Verify a refresh JWT token and ensure it has token_use=refresh and is not revoked.
+     */
+    public function verifyRefreshToken(string $token): ?array
+    {
+        $payload = $this->verify($token);
+        if (!$payload) {
+            return null;
+        }
+
+        // Must be explicitly marked as a refresh token
+        if (($payload['token_use'] ?? null) !== 'refresh') {
+            return null;
+        }
+
+        // Check revocation
+        if (isset($payload['jti']) && $this->isRevoked($payload['jti'])) {
+            return null;
+        }
+
+        // Check if user's global sessions were invalidated
+        $iat = $payload['iat'] ?? 0;
+        if (isset($payload['sub']) && $this->isUserSessionRevoked($payload['sub'], (int) $iat)) {
+            return null;
+        }
+
+        return $payload;
+    }
+
+    /**
      * Get TTL in seconds.
      */
     public function getTtlSeconds(): int
     {
         return $this->ttl * 60;
     }
+
+    /**
+     * Get Refresh TTL in seconds.
+     */
+    public function getRefreshTtlSeconds(): int
+    {
+        return $this->refreshTtl * 60;
+    }
 }
+

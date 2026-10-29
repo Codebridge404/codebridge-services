@@ -22,11 +22,14 @@ class StoreActionItemRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'title' => ['required', 'string', 'max:255'],
+            'title' => ['nullable', 'string', 'max:255'],
+            'task_description' => ['nullable', 'string'],
             'description' => ['nullable', 'string'],
             'assigned_to' => ['nullable', 'integer'],
+            'assignee_id' => ['nullable', 'integer'],
             'due_date' => ['nullable', 'date'],
             'status' => ['nullable', 'string', 'max:30'],
+            'priority' => ['nullable', 'string', 'max:20'],
         ];
     }
 }

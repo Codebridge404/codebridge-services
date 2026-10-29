@@ -79,7 +79,7 @@ class MeetingController extends Controller
         foreach ($meetings as $meeting) {
             $meeting->attendees_count = DB::table('meeting_attendees')->where('meeting_id', $meeting->id)->count();
             $meeting->materials_count = DB::table('meeting_material_allocations')->where('meeting_id', $meeting->id)->count();
-            $meeting->staff_count = DB::table('meeting_staff_allocations')->where('meeting_id', $meeting->id)->count();
+            $meeting->staff_count = 0;
             $meeting->has_minutes = DB::table('meeting_minutes')->where('meeting_id', $meeting->id)->exists();
         }
 
@@ -146,6 +146,7 @@ class MeetingController extends Controller
 
         // 4. Create primary meeting record
         $meetingId = DB::table('meetings')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'room_id' => $validated['room_id'],
             'organizer_id' => $currentUser->id,
@@ -154,11 +155,10 @@ class MeetingController extends Controller
             'start_time' => $validated['start_time'],
             'end_time' => $validated['end_time'],
             'status' => $initialStatus,
-            'requires_approval' => $requiresApproval,
             'meeting_type' => $validated['meeting_type'] ?? 'internal',
             'meeting_link' => $validated['meeting_link'] ?? null,
-            'recurring_series_id' => $seriesId,
-            'recurrence_type' => $validated['recurrence_type'] ?? 'none',
+            'virtual_link' => $validated['virtual_link'] ?? $validated['meeting_link'] ?? null,
+            'series_id' => null,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -373,8 +373,6 @@ class MeetingController extends Controller
 
         DB::table('meetings')->where('id', $id)->update([
             'status' => 'scheduled',
-            'approved_by' => $user->id,
-            'approved_at' => now(),
             'updated_at' => now(),
         ]);
 
@@ -493,7 +491,6 @@ class MeetingController extends Controller
 
         DB::table('meetings')->where('id', $id)->update([
             'status' => 'cancelled',
-            'cancellation_reason' => $reason,
             'updated_at' => now(),
         ]);
 
@@ -829,7 +826,6 @@ class MeetingController extends Controller
 
             DB::table('meetings')->where('id', $m->id)->update([
                 'status' => 'cancelled',
-                'cancellation_reason' => $reason,
                 'updated_at' => $now,
             ]);
 
@@ -983,7 +979,6 @@ class MeetingController extends Controller
         try {
             DB::table('audit_logs')->insert([
                 'user_id' => $userId,
-                'user_name' => $userName ?? 'System',
                 'action' => $action,
                 'module' => 'meetings',
                 'ip_address' => $request?->ip() ?? '127.0.0.1',
@@ -1051,6 +1046,7 @@ class MeetingController extends Controller
             }
 
             $nextId = DB::table('meetings')->insertGetId([
+                'uuid' => (string) Str::uuid(),
                 'tenant_id' => $tenantId,
                 'room_id' => $validated['room_id'],
                 'organizer_id' => $currentUser->id,
@@ -1059,11 +1055,10 @@ class MeetingController extends Controller
                 'start_time' => $startStr,
                 'end_time' => $endStr,
                 'status' => $initialStatus,
-                'requires_approval' => $requiresApproval,
                 'meeting_type' => $validated['meeting_type'] ?? 'internal',
                 'meeting_link' => $validated['meeting_link'] ?? null,
-                'recurring_series_id' => $seriesId,
-                'recurrence_type' => $validated['recurrence_type'],
+                'virtual_link' => $validated['virtual_link'] ?? $validated['meeting_link'] ?? null,
+                'series_id' => null,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);

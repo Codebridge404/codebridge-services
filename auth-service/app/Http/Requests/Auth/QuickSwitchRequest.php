@@ -23,6 +23,7 @@ class QuickSwitchRequest extends FormRequest
     {
         return [
             'pin_code' => ['required', 'string', 'min:4', 'max:8'],
+            'tenant_id' => ['nullable', 'integer'],
             'outlet_id' => ['nullable', 'string'],
             'device_name' => ['nullable', 'string'],
         ];

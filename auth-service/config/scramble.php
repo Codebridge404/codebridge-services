@@ -2,7 +2,7 @@
 
 return [
     'ui' => [
-        'title' => 'CodeBridges Auth & Identity Service API',
+        'title' => 'CodeBridges Auth',
     ],
     'servers' => [
         'Local Gateway' => 'http://localhost:8080/api',
@@ -16,7 +16,17 @@ return [
     'api_path' => 'api',
     'api_domain' => null,
     'info' => [
-        'version' => env('APP_VERSION', '1.0.0'),
+        'version' => '1.0.2',
         'description' => 'Auth & Identity Microservice API Documentation',
     ],
+    'security_strategy' => [
+        \Dedoc\Scramble\SecurityDocumentation\MiddlewareAuthSecurityStrategy::class,
+        [
+            'middleware' => ['auth', 'auth:*'],
+            'scheme' => \Dedoc\Scramble\Support\Generator\SecurityScheme::http('bearer', 'JWT')
+                ->as('bearerAuth')
+                ->setDescription('Enter your Sanctum access_token or Bearer token'),
+        ],
+    ],
 ];
+

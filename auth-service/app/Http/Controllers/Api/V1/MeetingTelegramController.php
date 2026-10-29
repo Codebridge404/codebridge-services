@@ -127,8 +127,20 @@ class MeetingTelegramController extends Controller
 
         foreach ($updates as $key => $val) {
             DB::table('meeting_system_settings')->updateOrInsert(
-                ['tenant_id' => $tenantId, 'key' => $key],
-                ['value' => $val, 'updated_by' => $currentUser?->id, 'updated_at' => now()]
+                ['tenant_id' => $tenantId, 'setting_key' => $key],
+                ['setting_value' => $val, 'updated_at' => now()]
+            );
+        }
+
+        if (!empty($tenantId) && (!empty($validated['bot_token']) || !empty($validated['default_chat_id']))) {
+            DB::table('meeting_telegram_configs')->updateOrInsert(
+                ['tenant_id' => $tenantId],
+                [
+                    'bot_token' => $validated['bot_token'] ?? '',
+                    'chat_id' => $validated['default_chat_id'] ?? '',
+                    'is_active' => ($validated['bot_enabled'] ?? true) ? 1 : 0,
+                    'updated_at' => now(),
+                ]
             );
         }
 
@@ -136,7 +148,6 @@ class MeetingTelegramController extends Controller
         try {
             DB::table('audit_logs')->insert([
                 'user_id' => $currentUser?->id,
-                'user_name' => $currentUser?->name ?? 'Admin',
                 'action' => 'telegram_config_updated',
                 'module' => 'meetings',
                 'ip_address' => $request->ip(),
@@ -266,6 +277,7 @@ class MeetingTelegramController extends Controller
     {
         $tenantId = $request->user()?->tenant_id;
         $templates = DB::table('meeting_notification_templates')
+            ->where('channel', 'telegram')
             ->where(function ($q) use ($tenantId) {
                 $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
             })
@@ -274,16 +286,16 @@ class MeetingTelegramController extends Controller
 
         // Ensure all standard types are present
         $standardTypes = ['confirmation', 'reminder', 'change', 'cancellation'];
-        $existingTypes = $templates->pluck('type')->toArray();
+        $existingTypes = $templates->pluck('template_type')->toArray();
 
         foreach ($standardTypes as $type) {
             if (!in_array($type, $existingTypes)) {
-                $id = DB::table('meeting_notification_templates')->insertGetId([
+                DB::table('meeting_notification_templates')->insert([
                     'tenant_id' => $tenantId,
-                    'type' => $type,
-                    'name' => ucfirst($type) . ' Template',
-                    'content' => self::$factoryDefaults[$type] ?? '',
-                    'is_customized' => false,
+                    'template_type' => $type,
+                    'subject' => ucfirst($type) . ' Meeting Alert',
+                    'body' => self::$factoryDefaults[$type] ?? '',
+                    'channel' => 'telegram',
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -291,10 +303,18 @@ class MeetingTelegramController extends Controller
         }
 
         $all = DB::table('meeting_notification_templates')
+            ->where('channel', 'telegram')
             ->where(function ($q) use ($tenantId) {
                 $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
             })
-            ->get();
+            ->get()
+            ->map(function ($t) {
+                $t->type = $t->template_type;
+                $t->name = $t->subject;
+                $t->content = $t->body;
+                $t->is_customized = true;
+                return $t;
+            });
 
         return response()->json(['status' => 'success', 'data' => $all]);
     }
@@ -309,20 +329,28 @@ class MeetingTelegramController extends Controller
 
         $tenantId = $request->user()?->tenant_id;
         DB::table('meeting_notification_templates')->updateOrInsert(
-            ['type' => $type, 'tenant_id' => $tenantId],
+            ['template_type' => $type, 'channel' => 'telegram', 'tenant_id' => $tenantId],
             [
-                'content' => trim($validated['content']),
-                'is_customized' => true,
+                'subject' => ucfirst($type) . ' Meeting Alert',
+                'body' => trim($validated['content']),
                 'updated_at' => now(),
             ]
         );
 
         $saved = DB::table('meeting_notification_templates')
-            ->where('type', $type)
+            ->where('template_type', $type)
+            ->where('channel', 'telegram')
             ->where(function ($q) use ($tenantId) {
                 $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
             })
             ->first();
+
+        if ($saved) {
+            $saved->type = $saved->template_type;
+            $saved->name = $saved->subject;
+            $saved->content = $saved->body;
+            $saved->is_customized = true;
+        }
 
         return response()->json(['status' => 'success', 'data' => $saved, 'message' => 'Template updated.']);
     }
@@ -337,20 +365,28 @@ class MeetingTelegramController extends Controller
         $tenantId = $request->user()?->tenant_id;
 
         DB::table('meeting_notification_templates')->updateOrInsert(
-            ['type' => $type, 'tenant_id' => $tenantId],
+            ['template_type' => $type, 'channel' => 'telegram', 'tenant_id' => $tenantId],
             [
-                'content' => $defaultContent,
-                'is_customized' => false,
+                'subject' => ucfirst($type) . ' Meeting Alert',
+                'body' => $defaultContent,
                 'updated_at' => now(),
             ]
         );
 
         $saved = DB::table('meeting_notification_templates')
-            ->where('type', $type)
+            ->where('template_type', $type)
+            ->where('channel', 'telegram')
             ->where(function ($q) use ($tenantId) {
                 $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
             })
             ->first();
+
+        if ($saved) {
+            $saved->type = $saved->template_type;
+            $saved->name = $saved->subject;
+            $saved->content = $saved->body;
+            $saved->is_customized = false;
+        }
 
         return response()->json(['status' => 'success', 'data' => $saved, 'message' => 'Template restored to factory default.']);
     }
@@ -404,30 +440,38 @@ class MeetingTelegramController extends Controller
     {
         try {
             $enabled = DB::table('meeting_system_settings')
-                ->where('key', 'notification.telegram_enabled')
+                ->where('setting_key', 'notification.telegram_enabled')
                 ->where(function ($q) use ($tenantId) {
                     if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-                })->value('value');
+                })->value('setting_value');
 
             if ($enabled !== 'true' && $enabled !== '1') {
                 return false;
             }
 
             $token = DB::table('meeting_system_settings')
-                ->where('key', 'notification.telegram_bot_token')
+                ->where('setting_key', 'notification.telegram_bot_token')
                 ->where(function ($q) use ($tenantId) {
                     if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-                })->value('value');
+                })->value('setting_value');
+
+            if (empty($token) && !empty($tenantId)) {
+                $token = DB::table('meeting_telegram_configs')->where('tenant_id', $tenantId)->value('bot_token');
+            }
 
             if (empty($token)) {
                 return false;
             }
 
             $chatId = $overrideChatId ?: DB::table('meeting_system_settings')
-                ->where('key', 'notification.telegram_default_chat_id')
+                ->where('setting_key', 'notification.telegram_default_chat_id')
                 ->where(function ($q) use ($tenantId) {
                     if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-                })->value('value');
+                })->value('setting_value');
+
+            if (empty($chatId) && !empty($tenantId)) {
+                $chatId = DB::table('meeting_telegram_configs')->where('tenant_id', $tenantId)->value('chat_id');
+            }
 
             if (empty($chatId)) {
                 return false;
@@ -435,12 +479,12 @@ class MeetingTelegramController extends Controller
 
             // Get template
             $templateRow = DB::table('meeting_notification_templates')
-                ->where('type', $type)
+                ->where('template_type', $type)
                 ->where(function ($q) use ($tenantId) {
                     if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
                 })->first();
 
-            $raw = $templateRow ? $templateRow->content : (self::$factoryDefaults[$type] ?? "Notice: {title}");
+            $raw = $templateRow ? $templateRow->body : (self::$factoryDefaults[$type] ?? "Notice: {title}");
 
             $text = $raw;
             foreach ($variables as $k => $v) {
@@ -471,7 +515,7 @@ class MeetingTelegramController extends Controller
         ];
 
         $rows = DB::table('meeting_system_settings')
-            ->whereIn('key', $keys)
+            ->whereIn('setting_key', $keys)
             ->where(function ($q) use ($tenantId) {
                 if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
             })
@@ -479,11 +523,21 @@ class MeetingTelegramController extends Controller
 
         $map = [];
         foreach ($rows as $r) {
-            $map[$r->key] = $r->value;
+            $map[$r->setting_key] = $r->setting_value;
+        }
+
+        // Fallback to meeting_telegram_configs if exists
+        if (empty($map['notification.telegram_bot_token']) && !empty($tenantId)) {
+            $cfg = DB::table('meeting_telegram_configs')->where('tenant_id', $tenantId)->first();
+            if ($cfg) {
+                $map['notification.telegram_bot_token'] = $cfg->bot_token;
+                $map['notification.telegram_default_chat_id'] = $cfg->chat_id;
+                $map['notification.telegram_enabled'] = $cfg->is_active ? 'true' : 'false';
+            }
         }
 
         return [
-            'bot_enabled' => ($map['notification.telegram_enabled'] ?? '') === 'true',
+            'bot_enabled' => ($map['notification.telegram_enabled'] ?? '') === 'true' || ($map['notification.telegram_enabled'] ?? '') === '1',
             'bot_token' => $map['notification.telegram_bot_token'] ?? '',
             'bot_username' => $map['notification.telegram_bot_username'] ?? '',
             'default_chat_id' => $map['notification.telegram_default_chat_id'] ?? '',
@@ -494,10 +548,10 @@ class MeetingTelegramController extends Controller
     protected function getSettingValue(string $key, ?string $tenantId): ?string
     {
         return DB::table('meeting_system_settings')
-            ->where('key', $key)
+            ->where('setting_key', $key)
             ->where(function ($q) use ($tenantId) {
                 if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
             })
-            ->value('value');
+            ->value('setting_value');
     }
 }

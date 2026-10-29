@@ -34,6 +34,9 @@ services:
       codebridge-network:
         aliases:
           - auth-service
+      smartpos-network:
+        aliases:
+          - auth-service
 
   # 2. Auth Background Queue / Horizon Worker
   auth-horizon:
@@ -178,6 +181,10 @@ networks:
 
   codebridge-network:
     name: codebridge-network
+    external: true
+
+  smartpos-network:
+    name: smartpos-network
     external: true
 
 volumes:

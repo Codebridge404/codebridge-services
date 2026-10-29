@@ -14,8 +14,12 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // 0. Seed Roles and Permissions First
-        $this->call(RoleAndPermissionSeeder::class);
+        // 0. Seed Granular Permissions, System Roles, and Role-Permission Mappings
+        $this->call([
+            PermissionSeeder::class,
+            RoleSeeder::class,
+            RolePermissionSeeder::class,
+        ]);
         // 1. Outlet & Register First
         $existingOutlet = DB::table('outlets')->where('code', 'PP-01')->first();
         if ($existingOutlet) {
@@ -32,16 +36,18 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
-        $existingRegister = DB::table('registers')->where('code', 'REG-01')->first();
-        if (!$existingRegister) {
-            DB::table('registers')->insert([
-                'outlet_id' => $outletId,
-                'name' => 'Register #1',
-                'code' => 'REG-01',
-                'is_active' => true,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+        if (\Illuminate\Support\Facades\Schema::hasTable('registers')) {
+            $existingRegister = DB::table('registers')->where('code', 'REG-01')->first();
+            if (!$existingRegister) {
+                DB::table('registers')->insert([
+                    'outlet_id' => $outletId,
+                    'name' => 'Register #1',
+                    'code' => 'REG-01',
+                    'is_active' => true,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
         }
 
         // 2. Seed Users across 3 Parent Roles (Super Admin, Organization, Employees)
@@ -116,8 +122,12 @@ class DatabaseSeeder extends Seeder
             }
         }
 
-        // 3. Categories
-        $existingBev = DB::table('categories')->where('slug', 'beverages')->first();
+        // Seed Tenants & Memberships
+        $this->call(TenantSeeder::class);
+
+        // 3. Optional Retail Seeding (Only if legacy retail tables exist)
+        if (\Illuminate\Support\Facades\Schema::hasTable('categories') && \Illuminate\Support\Facades\Schema::hasTable('products')) {
+            $existingBev = DB::table('categories')->where('slug', 'beverages')->first();
         if ($existingBev) {
             $beveragesId = $existingBev->id;
         } else {
@@ -208,6 +218,7 @@ class DatabaseSeeder extends Seeder
                     'updated_at' => now(),
                 ]);
             }
+        }
         }
     }
 }

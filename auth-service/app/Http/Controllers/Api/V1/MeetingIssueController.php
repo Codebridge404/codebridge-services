@@ -62,6 +62,8 @@ class MeetingIssueController extends Controller
 
         $issues = $query->select(
             'i.*',
+            'i.issue_description as description',
+            'i.severity as priority',
             'r.name as room_name',
             'r.floor as room_floor',
             'u.name as reporter_name',
@@ -85,19 +87,31 @@ class MeetingIssueController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Meeting room not found.'], 404);
         }
 
+        $reportedBy = $user?->id ?? DB::table('users')->value('id') ?? 1;
+        $tenantId = $room->tenant_id ?? $user?->tenant_id ?? DB::table('tenants')->value('id') ?? 1;
+        $desc = $validated['issue_description'] ?? $validated['description'] ?? 'Meeting Room Issue';
+        if (!empty($validated['category'])) {
+            $desc .= " [Category: {$validated['category']}]";
+        }
+        $severity = $validated['severity'] ?? $validated['priority'] ?? 'normal';
+
         $id = DB::table('meeting_room_issues')->insertGetId([
-            'tenant_id' => $room->tenant_id ?? $user?->tenant_id,
+            'tenant_id' => $tenantId,
             'room_id' => $roomId,
-            'reported_by' => $user?->id ?? null,
-            'category' => $validated['category'],
-            'priority' => $validated['priority'] ?? 'medium',
-            'status' => 'reported',
-            'description' => $validated['description'],
+            'reported_by' => $reportedBy,
+            'issue_description' => $desc,
+            'severity' => $severity,
+            'status' => 'open',
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
         $issue = DB::table('meeting_room_issues')->where('id', $id)->first();
+        if ($issue) {
+            $issue->description = $issue->issue_description;
+            $issue->priority = $issue->severity;
+        }
+
         return response()->json([
             'status' => 'success',
             'message' => 'Facility defect reported successfully. Our support team has been alerted.',
@@ -115,7 +129,6 @@ class MeetingIssueController extends Controller
 
         $updateData = [
             'status' => $validated['status'],
-            'resolution_notes' => $validated['resolution_notes'] ?? null,
             'updated_at' => now(),
         ];
 
@@ -126,6 +139,11 @@ class MeetingIssueController extends Controller
         DB::table('meeting_room_issues')->where('id', $id)->update($updateData);
 
         $fresh = DB::table('meeting_room_issues')->where('id', $id)->first();
+        if ($fresh) {
+            $fresh->description = $fresh->issue_description;
+            $fresh->priority = $fresh->severity;
+        }
+
         return response()->json(['status' => 'success', 'message' => 'Issue status updated.', 'data' => $fresh]);
     }
 }

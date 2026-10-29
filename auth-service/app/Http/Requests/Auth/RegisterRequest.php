@@ -25,8 +25,7 @@ class RegisterRequest extends FormRequest
             'name' => ['required', 'string', 'max:255'],
             'email' => ['nullable', 'string'],
             'phone' => ['nullable', 'string', 'max:30'],
-            'password' => ['required', 'string', 'min:6'],
-            'role' => ['nullable', 'string'],
+            'password' => ['required', 'string', 'min:8', $this->has('password_confirmation') ? 'confirmed' : 'nullable'],
         ];
     }
 }

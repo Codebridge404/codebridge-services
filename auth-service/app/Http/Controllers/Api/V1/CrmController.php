@@ -9,6 +9,7 @@ use App\Http\Requests\Crm\StoreLeadRequest;
 use App\Http\Requests\Crm\UpdateDealRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * [BD-0007] Customer CRM, Sales Pipeline & Deals Management Controller.
@@ -29,8 +30,13 @@ class CrmController extends Controller
 {
     protected function getTenantId(Request $request): ?string
     {
+        $user = $request->user();
+        if ($user && $user->role !== 'super_admin') {
+            return $user->tenant_id ? (string) $user->tenant_id : null;
+        }
+
         return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
+            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
             ?? $request->query('tenant_id')
             ?? null;
     }
@@ -76,11 +82,15 @@ class CrmController extends Controller
         $tenantId = $this->getTenantId($request);
         $validated = $request->validated();
 
+        $val = (float) $validated['value'];
+
         $id = DB::table('deals')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'title' => $validated['title'],
             'company' => $validated['company'] ?? null,
-            'value' => $validated['value'],
+            'value' => $val,
+            'deal_value' => $val,
             'stage' => $validated['stage'] ?? 'lead',
             'probability' => $validated['probability'] ?? 50,
             'owner_name' => $validated['owner_name'] ?? 'Sales Rep',
@@ -175,6 +185,7 @@ class CrmController extends Controller
         $validated = $request->validated();
 
         $id = DB::table('leads')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
             'company' => $validated['company'] ?? null,
@@ -223,12 +234,18 @@ class CrmController extends Controller
         $tenantId = $this->getTenantId($request);
         $validated = $request->validated();
 
+        $type = $validated['type'];
+        $summary = $validated['summary'];
+
         $id = DB::table('crm_activities')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
-            'type' => $validated['type'],
+            'type' => $type,
+            'activity_type' => $type,
             'title' => $validated['title'],
             'contact' => $validated['contact'] ?? null,
-            'summary' => $validated['summary'],
+            'summary' => $summary,
+            'description' => $summary,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
