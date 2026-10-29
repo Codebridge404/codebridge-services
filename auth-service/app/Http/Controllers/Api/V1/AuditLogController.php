@@ -35,52 +35,44 @@ class AuditLogController extends Controller
      */
     public function index(Request $request)
     {
+        $user = $request->user();
         $module = $request->query('module');
 
-        $query = DB::table('audit_logs')->orderBy('created_at', 'desc');
+        $query = DB::table('audit_logs as a')
+            ->leftJoin('users as u', 'a.user_id', '=', 'u.id');
 
-        if (!empty($module) && $module !== 'all') {
-            $query->where('module', $module);
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            $query->where('a.tenant_id', $user->tenant_id);
         }
 
-        $logs = $query->limit(100)->get();
+        if (!empty($module) && $module !== 'all') {
+            $query->where('a.module', $module);
+        }
 
-        return response()->json([
-            'status' => 'success',
-            'data' => AuditLogResource::collection($logs),
-        ]);
+        $logs = $query->select(
+            'a.*',
+            'u.name as user_name'
+        )->orderBy('a.created_at', 'desc')->limit(100)->get();
+
+        return $this->successResponse(
+            data: AuditLogResource::collection($logs),
+            message: 'Audit logs retrieved successfully.'
+        );
     }
 
     /**
      * Static Helper method to record audit events across services
      */
-    public static function log($userId, string $userName, string $action, string $module = 'system', ?string $ipAddress = null, $payload = null)
+    public static function log($userId, string $userName, string $action, string $module = 'system', ?string $ipAddress = null, $payload = null, ?int $tenantId = null)
     {
-        try {
-            $data = [
-                'user_id' => $userId,
-                'action' => $action,
-                'ip_address' => $ipAddress ?? request()->ip(),
-                'created_at' => now(),
-                'updated_at' => now(),
-            ];
-
-            if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'user_name')) {
-                $data['user_name'] = $userName;
-            }
-            if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'module')) {
-                $data['module'] = $module;
-            }
-            if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'payload')) {
-                $data['payload'] = $payload ? json_encode($payload) : null;
-            }
-            if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'new_values') && !isset($data['payload'])) {
-                $data['new_values'] = $payload ? json_encode($payload) : null;
-            }
-
-            DB::table('audit_logs')->insert($data);
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('[AuditLog] Failed to record audit log: ' . $e->getMessage());
-        }
+        return \App\Models\AuditLog::record(
+            action: $action,
+            module: $module,
+            userId: $userId,
+            userName: $userName,
+            tenantId: $tenantId,
+            payload: is_array($payload) ? $payload : (is_string($payload) ? json_decode($payload, true) : null),
+            ipAddress: $ipAddress
+        );
     }
 }

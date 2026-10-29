@@ -38,25 +38,28 @@ class RateLimitAuthMiddleware
     public function handle(Request $request, Closure $next, int $maxAttempts = 5, int $decayMinutes = 15): Response
     {
         $ip = $request->ip();
-        $email = $request->input('email') ?? $request->input('pin_code') ?? 'guest';
-        $throttleKey = 'auth_attempt:' . sha1($ip . '|' . $email);
+        $identifier = $request->input('email') ?? $request->input('phone') ?? $request->input('login') ?? $request->input('pin_code') ?? 'guest';
+        $throttleKey = 'auth_attempt:' . sha1($ip . '|' . $identifier);
 
         if (RateLimiter::tooManyAttempts($throttleKey, $maxAttempts)) {
-            $seconds = RateLimiter::availableIn($throttleKey);
-            $minutes = ceil($seconds / 60);
+            $seconds = max(1, RateLimiter::availableIn($throttleKey));
 
             return response()->json([
                 'status' => 'error',
                 'code' => 'ACCOUNT_LOCKED_OUT',
-                'message' => "Too many failed attempts. Security cooldown active. Please try again in {$minutes} minute(s) ({$seconds} seconds).",
+                'message' => 'Too many login attempts. Please try again later.',
                 'retry_after_seconds' => $seconds,
-            ], 429);
+            ], 429, [
+                'Retry-After' => (string) $seconds,
+                'Cache-Control' => 'no-store',
+            ]);
         }
 
         $response = $next($request);
 
-        // If response indicates a 401 or 422 authentication error, record the hit
-        if ($response->getStatusCode() === 401 || ($response->getStatusCode() === 422 && $request->is('*/auth/login', '*/auth/quick-switch', '*/auth/verify-pin'))) {
+        // If response indicates a 401, 403, or 422 authentication error, record the hit
+        if ($response->getStatusCode() === 401 
+            || (($response->getStatusCode() === 422 || $response->getStatusCode() === 403) && $request->is('*/auth/login', '*/auth/quick-switch', '*/auth/verify-pin'))) {
             RateLimiter::hit($throttleKey, $decayMinutes * 60);
         } elseif ($response->isSuccessful()) {
             RateLimiter::clear($throttleKey);

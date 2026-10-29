@@ -85,13 +85,23 @@ class TenantModuleController extends Controller
             ], 404);
         }
 
-        $modules = $tenant->enabled_modules;
-        if (is_string($modules)) {
-            $modules = json_decode($modules, true);
+        $modules = [];
+        if (\Illuminate\Support\Facades\Schema::hasTable('tenant_modules')) {
+            $modules = DB::table('tenant_modules')
+                ->where('tenant_id', $tenant->id)
+                ->where('is_active', true)
+                ->pluck('module_id')
+                ->toArray();
         }
 
-        if (!is_array($modules)) {
-            $modules = [];
+        if (empty($modules)) {
+            $rawModules = $tenant->enabled_modules;
+            if (is_string($rawModules)) {
+                $rawModules = json_decode($rawModules, true);
+            }
+            if (is_array($rawModules)) {
+                $modules = $rawModules;
+            }
         }
 
         return response()->json([
@@ -158,6 +168,22 @@ class TenantModuleController extends Controller
             'enabled_modules' => json_encode($modules),
             'updated_at'      => now(),
         ]);
+
+        if (\Illuminate\Support\Facades\Schema::hasTable('tenant_modules')) {
+            DB::table('tenant_modules')->where('tenant_id', $tenant->id)->update(['is_active' => false]);
+            foreach ($modules as $modId) {
+                DB::table('tenant_modules')->updateOrInsert(
+                    ['tenant_id' => $tenant->id, 'module_id' => $modId],
+                    [
+                        'is_active' => true,
+                        'activated_by' => $authUser->id,
+                        'activated_at' => now(),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]
+                );
+            }
+        }
 
         // Record audit event
         if ($authUser && class_exists(AuditLogController::class)) {

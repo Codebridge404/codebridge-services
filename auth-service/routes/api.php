@@ -57,5 +57,6 @@ Route::prefix('v1')->group(function () {
         require __DIR__ . '/api/crm.php';
         require __DIR__ . '/api/meetings.php';
         require __DIR__ . '/api/super_admin.php';
+        require __DIR__ . '/api/admin.php';
     });
 });

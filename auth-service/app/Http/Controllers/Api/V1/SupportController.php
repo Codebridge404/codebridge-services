@@ -48,26 +48,45 @@ class SupportController extends Controller
             $this->seedInitialTickets();
         }
 
-        $query = DB::table('support_tickets')->orderBy('created_at', 'desc');
+        $query = DB::table('support_tickets as st')
+            ->leftJoin('tenants as t', 'st.tenant_id', '=', 't.id')
+            ->leftJoin('users as u', 'st.user_id', '=', 'u.id')
+            ->orderBy('st.created_at', 'desc');
 
         if ($status && $status !== 'all') {
-            $query->where('status', $status);
+            $query->where('st.status', $status);
         }
 
         if ($priority && $priority !== 'all') {
-            $query->where('priority', $priority);
+            $query->where('st.priority', $priority);
         }
 
         if ($search) {
             $query->where(function ($q) use ($search) {
-                $q->where('subject', 'like', "%{$search}%")
-                  ->orWhere('tenant_name', 'like', "%{$search}%")
-                  ->orWhere('id', 'like', "%{$search}%")
-                  ->orWhere('requester_name', 'like', "%{$search}%");
+                $q->where('st.subject', 'like', "%{$search}%")
+                  ->orWhere('st.message', 'like', "%{$search}%")
+                  ->orWhere('t.name', 'like', "%{$search}%")
+                  ->orWhere('u.name', 'like', "%{$search}%")
+                  ->orWhere('u.email', 'like', "%{$search}%");
             });
         }
 
-        $tickets = $query->get();
+        $tickets = $query->select(
+            'st.id',
+            'st.uuid',
+            'st.tenant_id',
+            'st.user_id',
+            'st.subject',
+            'st.message',
+            'st.message as description',
+            'st.status',
+            'st.priority',
+            'st.created_at',
+            'st.updated_at',
+            't.name as tenant_name',
+            'u.name as requester_name',
+            'u.email as requester_email'
+        )->get();
 
         return response()->json([
             'success' => true,
@@ -87,28 +106,31 @@ class SupportController extends Controller
      */
     public function storeTicket(StoreTicketRequest $request)
     {
+        $userId = $request->user()?->id ?? DB::table('users')->value('id') ?? 1;
+        $tenantId = $request->tenant_id ?? $request->user()?->tenant_id;
+        $message = $request->message ?? $request->description ?? 'Support request';
 
-        $ticketId = 'TCK-' . rand(1000, 9999);
-
-        DB::table('support_tickets')->insert([
-            'id'              => $ticketId,
-            'tenant_id'       => $request->tenant_id,
-            'tenant_name'     => $request->tenant_name,
-            'requester_name'  => $request->requester_name,
-            'requester_email' => $request->requester_email,
-            'subject'         => $request->subject,
-            'description'     => $request->description,
-            'priority'        => $request->priority ?? 'normal',
-            'status'          => 'open',
-            'category'        => $request->category ?? 'General Support',
-            'created_at'      => now(),
-            'updated_at'      => now(),
+        $id = DB::table('support_tickets')->insertGetId([
+            'uuid'       => (string) Str::uuid(),
+            'tenant_id'  => $tenantId,
+            'user_id'    => $userId,
+            'subject'    => $request->subject,
+            'message'    => $message,
+            'priority'   => $request->priority ?? 'normal',
+            'status'     => 'open',
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
+
+        $ticket = DB::table('support_tickets')->where('id', $id)->first();
+        if ($ticket) {
+            $ticket->description = $ticket->message;
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Support ticket created successfully.',
-            'data'    => DB::table('support_tickets')->where('id', $ticketId)->first(),
+            'data'    => $ticket,
         ], 201);
     }
 
@@ -127,13 +149,6 @@ class SupportController extends Controller
 
         if ($request->has('status')) {
             $updates['status'] = $request->status;
-            if ($request->status === 'resolved') {
-                $updates['resolved_at'] = now();
-            }
-        }
-
-        if ($request->has('response_note')) {
-            $updates['response_note'] = $request->response_note;
         }
 
         if ($request->has('priority')) {
@@ -142,10 +157,15 @@ class SupportController extends Controller
 
         DB::table('support_tickets')->where('id', $id)->update($updates);
 
+        $fresh = DB::table('support_tickets')->where('id', $id)->first();
+        if ($fresh) {
+            $fresh->description = $fresh->message;
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Ticket updated successfully.',
-            'data'    => DB::table('support_tickets')->where('id', $id)->first(),
+            'data'    => $fresh,
         ]);
     }
 
@@ -162,9 +182,14 @@ class SupportController extends Controller
             $query->where('is_active', true);
         }
 
+        $announcements = $query->get()->map(function ($a) {
+            $a->message = $a->content;
+            return $a;
+        });
+
         return response()->json([
             'success' => true,
-            'data'    => $query->get(),
+            'data'    => $announcements,
         ]);
     }
 
@@ -174,23 +199,27 @@ class SupportController extends Controller
      */
     public function storeAnnouncement(StoreAnnouncementRequest $request)
     {
+        $content = $request->message ?? $request->content ?? 'Platform Announcement';
 
         $id = DB::table('platform_announcements')->insertGetId([
-            'title'           => $request->title,
-            'message'         => $request->message,
-            'severity'        => $request->severity,
-            'is_active'       => true,
-            'target_audience' => $request->target_audience ?? 'all',
-            'starts_at'       => now(),
-            'ends_at'         => $request->ends_at,
-            'created_at'      => now(),
-            'updated_at'      => now(),
+            'uuid'         => (string) Str::uuid(),
+            'title'        => $request->title,
+            'content'      => $content,
+            'is_active'    => true,
+            'published_at' => now(),
+            'created_at'   => now(),
+            'updated_at'   => now(),
         ]);
+
+        $ann = DB::table('platform_announcements')->where('id', $id)->first();
+        if ($ann) {
+            $ann->message = $ann->content;
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Platform announcement published.',
-            'data'    => DB::table('platform_announcements')->where('id', $id)->first(),
+            'data'    => $ann,
         ], 201);
     }
 
@@ -236,54 +265,41 @@ class SupportController extends Controller
     private function seedInitialTickets(): void
     {
         $now = now();
+        $fallbackUserId = DB::table('users')->value('id') ?? 1;
+
         DB::table('support_tickets')->insert([
             [
-                'id'              => 'TCK-8821',
-                'tenant_id'       => null,
-                'tenant_name'     => 'Amazon Cafe (BKK1)',
-                'requester_name'  => 'Sokha Meng (Owner)',
-                'requester_email' => 'sokha@amazoncafe.kh',
-                'subject'         => 'Need help connecting NBC Bakong KHQR dynamic webhook callback',
-                'description'     => 'We configured the Bakong merchant credentials and need to test webhook notifications on successful cashier scans.',
-                'priority'        => 'high',
-                'status'          => 'open',
-                'category'        => 'Payment Integration',
-                'response_note'   => null,
-                'resolved_at'     => null,
-                'created_at'      => $now->subMinutes(12),
-                'updated_at'      => $now->subMinutes(12),
+                'uuid'       => (string) Str::uuid(),
+                'tenant_id'  => null,
+                'user_id'    => $fallbackUserId,
+                'subject'    => 'Need help connecting NBC Bakong KHQR dynamic webhook callback',
+                'message'    => 'We configured the Bakong merchant credentials and need to test webhook notifications on successful cashier scans.',
+                'priority'   => 'high',
+                'status'     => 'open',
+                'created_at' => $now->subMinutes(12),
+                'updated_at' => $now->subMinutes(12),
             ],
             [
-                'id'              => 'TCK-8820',
-                'tenant_id'       => null,
-                'tenant_name'     => 'Brown Coffee Toul Kork',
-                'requester_name'  => 'Channary Voeun (Manager)',
-                'requester_email' => 'channary@brown.com.kh',
-                'subject'         => 'How to export monthly double-entry general ledger to CSV for tax audit',
-                'description'     => 'Seeking the export procedure for end-of-month reconciliation reports.',
-                'priority'        => 'normal',
-                'status'          => 'in_progress',
-                'category'        => 'Accounting & Reports',
-                'response_note'   => 'Platform team investigating report formats.',
-                'resolved_at'     => null,
-                'created_at'      => $now->subHours(2),
-                'updated_at'      => $now->subHours(1),
+                'uuid'       => (string) Str::uuid(),
+                'tenant_id'  => null,
+                'user_id'    => $fallbackUserId,
+                'subject'    => 'How to export monthly double-entry general ledger to CSV for tax audit',
+                'message'    => 'Seeking the export procedure for end-of-month reconciliation reports.',
+                'priority'   => 'normal',
+                'status'     => 'in_progress',
+                'created_at' => $now->subHours(2),
+                'updated_at' => $now->subHours(1),
             ],
             [
-                'id'              => 'TCK-8819',
-                'tenant_id'       => null,
-                'tenant_name'     => 'Tube Coffee Riverside',
-                'requester_name'  => 'Dara Chan',
-                'requester_email' => 'dara@tubecoffee.kh',
-                'subject'         => 'Request quota increase to add 3rd kitchen display KDS terminal',
-                'description'     => 'We are expanding kitchen capacity and require an additional register license.',
-                'priority'        => 'normal',
-                'status'          => 'resolved',
-                'category'        => 'Subscription Quotas',
-                'response_note'   => 'Quota upgraded via Tenant Management Studio.',
-                'resolved_at'     => $now->subHours(20),
-                'created_at'      => $now->subDays(1),
-                'updated_at'      => $now->subHours(20),
+                'uuid'       => (string) Str::uuid(),
+                'tenant_id'  => null,
+                'user_id'    => $fallbackUserId,
+                'subject'    => 'Request quota increase to add 3rd kitchen display KDS terminal',
+                'message'    => 'We are expanding kitchen capacity and require an additional register license.',
+                'priority'   => 'normal',
+                'status'     => 'resolved',
+                'created_at' => $now->subDays(1),
+                'updated_at' => $now->subHours(20),
             ],
         ]);
     }

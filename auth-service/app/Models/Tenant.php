@@ -11,6 +11,7 @@ class Tenant extends Model
 
     protected $fillable = [
         'uuid',
+        'owner_user_id',
         'name',
         'business_type',
         'legal_name',
@@ -82,5 +83,25 @@ class Tenant extends Model
     public function departments()
     {
         return $this->hasMany(Department::class, 'tenant_id');
+    }
+
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_user_id');
+    }
+
+    public function tenantUsers()
+    {
+        return $this->hasMany(TenantUser::class, 'tenant_id');
+    }
+
+    public function tenantModules()
+    {
+        return $this->hasMany(TenantModule::class, 'tenant_id');
+    }
+
+    public function posPins()
+    {
+        return $this->hasMany(UserPosPin::class, 'tenant_id');
     }
 }

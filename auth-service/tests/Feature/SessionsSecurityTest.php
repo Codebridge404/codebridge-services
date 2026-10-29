@@ -25,12 +25,22 @@ class SessionsSecurityTest extends TestCase
      */
     public function test_user_can_view_sessions_and_toggle_2fa(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->create([
+            'password' => \Illuminate\Support\Facades\Hash::make('SecurePassword123!'),
+        ]);
 
         Sanctum::actingAs($user, ['*']);
 
         $this->getJson('/api/v1/auth/sessions')->assertStatus(200);
-        $this->postJson('/api/v1/auth/2fa/toggle')->assertStatus(200);
+
+        // Empty request without enable is rejected with 422
+        $this->postJson('/api/v1/auth/2fa/toggle', [])->assertStatus(422);
+
+        // Valid disable request with reauthentication password succeeds
+        $this->postJson('/api/v1/auth/2fa/toggle', [
+            'enable' => false,
+            'password' => 'SecurePassword123!',
+        ])->assertStatus(200);
     }
 
     /**

@@ -49,10 +49,20 @@ class EnsureRole
             return $next($request);
         }
 
+        // Check primary role and any assigned roles from user_roles pivot
+        $userRoles = array_filter([$user->role]);
+        if (method_exists($user, 'roles')) {
+            try {
+                $assignedSlugs = $user->roles()->pluck('slug')->toArray();
+                $userRoles = array_merge($userRoles, $assignedSlugs);
+            } catch (\Throwable $e) {
+                // Database or relation fallback
+            }
+        }
+
         // Normalize role aliases (organization <=> admin)
-        $userRole = $user->role;
-        $effectiveRoles = [$userRole];
-        if (in_array($userRole, ['organization', 'admin', 'administrator', 'owner'])) {
+        $effectiveRoles = array_unique($userRoles);
+        if (array_intersect($effectiveRoles, ['organization', 'admin', 'administrator', 'owner'])) {
             $effectiveRoles = array_unique(array_merge($effectiveRoles, ['organization', 'admin', 'administrator', 'owner']));
         }
 

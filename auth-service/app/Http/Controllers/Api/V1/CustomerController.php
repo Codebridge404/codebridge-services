@@ -8,6 +8,7 @@ use App\Http\Requests\Customer\UpdateCustomerRequest;
 use App\Http\Resources\Customer\CustomerResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * [BD-0062] Customer Profile, Credit Balance & CRM Directory Controller
@@ -36,8 +37,13 @@ class CustomerController extends Controller
 {
     protected function getTenantId(Request $request): ?string
     {
+        $user = $request->user();
+        if ($user && $user->role !== 'super_admin') {
+            return $user->tenant_id ? (string) $user->tenant_id : null;
+        }
+
         return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
+            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
             ?? $request->query('tenant_id')
             ?? null;
     }
@@ -45,11 +51,14 @@ class CustomerController extends Controller
     public function index(Request $request)
     {
         $tenantId = $this->getTenantId($request);
+        $user = $request->user();
         $search = $request->query('q');
 
         $query = DB::table('customers');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('tenant_id', $tenantId);
+        } elseif (!empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
@@ -78,14 +87,16 @@ class CustomerController extends Controller
         $code = 'CUST-' . strtoupper(substr(uniqid(), -6));
 
         $id = DB::table('customers')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
             'code' => $code,
             'email' => $validated['email'] ?? null,
             'phone' => $validated['phone'] ?? null,
             'address' => $validated['address'] ?? null,
+            'store_credit' => 0.00,
+            'store_credit_balance' => 0.00,
             'loyalty_points' => 0,
-            'total_spent' => 0,
             'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
@@ -101,11 +112,19 @@ class CustomerController extends Controller
     public function update(UpdateCustomerRequest $request, $id)
     {
         $tenantId = $this->getTenantId($request);
+        $user = $request->user();
         $validated = $request->validated();
 
         $query = DB::table('customers')->where('id', $id);
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
             $query->where('tenant_id', $tenantId);
+        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+            $query->where('tenant_id', $tenantId);
+        }
+
+        $customer = $query->first();
+        if (!$customer) {
+            return response()->json(['status' => 'error', 'message' => 'Customer profile not found or unauthorized.'], 404);
         }
 
         $updateData = [
@@ -131,13 +150,19 @@ class CustomerController extends Controller
     public function destroy(Request $request, $id)
     {
         $tenantId = $this->getTenantId($request);
+        $user = $request->user();
         $query = DB::table('customers')->where('id', $id);
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('tenant_id', $tenantId);
+        } elseif (!empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
-        $query->delete();
+        $deleted = $query->delete();
+        if (!$deleted) {
+            return response()->json(['status' => 'error', 'message' => 'Customer profile not found or unauthorized.'], 404);
+        }
 
         return response()->json([
             'status' => 'success',

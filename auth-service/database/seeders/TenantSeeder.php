@@ -4,15 +4,28 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class TenantSeeder extends Seeder
 {
     public function run(): void
     {
-        // Seed the default "Platform Owner" tenant for CodeBridges internal use
+        // Find super admin user
+        $superAdmin = DB::table('users')->where('email', 'vibolsen2002@gmail.com')->first()
+            ?? DB::table('users')
+                ->join('user_roles', 'users.id', '=', 'user_roles.user_id')
+                ->join('roles', 'user_roles.role_id', '=', 'roles.id')
+                ->where('roles.slug', 'super_admin')
+                ->select('users.*')
+                ->first();
+
+        // 1. Seed the default "Platform Owner" tenant for CodeBridges internal use
         $existing = DB::table('tenants')->where('slug', 'codebridge-platform')->first();
         if (!$existing) {
             $platformTenantId = DB::table('tenants')->insertGetId([
+                'uuid'          => (string) Str::uuid(),
+                'owner_user_id' => $superAdmin?->id,
                 'name'          => 'CodeBridges Platform',
                 'slug'          => 'codebridge-platform',
                 'company_code'  => 'CB-0001',
@@ -46,15 +59,29 @@ class TenantSeeder extends Seeder
             ]);
         } else {
             $platformTenantId = $existing->id;
+            if (empty($existing->uuid) || (empty($existing->owner_user_id) && $superAdmin)) {
+                DB::table('tenants')->where('id', $platformTenantId)->update(array_filter([
+                    'uuid' => $existing->uuid ?: (string) Str::uuid(),
+                    'owner_user_id' => $existing->owner_user_id ?: $superAdmin?->id,
+                ]));
+            }
         }
 
-        // Assign all super_admin users to the platform tenant
-        DB::table('users')->where('role', 'super_admin')->update(['tenant_id' => $platformTenantId]);
+        // Link super_admin to platform tenant in tenant_users (ERD Rule: Owner must be an active tenant member)
+        if ($superAdmin && Schema::hasTable('tenant_users')) {
+            DB::table('tenant_users')->updateOrInsert(
+                ['tenant_id' => $platformTenantId, 'user_id' => $superAdmin->id],
+                ['status' => 'active', 'joined_at' => now(), 'created_at' => now(), 'updated_at' => now()]
+            );
+        }
 
-        // Seed a demo Business Runner tenant
+        // 2. Seed a demo Business Runner tenant
+        $orgAdmin = DB::table('users')->where('email', 'admin@pos.com')->first();
         $existingBiz = DB::table('tenants')->where('slug', 'sunny-cafe-pp')->first();
         if (!$existingBiz) {
             $bizTenantId = DB::table('tenants')->insertGetId([
+                'uuid'          => (string) Str::uuid(),
+                'owner_user_id' => $orgAdmin?->id,
                 'name'          => 'Sunny Cafe Phnom Penh',
                 'slug'          => 'sunny-cafe-pp',
                 'company_code'  => 'CB-0002',
@@ -86,6 +113,22 @@ class TenantSeeder extends Seeder
                 'created_at'    => now(),
                 'updated_at'    => now(),
             ]);
+        } else {
+            $bizTenantId = $existingBiz->id;
+            if (empty($existingBiz->uuid) || (empty($existingBiz->owner_user_id) && $orgAdmin)) {
+                DB::table('tenants')->where('id', $bizTenantId)->update(array_filter([
+                    'uuid' => $existingBiz->uuid ?: (string) Str::uuid(),
+                    'owner_user_id' => $existingBiz->owner_user_id ?: $orgAdmin?->id,
+                ]));
+            }
+        }
+
+        // Link org admin to sunny cafe in tenant_users
+        if ($orgAdmin && Schema::hasTable('tenant_users')) {
+            DB::table('tenant_users')->updateOrInsert(
+                ['tenant_id' => $bizTenantId, 'user_id' => $orgAdmin->id],
+                ['status' => 'active', 'joined_at' => now(), 'created_at' => now(), 'updated_at' => now()]
+            );
         }
     }
 }

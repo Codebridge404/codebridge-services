@@ -69,8 +69,10 @@ class OutletController extends Controller
                 'o.is_cfd_enabled',
                 'o.terminal_settings',
                 'o.created_at',
-                DB::raw('(SELECT COUNT(*) FROM users WHERE outlet_uuid = o.uuid) as staff_count'),
-                DB::raw('(SELECT COUNT(*) FROM registers WHERE outlet_id = o.id) as registers_count')
+                DB::raw('(SELECT COUNT(*) FROM tenant_user_outlets WHERE outlet_uuid = o.uuid) as staff_count'),
+                \Illuminate\Support\Facades\Schema::hasTable('registers')
+                    ? DB::raw('(SELECT COUNT(*) FROM registers WHERE outlet_id = o.id) as registers_count')
+                    : DB::raw('0 as registers_count')
             )
             ->orderBy('o.name', 'asc')
             ->get();
@@ -98,6 +100,7 @@ class OutletController extends Controller
         $terminalSettings['tablesEnabled'] = $profile['presets']['tables_enabled'];
 
         $id = DB::table('outlets')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
             'business_type' => $businessType,
@@ -127,6 +130,17 @@ class OutletController extends Controller
 
     public function update(UpdateOutletRequest $request, $id)
     {
+        $user = $request->user();
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
+        }
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
+            }
+        }
+
         $validated = $request->validated();
 
         $updates = [
@@ -204,12 +218,18 @@ class OutletController extends Controller
      */
     public function updateBusinessProfile(UpdateBusinessProfileRequest $request, $id)
     {
-        $validated = $request->validated();
-
+        $user = $request->user();
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
+            }
+        }
+
+        $validated = $request->validated();
 
         $businessType = $validated['business_type'];
         $profile = PosBusinessProfileService::getProfile($businessType);
@@ -297,12 +317,18 @@ class OutletController extends Controller
      */
     public function updateTerminalSettings(UpdateTerminalSettingsRequest $request, $id)
     {
-        $validated = $request->validated();
-
+        $user = $request->user();
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
+            }
+        }
+
+        $validated = $request->validated();
 
         $updates = [
             'updated_at' => now(),
@@ -379,8 +405,19 @@ class OutletController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
+        $user = $request->user();
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
+        }
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
+            }
+        }
+
         DB::table('outlets')->where('id', $id)->update([
             'is_active' => false,
             'updated_at' => now(),

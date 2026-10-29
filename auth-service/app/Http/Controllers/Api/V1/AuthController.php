@@ -6,90 +6,157 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\AcceptInviteRequest;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\QuickSwitchRequest;
+use App\Http\Requests\Auth\RefreshTokenRequest;
 use App\Http\Requests\Auth\RegisterRequest;
+use App\Http\Requests\Auth\SendVerificationLinkRequest;
 use App\Http\Requests\Auth\UpdatePasswordRequest;
 use App\Http\Requests\Auth\UpdateProfileRequest;
 use App\Http\Resources\User\UserResource;
+use App\Models\Outlet;
+use App\Models\Tenant;
+use App\Models\TenantUser;
+use App\Models\TenantUserOutlet;
 use App\Models\User;
+use App\Models\UserPosPin;
+use App\Http\Responses\HttpStatus;
+use App\Http\Responses\ResponseCode;
+use App\Services\JwtService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
 
 /**
- * [BD-0001] Central Authentication, SSO, 2FA & Password/PIN Security Controller.
+ * [BD-0001] Central Authentication, Multi-Tenant Session & Security Controller.
  *
  * @ticket BD-0001
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/AuthController.php
- * @related-model App\Models\User, App\Models\UserRole
- * @entry-point POST /api/v1/auth/login, POST /api/v1/auth/logout, GET /api/v1/me
- * @date-time 2026-10-23T15:40:00+07:00
+ * @related-model App\Models\User, App\Models\TenantUser, App\Models\UserPosPin
  *
  * Process Capabilities:
- * 1. Sanitizes login input against null-byte injection.
- * 2. Checks account lockout status (5 failed attempts = 15 min lock).
- * 3. Verifies BCrypt hash and resets failed attempt counters.
- * 4. Issues signed Bearer JWT token and Sanctum personal access token.
- * 5. Returns authenticated user profile, roles, and accessible outlets.
+ * 1. Sanitizes login input against null-byte injection and multi-identifier login (email or phone).
+ * 2. High-performance Redis/Cache account lockout protection (5 failed attempts = 15-minute lock).
+ * 3. BCrypt / Argon2 password verification with automated counter reset.
+ * 4. Dual-token issuance: Stateless Enterprise JWT (15m access token) + Rotating Refresh Token (30d).
+ * 5. POS Cashier Quick-Switch powered by SHA-256 hashed user_pos_pins.
+ * 6. Multi-tenant workspace and outlet context resolution for Elements OpenAPI docs.
  */
 class AuthController extends Controller
 {
     /**
-     * Standard Email/Phone + Password Login.
+     * Central Authentication supporting Email and Phone Number Login.
+     * POST /api/v1/auth/login
      */
     public function login(LoginRequest $request)
     {
+        $rawEmail = $request->input('email');
+        $rawPhone = $request->input('phone');
+        $rawLogin = $request->input('login') ?? $request->input('identifier');
 
-
-        $loginInput = str_replace("\0", '', trim($request->email));
-
-        $query = User::where('email', $loginInput);
-        if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'phone')) {
-            $query->orWhere('phone', $loginInput);
+        foreach (['email' => $rawEmail, 'phone' => $rawPhone, 'login' => $rawLogin] as $field => $val) {
+            if ($val !== null && preg_match('/[\x00-\x1F\x7F]/', (string) $val)) {
+                throw ValidationException::withMessages([
+                    $field => ['The login identifier contains invalid characters.'],
+                ]);
+            }
         }
+
+        $email = $rawEmail ? trim((string) $rawEmail) : null;
+        $phone = $rawPhone ? trim((string) $rawPhone) : null;
+        $login = $rawLogin ? trim((string) $rawLogin) : null;
+
+        if (!$email && !$phone && !$login) {
+            throw ValidationException::withMessages([
+                'email' => ['Please provide an email address or phone number to sign in.'],
+            ]);
+        }
+
+        // Global IP Rate Limiting (30 requests/minute per IP)
+        $ipKey = 'auth:login:ip:' . hash('sha256', (string) $request->ip());
+        $ipAttempts = RateLimiter::increment($ipKey, 60);
+        if ($ipAttempts > 30) {
+            return $this->tooManyAttemptsResponse(
+                seconds: RateLimiter::availableIn($ipKey),
+                code: 'TOO_MANY_ATTEMPTS'
+            );
+        }
+
+        // Query user by email OR phone number flexibly
+        $query = User::query();
+
+        if ($email && $phone) {
+            $query->where(function ($q) use ($email, $phone) {
+                $q->where('email', $email)
+                  ->orWhere('phone', $phone)
+                  ->orWhere('email', $phone)
+                  ->orWhere('phone', $email);
+            });
+        } elseif ($email) {
+            $query->where(function ($q) use ($email) {
+                $q->where('email', $email)->orWhere('phone', $email);
+            });
+        } elseif ($phone) {
+            $query->where(function ($q) use ($phone) {
+                $q->where('phone', $phone)->orWhere('email', $phone);
+            });
+        } elseif ($login) {
+            $query->where(function ($q) use ($login) {
+                $q->where('email', $login)->orWhere('phone', $login);
+            });
+        }
+
         $user = $query->first();
 
-        // Check if account is locked out
-        if ($user && $user->isLockedOut()) {
-            $remainingSeconds = now()->diffInSeconds($user->lockout_until);
-            return response()->json([
-                'status' => 'error',
-                'code' => 'ACCOUNT_LOCKED_OUT',
-                'message' => "Account is temporarily locked out due to multiple failed login attempts. Please try again in {$remainingSeconds} seconds.",
-                'retry_after_seconds' => $remainingSeconds,
-            ], 429);
+        // Block deactivated accounts
+        if ($user && isset($user->is_active) && !(bool) $user->is_active) {
+            throw ValidationException::withMessages([
+                'email' => ['This account is inactive. Please contact your administrator.'],
+            ]);
         }
 
+        // Determine lockout tracking subject (user ID or hashed identifier)
+        $primaryIdentifier = $email ?? $phone ?? $login;
+        $subject = $user ? (string) $user->id
+            : 'unknown:' . hash('sha256', mb_strtolower($primaryIdentifier));
+
+        $failedKey = 'auth:failed_attempts:' . $subject;
+        $lockedKey = 'auth:login_lockout:' . $subject;
+        $expiresKey = 'auth:login_lockout_expire:' . $subject;
+
+        // Check if account is locked out
+        if (Cache::get($lockedKey, false) || ($user && $user->isLockedOut())) {
+            $lockoutExpire = (int) Cache::get($expiresKey, now()->addMinutes(15)->timestamp);
+            $remainingSeconds = max(1, $lockoutExpire - now()->timestamp);
+            return $this->tooManyAttemptsResponse(
+                seconds: $remainingSeconds,
+                code: 'ACCOUNT_LOCKED_OUT',
+            );
+        }
+
+        // Verify password
         if (!$user || !Hash::check($request->password, $user->password)) {
-            if ($user) {
-                $user->increment('failed_login_attempts');
-                if ($user->failed_login_attempts >= 5) {
-                    $user->update([
-                        'lockout_until' => now()->addMinutes(15),
-                        'failed_login_attempts' => 0,
-                    ]);
-                    // Log audit event safely
-                    if (\Illuminate\Support\Facades\Schema::hasTable('audit_logs')) {
-                        $auditPayload = [
-                            'user_id' => $user->id,
-                            'action' => 'auth.brute_force_lockout',
-                            'ip_address' => $request->ip(),
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ];
-                        if (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'module')) {
-                            $auditPayload['module'] = 'Authentication';
-                            $auditPayload['description'] = "Account {$user->email} locked out for 15 minutes after 5 consecutive failed login attempts.";
-                        } elseif (\Illuminate\Support\Facades\Schema::hasColumn('audit_logs', 'new_values')) {
-                            $auditPayload['new_values'] = json_encode([
-                                'description' => "Account {$user->email} locked out for 15 minutes after 5 consecutive failed login attempts.",
-                            ]);
-                        }
-                        DB::table('audit_logs')->insert($auditPayload);
-                    }
-                }
+            $attempts = (int) Cache::increment($failedKey);
+            Cache::put($failedKey, $attempts, now()->addMinutes(30));
+
+            if ($attempts >= 5) {
+                $expire = now()->addMinutes(15);
+                Cache::put($lockedKey, true, $expire);
+                Cache::put($expiresKey, $expire->timestamp, $expire);
+                Cache::forget($failedKey);
+
+                Log::warning('User account locked out due to multiple failed login attempts', [
+                    'subject' => $subject,
+                    'email' => $user?->email ?? $email,
+                    'phone' => $user?->phone ?? $phone,
+                    'ip' => $request->ip(),
+                ]);
             }
 
             throw ValidationException::withMessages([
@@ -97,20 +164,37 @@ class AuthController extends Controller
             ]);
         }
 
-        // Reset failed login attempts on successful login
-        if ($user->failed_login_attempts > 0 || $user->lockout_until) {
-            $user->update([
-                'failed_login_attempts' => 0,
-                'lockout_until' => null,
-            ]);
+        // Reset failed attempt counters on successful authentication
+        Cache::forget($failedKey);
+        Cache::forget($lockedKey);
+        Cache::forget($expiresKey);
+
+        // MFA verification check
+        if ((bool) ($user->two_factor_enabled ?? false)) {
+            return $this->forbiddenResponse(
+                message: 'Two-factor authentication is required.',
+                errorCode: ResponseCode::TWO_FACTOR_REQUIRED,
+                headers: [
+                    'Cache-Control' => 'no-store',
+                    'Pragma' => 'no-cache',
+                ],
+                extra: [
+                    'status' => 'requires_mfa',
+                ]
+            );
         }
+
+        // Issue Stateless Enterprise JWT Token & Rotating Refresh Token
+        /** @var JwtService $jwtService */
+        $jwtService = app(JwtService::class);
+        $jwtToken = $jwtService->generateTokenForUser($user);
+        $refreshToken = $jwtService->generateRefreshTokenForUser($user);
 
         // Generate Sanctum token with client device telemetry
         $deviceName = $request->device_name ?? $this->parseDeviceName($request->userAgent());
-        $tokenResult = $user->createToken($deviceName);
-        $plainToken = $tokenResult->plainTextToken;
+        $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
+        $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
 
-        // Populate device telemetry in personal_access_tokens
         DB::table('personal_access_tokens')
             ->where('id', $tokenResult->accessToken->id)
             ->update([
@@ -119,6 +203,7 @@ class AuthController extends Controller
                 'device_name' => $deviceName,
             ]);
 
+        // Resolve workspace branding
         if ($user->tenant_id) {
             $tenant = DB::table('tenants')->where('id', $user->tenant_id)->first();
             if ($tenant) {
@@ -129,19 +214,36 @@ class AuthController extends Controller
             }
         }
 
-        // Generate Stateless Enterprise JWT Token
-        $jwtService = app(\App\Services\JwtService::class);
-        $jwtToken = $jwtService->generateTokenForUser($user);
+        Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('auth_user_id', $user->id);
+        $request->attributes->set('auth_tenant_id', $user->tenant_id);
 
-        return response()->json([
-            'status' => 'success',
-            'user' => new UserResource($user),
-            'token' => $jwtToken,
-            'access_token' => $jwtToken,
-            'token_type' => 'Bearer',
-            'expires_in' => $jwtService->getTtlSeconds(),
-            'sanctum_token' => $plainToken,
-        ]);
+        $this->recordAuditLog(
+            action: 'auth.login',
+            module: 'auth',
+            entityType: 'user',
+            entityId: (string) $user->id,
+            details: "User {$user->email} logged in successfully",
+            userId: $user->id,
+            userName: $user->name,
+            tenantId: $user->tenant_id
+        );
+
+        return $this->successResponse(
+            message: 'Login successful.',
+            headers: [
+                'Cache-Control' => 'no-store',
+                'Pragma' => 'no-cache',
+            ],
+            extra: [
+                'access_token' => $jwtToken,
+                'refresh_token' => $refreshToken,
+                'token_type' => 'Bearer',
+                'expires_in' => $jwtService->getTtlSeconds(),
+                'user' => new UserResource($user),
+            ]
+        );
     }
 
     /**
@@ -150,45 +252,105 @@ class AuthController extends Controller
      */
     public function quickSwitch(QuickSwitchRequest $request)
     {
-
-
         $pin = trim($request->pin_code);
 
-        $query = User::where('pin_code', $pin)
-            ->where(function ($q) {
-                $q->where('is_active', true)
-                  ->orWhereNull('is_active');
-            });
-
-        if ($request->outlet_id) {
-            $query->where(function ($q) use ($request) {
-                $q->where('outlet_id', $request->outlet_id)
-                  ->orWhereNull('outlet_id');
-            });
+        // Derive tenant context server-side or validate explicit parameter
+        $tenantId = $request->user()?->tenant_id ?? ($request->filled('tenant_id') ? (int) $request->tenant_id : null);
+        if (!$tenantId) {
+            return $this->errorResponse(
+                'Tenant context is required for fast cashier PIN switch.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::TENANT_REQUIRED
+            );
         }
 
-        $user = $query->first();
-
-        if (!$user) {
-            return response()->json([
-                'status' => 'error',
-                'code' => 'INVALID_PIN',
-                'message' => 'Invalid staff PIN code. Please check and try again.',
-            ], 422);
+        // Strict rate limiting on fast PIN verification
+        $ipThrottleKey = 'auth:quick_switch:ip:' . hash('sha256', (string) ($request->ip() . '|' . $tenantId));
+        if (RateLimiter::tooManyAttempts($ipThrottleKey, 10)) {
+            return $this->tooManyAttemptsResponse(RateLimiter::availableIn($ipThrottleKey), 'TOO_MANY_ATTEMPTS');
         }
 
-        if ($user->isLockedOut()) {
-            $remaining = now()->diffInSeconds($user->lockout_until);
-            return response()->json([
-                'status' => 'error',
-                'code' => 'ACCOUNT_LOCKED_OUT',
-                'message' => "This cashier account is temporarily locked out. Retry in {$remaining}s.",
-                'retry_after_seconds' => $remaining,
-            ], 429);
+        // Search active PINs strictly scoped to this tenant
+        $posPinQuery = UserPosPin::where('tenant_id', $tenantId)
+            ->where('is_active', true)
+            ->with(['user', 'tenant']);
+
+        if ($request->filled('user_id')) {
+            $posPinQuery->where('user_id', $request->user_id);
         }
 
+        $candidatePins = $posPinQuery->get();
+        $matchedPin = null;
+        $matchedCount = 0;
+
+        foreach ($candidatePins as $posPin) {
+            if ($posPin->isLockedOut()) {
+                continue;
+            }
+
+            $isBcrypt = str_starts_with($posPin->pin_hash, '$2y$') || str_starts_with($posPin->pin_hash, '$2a$');
+            $matches = false;
+            if ($isBcrypt) {
+                $matches = Hash::check($pin, $posPin->pin_hash);
+            } else {
+                $matches = hash_equals(hash('sha256', $pin), $posPin->pin_hash) || $posPin->pin_hash === $pin;
+                if ($matches) {
+                    // Transparently upgrade legacy hash to bcrypt
+                    $posPin->update(['pin_hash' => Hash::make($pin)]);
+                }
+            }
+
+            if ($matches) {
+                $matchedPin = $posPin;
+                $matchedCount++;
+            }
+        }
+
+        // Fail-closed on ambiguous PIN matches across different cashiers in same tenant
+        if ($matchedCount > 1) {
+            return $this->errorResponse(
+                'Multiple cashiers share this PIN. Please provide user_id to specify your account.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::AMBIGUOUS_PIN
+            );
+        }
+
+        if (!$matchedPin) {
+            RateLimiter::hit($ipThrottleKey, 600);
+            return $this->errorResponse(
+                'Invalid staff PIN code. Please check and try again.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::INVALID_PIN
+            );
+        }
+
+        RateLimiter::clear($ipThrottleKey);
+        $matchedPin->update(['last_used_at' => now(), 'failed_attempts' => 0]);
+
+        $user = $matchedPin->user;
+
+        if (!$user || !(bool) $user->is_active) {
+            return $this->errorResponse(
+                'Cashier account is deactivated or inactive.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::ACCOUNT_INACTIVE
+            );
+        }
+
+        if ($user->isLockedOut() || Cache::get('auth:login_lockout:' . $user->id, false)) {
+            $lockoutExpire = (int) Cache::get('auth:login_lockout_expire:' . $user->id, now()->addMinutes(15)->timestamp);
+            $remaining = max(1, $lockoutExpire - now()->timestamp);
+            return $this->tooManyAttemptsResponse(
+                seconds: $remaining,
+                code: 'ACCOUNT_LOCKED_OUT',
+            );
+        }
+
+        /** @var JwtService $jwtService */
+        $jwtService = app(JwtService::class);
         $deviceName = $request->device_name ?? 'POS Register Terminal (' . $this->parseDeviceName($request->userAgent()) . ')';
-        $tokenResult = $user->createToken($deviceName);
+        $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
+        $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
         $plainToken = $tokenResult->plainTextToken;
 
         DB::table('personal_access_tokens')
@@ -209,20 +371,132 @@ class AuthController extends Controller
             }
         }
 
-        // Generate Stateless Enterprise JWT Token
-        $jwtService = app(\App\Services\JwtService::class);
+        /** @var JwtService $jwtService */
+        $jwtService = app(JwtService::class);
         $jwtToken = $jwtService->generateTokenForUser($user);
+        $refreshToken = $jwtService->generateRefreshTokenForUser($user);
 
-        return response()->json([
-            'status' => 'success',
-            'message' => "Welcome back, {$user->name}!",
-            'user' => new UserResource($user),
-            'token' => $jwtToken,
-            'access_token' => $jwtToken,
-            'token_type' => 'Bearer',
-            'expires_in' => $jwtService->getTtlSeconds(),
-            'sanctum_token' => $plainToken,
-        ]);
+        Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('auth_user_id', $user->id);
+        $request->attributes->set('auth_tenant_id', $user->tenant_id);
+
+        $this->recordAuditLog(
+            action: 'auth.quick_switch',
+            module: 'auth',
+            entityType: 'user',
+            entityId: (string) $user->id,
+            details: "Cashier {$user->name} performed fast PIN quick-switch",
+            userId: $user->id,
+            userName: $user->name,
+            tenantId: $tenantId
+        );
+
+        return $this->successResponse(
+            message: "Welcome back, {$user->name}!",
+            extra: [
+                'token' => $jwtToken,
+                'access_token' => $jwtToken,
+                'refresh_token' => $refreshToken,
+                'token_type' => 'Bearer',
+                'expires_in' => $jwtService->getTtlSeconds(),
+                'sanctum_token' => $plainToken,
+                'user' => new UserResource($user),
+            ]
+        );
+    }
+
+    /**
+     * Refresh Access Token using Refresh Token.
+     * POST /api/v1/auth/refresh
+     */
+    public function refresh(RefreshTokenRequest $request)
+    {
+        $refreshToken = $request->input('refresh_token') ?? $request->bearerToken();
+
+        if (!$refreshToken) {
+            return $this->errorResponse(
+                'Refresh token is required.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::TOKEN_REQUIRED
+            );
+        }
+
+        /** @var JwtService $jwtService */
+        $jwtService = app(JwtService::class);
+        $payload = $jwtService->verifyRefreshToken($refreshToken);
+
+        if (!$payload) {
+            return $this->unauthorizedResponse(
+                'Invalid, expired, or revoked refresh token.',
+                ResponseCode::INVALID_REFRESH_TOKEN
+            );
+        }
+
+        $userId = $payload['sub'] ?? null;
+        $user = $userId ? User::find($userId) : null;
+
+        if (!$user) {
+            return $this->notFoundResponse(
+                'User associated with this token was not found.',
+                ResponseCode::USER_NOT_FOUND
+            );
+        }
+
+        if (isset($user->is_active) && !(bool) $user->is_active) {
+            return $this->forbiddenResponse(
+                'User account is deactivated.',
+                ResponseCode::ACCOUNT_INACTIVE
+            );
+        }
+
+        if ($user->isLockedOut()) {
+            $lockoutExpire = (int) Cache::get('auth:login_lockout_expire:' . $user->id, now()->addMinutes(15)->timestamp);
+            $remaining = max(1, $lockoutExpire - now()->timestamp);
+            return $this->errorResponse(
+                "Account is temporarily locked out. Please try again in {$remaining} seconds.",
+                HttpStatus::LOCKED,
+                ResponseCode::ACCOUNT_LOCKED_OUT
+            );
+        }
+
+        // Token Rotation: atomically consume previous refresh token to prevent replay attacks & race conditions
+        if (isset($payload['jti'])) {
+            $remainingSeconds = max(1, ($payload['exp'] ?? time()) - time());
+            $consumed = Cache::add("consumed_refresh:{$payload['jti']}", true, $remainingSeconds);
+            if (!$consumed) {
+                return $this->unauthorizedResponse(
+                    'Refresh token has already been consumed or invalidated.',
+                    ResponseCode::INVALID_REFRESH_TOKEN
+                );
+            }
+            $jwtService->revokeToken($payload['jti'], $remainingSeconds);
+        }
+
+        if ($user->tenant_id) {
+            $tenant = DB::table('tenants')->where('id', $user->tenant_id)->first();
+            if ($tenant) {
+                $user->tenant_name = $tenant->name;
+                $user->company_name = $tenant->name;
+                $user->tenant_logo_url = $tenant->logo_url ?? null;
+                $user->logo_url = $tenant->logo_url ?? null;
+            }
+        }
+
+        $newAccessToken = $jwtService->generateTokenForUser($user);
+        $newRefreshToken = $jwtService->generateRefreshTokenForUser($user);
+
+        return $this->successResponse(
+            message: 'Token refreshed successfully.',
+            extra: [
+                'token' => $newAccessToken,
+                'access_token' => $newAccessToken,
+                'refresh_token' => $newRefreshToken,
+                'token_type' => 'Bearer',
+                'expires_in' => $jwtService->getTtlSeconds(),
+                'user' => new UserResource($user),
+            ]
+        );
     }
 
     /**
@@ -244,18 +518,18 @@ class AuthController extends Controller
                     'id' => $token->id,
                     'name' => $token->name,
                     'device_name' => $token->device_name ?? $token->name ?? 'Unknown Device',
-                    'ip_address' => $token->ip_address ?? '127.0.0.1',
+                    'ip_address' => $token->ip_address,
                     'user_agent' => $token->user_agent,
-                    'is_current' => $token->id === $currentTokenId,
+                    'is_current' => (string) $token->id === (string) $currentTokenId,
                     'last_used_at' => $token->last_used_at ?? $token->created_at,
                     'created_at' => $token->created_at,
                 ];
             });
 
-        return response()->json([
-            'status' => 'success',
-            'data' => $tokens,
-        ]);
+        return $this->successResponse(
+            data: $tokens,
+            message: 'Sessions retrieved successfully.'
+        );
     }
 
     /**
@@ -266,22 +540,13 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
-        $deleted = DB::table('personal_access_tokens')
-            ->where('id', $id)
-            ->where('tokenable_id', $user->id)
-            ->delete();
+        $deleted = $user->tokens()->where('id', $id)->delete();
 
         if (!$deleted) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Session not found or already terminated.',
-            ], 404);
+            return $this->notFoundResponse('Session not found or already terminated.');
         }
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Session terminated successfully.',
-        ]);
+        return $this->successResponse(message: 'Session terminated successfully.');
     }
 
     /**
@@ -293,8 +558,7 @@ class AuthController extends Controller
         $user = $request->user();
         $currentTokenId = $user->currentAccessToken()?->id;
 
-        $query = DB::table('personal_access_tokens')
-            ->where('tokenable_id', $user->id);
+        $query = $user->tokens();
 
         if ($currentTokenId && !$request->boolean('include_current')) {
             $query->where('id', '!=', $currentTokenId);
@@ -302,11 +566,17 @@ class AuthController extends Controller
 
         $revokedCount = $query->delete();
 
-        return response()->json([
-            'status' => 'success',
-            'message' => "Successfully terminated {$revokedCount} active session(s).",
-            'revoked_count' => $revokedCount,
-        ]);
+        // Globally invalidate all existing stateless JWT tokens for this user
+        /** @var JwtService $jwtService */
+        $jwtService = app(JwtService::class);
+        $jwtService->revokeAllUserTokens($user->id);
+
+        return $this->successResponse(
+            message: "Successfully terminated {$revokedCount} active session(s).",
+            extra: [
+                'revoked_count' => $revokedCount,
+            ]
+        );
     }
 
     /**
@@ -318,10 +588,10 @@ class AuthController extends Controller
         $token = $request->query('token');
 
         if (!$token) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Missing invitation token.',
-            ], 422);
+            return $this->errorResponse(
+                'Missing invitation token.',
+                HttpStatus::UNPROCESSABLE_ENTITY
+            );
         }
 
         $invitation = DB::table('user_invitations')
@@ -331,25 +601,24 @@ class AuthController extends Controller
             ->first();
 
         if (!$invitation) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Invalid, expired, or already accepted invitation link.',
-            ], 404);
+            return $this->notFoundResponse(
+                'Invalid, expired, or already accepted invitation link.'
+            );
         }
 
         $tenant = $invitation->tenant_id ? DB::table('tenants')->where('id', $invitation->tenant_id)->first() : null;
-        $outlet = $invitation->outlet_id ? DB::table('outlets')->where('id', $invitation->outlet_id)->first() : null;
+        $outlet = !empty($invitation->outlet_uuid) ? DB::table('outlets')->where('uuid', $invitation->outlet_uuid)->first() : null;
 
-        return response()->json([
-            'status' => 'success',
-            'data' => [
+        return $this->successResponse(
+            data: [
                 'email' => $invitation->email,
                 'role' => $invitation->role,
                 'tenant_name' => $tenant->name ?? 'CodeBridges Store Organization',
                 'outlet_name' => $outlet->name ?? 'Primary Store',
                 'expires_at' => $invitation->expires_at,
             ],
-        ]);
+            message: 'Invitation is valid.'
+        );
     }
 
     /**
@@ -360,109 +629,561 @@ class AuthController extends Controller
     {
         $validated = $request->validated();
 
-        $invitation = DB::table('user_invitations')
-            ->where('token', $validated['token'])
-            ->whereNull('accepted_at')
-            ->where('expires_at', '>', now())
-            ->first();
+        return DB::transaction(function () use ($validated, $request) {
+            $invitation = DB::table('user_invitations')
+                ->where('token', $validated['token'])
+                ->whereNull('accepted_at')
+                ->where('expires_at', '>', now())
+                ->lockForUpdate()
+                ->first();
 
-        if (!$invitation) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Invalid or expired invitation link.',
-            ], 422);
-        }
+            if (!$invitation) {
+                return $this->errorResponse(
+                    'Invalid or expired invitation link.',
+                    HttpStatus::UNPROCESSABLE_ENTITY
+                );
+            }
 
-        // Attach or create the user
-        $existingUser = DB::table('users')->where('email', $invitation->email)->first();
-        if ($existingUser) {
-            DB::table('users')->where('id', $existingUser->id)->update([
-                'tenant_id' => $invitation->tenant_id,
-                'outlet_id' => $invitation->outlet_id,
-                'name' => $validated['name'] ?? $existingUser->name,
-                'role' => $invitation->role,
-                'pin_code' => $validated['pin_code'] ?? $existingUser->pin_code ?? '1234',
-                'is_active' => true,
+            // Attach or create the user identity
+            $existingUser = DB::table('users')->where('email', $invitation->email)->first();
+            if ($existingUser) {
+                // Preserve account suspension
+                if (isset($existingUser->is_active) && !(bool) $existingUser->is_active) {
+                    return $this->forbiddenResponse(
+                        'This account has been suspended. Please contact your organization administrator.',
+                        ResponseCode::ACCOUNT_SUSPENDED
+                    );
+                }
+
+                // If not authenticated, require password verification
+                $authenticatedUser = $request->user();
+                if (!$authenticatedUser || $authenticatedUser->id !== $existingUser->id) {
+                    if (!Hash::check($validated['password'], $existingUser->password)) {
+                        return $this->errorResponse(
+                            'Existing account password verification failed.',
+                            HttpStatus::UNPROCESSABLE_ENTITY,
+                            ResponseCode::INVALID_PASSWORD
+                        );
+                    }
+                }
+
+                DB::table('users')->where('id', $existingUser->id)->update([
+                    'name' => $validated['name'] ?? $existingUser->name,
+                    'updated_at' => now(),
+                ]);
+                $user = User::find($existingUser->id);
+            } else {
+                $user = User::create([
+                    'uuid' => (string) \Illuminate\Support\Str::uuid(),
+                    'name' => $validated['name'],
+                    'email' => $invitation->email,
+                    'phone' => $validated['phone'] ?? null,
+                    'password' => Hash::make($validated['password']),
+                    'is_active' => true,
+                ]);
+            }
+
+            // Resolve role within tenant or global scope; reject if not found
+            $roleQuery = DB::table('roles')->where('slug', $invitation->role);
+            if (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'tenant_id')) {
+                $roleQuery->where(function ($q) use ($invitation) {
+                    $q->where('tenant_id', $invitation->tenant_id)->orWhereNull('tenant_id');
+                });
+            }
+            $role = $roleQuery->first();
+            if (!$role) {
+                return $this->errorResponse(
+                    'Configured role for this invitation was not found.',
+                    HttpStatus::UNPROCESSABLE_ENTITY,
+                    ResponseCode::ROLE_NOT_FOUND
+                );
+            }
+            $roleId = $role->id;
+
+            $tenantUser = TenantUser::firstOrCreate(
+                ['tenant_id' => $invitation->tenant_id, 'user_id' => $user->id],
+                ['status' => 'active', 'joined_at' => now()]
+            );
+
+            DB::table('user_roles')->updateOrInsert(
+                ['user_id' => $user->id, 'role_id' => $roleId],
+                [
+                    'tenant_id' => $invitation->tenant_id,
+                    'is_active' => true,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]
+            );
+
+            $outletUuid = $invitation->outlet_uuid ?? null;
+            if ($outletUuid && $tenantUser) {
+                TenantUserOutlet::firstOrCreate(
+                    ['tenant_user_id' => $tenantUser->id, 'outlet_uuid' => $outletUuid],
+                    ['is_primary' => true, 'is_active' => true]
+                );
+            }
+
+            if (!empty($validated['pin_code'])) {
+                UserPosPin::updateOrCreate(
+                    ['tenant_id' => $invitation->tenant_id, 'user_id' => $user->id],
+                    [
+                        'pin_hash' => Hash::make((string) $validated['pin_code']),
+                        'is_active' => true,
+                        'failed_attempts' => 0,
+                        'updated_at' => now(),
+                    ]
+                );
+            }
+
+            // Mark invitation as accepted
+            DB::table('user_invitations')->where('id', $invitation->id)->update([
+                'accepted_at' => now(),
                 'updated_at' => now(),
             ]);
-            $user = User::find($existingUser->id);
-        } else {
-            $user = User::create([
-                'tenant_id' => $invitation->tenant_id,
-                'outlet_id' => $invitation->outlet_id,
-                'name' => $validated['name'],
-                'email' => $invitation->email,
-                'phone' => $validated['phone'] ?? null,
-                'password' => Hash::make($validated['password']),
-                'pin_code' => $validated['pin_code'] ?? '1234',
-                'role' => $invitation->role,
-                'is_active' => true,
-            ]);
-        }
 
-        // Mark invitation as accepted
-        DB::table('user_invitations')->where('id', $invitation->id)->update([
-            'accepted_at' => now(),
-            'updated_at' => now(),
-        ]);
+            // Check if user has MFA enabled before issuing tokens
+            if ((bool) ($user->two_factor_enabled ?? false)) {
+                return $this->successResponse(
+                    message: 'Membership accepted. Two-factor authentication is required to sign in.',
+                    extra: [
+                        'status' => 'requires_mfa',
+                        'code' => ResponseCode::TWO_FACTOR_REQUIRED,
+                    ]
+                );
+            }
 
-        $tokenResult = $user->createToken('POS Web Portal');
+            /** @var JwtService $jwtService */
+            $jwtService = app(JwtService::class);
+            $jwtToken = $jwtService->generateTokenForUser($user);
+            $refreshToken = $jwtService->generateRefreshTokenForUser($user);
+            $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
+            $tokenResult = $user->createToken('POS Web Portal', ['*'], $expiresAt);
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Staff account setup completed successfully. Welcome aboard!',
-            'user' => $user,
-            'token' => $tokenResult->plainTextToken,
-        ], 201);
+            Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('auth_user_id', $user->id);
+        $request->attributes->set('auth_tenant_id', $user->tenant_id);
+
+        $this->recordAuditLog(
+                action: 'auth.invite_accepted',
+                module: 'auth',
+                entityType: 'user_invitation',
+                entityId: (string) $invitation->id,
+                details: "User {$user->email} accepted staff invitation into tenant #{$invitation->tenant_id}",
+                userId: $user->id,
+                userName: $user->name,
+                tenantId: $invitation->tenant_id
+            );
+
+            return $this->createdResponse(
+             
+                message: 'Staff account setup completed successfully. Welcome aboard!',
+                extra: [
+                    'token' => $jwtToken,
+                    'access_token' => $jwtToken,
+                    'refresh_token' => $refreshToken,
+                    'sanctum_token' => $tokenResult->plainTextToken,
+                    'user' => new UserResource($user),
+                ]
+            );
+        });
     }
 
     /**
      * Two-Factor Authentication Management.
+     * POST /api/v1/auth/2fa/toggle
      */
     public function toggle2fa(Request $request)
     {
         $user = $request->user();
-        $enable = $request->boolean('enable');
+        if (!$user) {
+            return $this->unauthorizedResponse();
+        }
 
-        $user->update([
-            'two_factor_enabled' => $enable,
-            'two_factor_secret' => $enable ? strtoupper(Str::random(16)) : null,
+        $request->validate([
+            'enable' => ['required', 'boolean'],
+            'password' => ['nullable', 'string'],
         ]);
 
-        return response()->json([
-            'status' => 'success',
-            'message' => $enable ? 'Two-Factor Authentication enabled.' : 'Two-Factor Authentication disabled.',
-            'two_factor_enabled' => $enable,
-            'secret' => $enable ? $user->two_factor_secret : null,
+        $enable = $request->boolean('enable');
+
+        if ($enable) {
+            return $this->errorResponse(
+                'Two-factor enrollment and code verification must be completed before enabling 2FA.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::TWO_FACTOR_ENROLLMENT_REQUIRED
+            );
+        }
+
+        // Reauthentication check when disabling 2FA
+        if ($user->password && (!isset($request->password) || !Hash::check($request->password, $user->password))) {
+            return $this->errorResponse(
+                'Current password is required to disable Two-Factor Authentication.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::INVALID_PASSWORD
+            );
+        }
+
+        $user->forceFill([
+            'two_factor_enabled' => false,
+            'two_factor_secret' => null,
+            'two_factor_recovery_codes' => null,
+            'two_factor_confirmed_at' => null,
+        ])->save();
+
+        return $this->successResponse(
+            message: 'Two-Factor Authentication disabled.',
+            extra: [
+                'two_factor_enabled' => false,
+            ]
+        );
+    }
+
+    /**
+     * Send or Resend Email Verification Link & 6-digit Code to Mailpit.
+     * POST /api/v1/auth/email/verification-notification
+     */
+    public function sendVerificationNotification(Request $request)
+    {
+        $user = $request->user();
+
+        if (!$user && $request->filled('email')) {
+            $user = User::where('email', trim($request->email))->first();
+        }
+
+        if (!$user) {
+            return $this->notFoundResponse('User account not found.');
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return $this->successResponse(
+                message: 'This email address is already verified.',
+                extra: [
+                    'status' => 'already_verified',
+                    'email_verified_at' => $user->email_verified_at,
+                ]
+            );
+        }
+
+        $user->sendEmailVerificationNotification();
+
+        return $this->successResponse(
+            message: 'Verification email dispatched successfully. Check your Mailpit inbox.',
+            headers: ['Cache-Control' => 'no-store'],
+            extra: [
+                'mailpit_url' => 'http://localhost:8025',
+            ]
+        );
+    }
+
+    /**
+     * Generate a signed email verification link and dispatch the email to Mailpit.
+     * POST /api/v1/auth/email/create-link
+     * POST /api/v1/auth/email/send-link
+     */
+    public function createVerificationLink(SendVerificationLinkRequest $request)
+    {
+        $user = $request->user();
+
+        if (!$user && $request->filled('email')) {
+            $user = User::where('email', trim($request->email))->first();
+        }
+
+        if (!$user) {
+            if (!$request->filled('email')) {
+                return $this->errorResponse(
+                    'Email address is required in the request body when unauthenticated.',
+                    HttpStatus::UNPROCESSABLE_ENTITY,
+                    ResponseCode::VALIDATION_ERROR
+                );
+            }
+
+            return $this->notFoundResponse('User account not found.');
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            return $this->successResponse(
+                message: 'This email address is already verified.',
+                extra: [
+                    'status' => 'already_verified',
+                    'email_verified_at' => $user->email_verified_at,
+                ]
+            );
+        }
+
+        // Rate limit link creation by IP / target email (10 attempts / 10 minutes)
+        $rateLimitKey = 'auth:create_verify_link:' . hash('sha256', (string) ($request->ip() . '|' . $user->email));
+        if (RateLimiter::tooManyAttempts($rateLimitKey, 10)) {
+            return $this->tooManyAttemptsResponse(RateLimiter::availableIn($rateLimitKey), 'TOO_MANY_ATTEMPTS');
+        }
+        RateLimiter::hit($rateLimitKey, 600);
+
+        $expireMinutes = (int) config('auth.verification.expire', 60);
+        $expiresAt = now()->addMinutes($expireMinutes);
+        $verificationUrl = $user->createEmailVerificationUrl($expireMinutes);
+
+        // Generate or retrieve 6-digit OTP code in cache (valid for 15 minutes)
+        $code = str_pad((string) random_int(100000, 999999), 6, '0', STR_PAD_LEFT);
+        Cache::put("auth:email_verify_code:{$user->id}", $code, now()->addMinutes(15));
+
+        $mailSent = false;
+        if ($request->boolean('send_mail', true)) {
+            try {
+                $user->notify(new \App\Notifications\VerifyEmailNotification($verificationUrl, $code));
+                $mailSent = true;
+            } catch (\Throwable $e) {
+                Log::warning('Email delivery failed: ' . $e->getMessage());
+            }
+        }
+
+        // Security: Deliver verification credentials through email only.
+        // Never leak verification_link or verification_code in API JSON responses.
+        return $this->successResponse(
+            message: $mailSent
+                ? 'Verification link created and email dispatched to Mailpit.'
+                : 'Verification link created successfully.',
+            headers: ['Cache-Control' => 'no-store'],
+            extra: [
+                'email' => $user->email,
+                'expires_at' => $expiresAt->toIso8601String(),
+                'otp_expires_at' => now()->addMinutes(15)->toIso8601String(),
+                'mail_sent' => $mailSent,
+                'mailpit_url' => 'http://localhost:8025',
+            ]
+        );
+    }
+
+    /**
+     * Preview Email Verification Template.
+     * GET /api/v1/auth/email/template-preview
+     */
+    public function previewEmailTemplate(Request $request)
+    {
+        $mockUser = (object) [
+            'name' => $request->input('name', 'Alex Johnson'),
+            'email' => $request->input('email', 'alex.johnson@codebridge.dev'),
+        ];
+
+        $verificationUrl = $request->input('url', url('/api/v1/auth/email/verify/1/samplehash1234567890abcdef'));
+        $code = $request->input('code', '584920');
+        $expireMinutes = (int) config('auth.verification.expire', 60);
+
+        return response()->view('emails.verify-email', [
+            'user' => $mockUser,
+            'verificationUrl' => $verificationUrl,
+            'code' => $code,
+            'expireMinutes' => $expireMinutes,
         ]);
     }
 
+    /**
+     * Verify Email Address via Signed Verification Link.
+     * GET /api/v1/auth/email/verify/{id}/{hash}
+     */
+    public function verifyEmail(Request $request, $id, $hash)
+    {
+        // Enforce Laravel signed route verification while allowing optional redirect_url parameter
+        if (!URL::hasValidSignature($request, true, ['redirect_url'])) {
+            return $this->forbiddenResponse(
+                'The email verification link is invalid, expired, or tampered.',
+                ResponseCode::INVALID_VERIFICATION_HASH
+            );
+        }
+
+        $user = User::find($id);
+
+        if (!$user) {
+            return $this->notFoundResponse('User not found.');
+        }
+
+        if (!hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
+            return $this->forbiddenResponse(
+                'The email verification link is invalid or corrupted.',
+                ResponseCode::INVALID_VERIFICATION_HASH
+            );
+        }
+
+        if ($user->hasVerifiedEmail()) {
+            if ($request->filled('redirect_url')) {
+                return redirect($request->query('redirect_url') . (str_contains($request->query('redirect_url'), '?') ? '&' : '?') . 'verified=1');
+            }
+
+            return $this->successResponse(
+                message: 'Email address is already verified.',
+                extra: [
+                    'status' => 'already_verified',
+                    'email_verified_at' => $user->email_verified_at,
+                ]
+            );
+        }
+
+        $user->markEmailAsVerified();
+        Cache::forget("auth:email_verify_code:{$user->id}");
+
+        Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('auth_user_id', $user->id);
+        $request->attributes->set('auth_tenant_id', $user->tenant_id);
+
+        $this->recordAuditLog(
+            action: 'auth.email_verified',
+            module: 'auth',
+            entityType: 'user',
+            entityId: (string) $user->id,
+            details: "Email address {$user->email} verified via signed URL",
+            userId: $user->id,
+            userName: $user->name,
+            tenantId: $user->tenant_id
+        );
+
+        if ($request->filled('redirect_url')) {
+            return redirect($request->query('redirect_url') . (str_contains($request->query('redirect_url'), '?') ? '&' : '?') . 'verified=1');
+        }
+
+        return $this->successResponse(
+       
+            message: 'Email address verified successfully.',
+            extra: [
+                'email_verified_at' => $user->email_verified_at,
+                'user' => new UserResource($user),
+            ]
+        );
+    }
+
+    /**
+     * Verify Email Address via 6-digit OTP Code.
+     * POST /api/v1/auth/email/verify-code
+     */
+    public function verifyEmailCode(Request $request)
+    {
+        $request->validate([
+            'email' => ['required', 'string'],
+            'code' => ['required', 'string', 'size:6'],
+        ]);
+
+        $normalizedEmail = strtolower(trim($request->email));
+
+        // Rate limit verification attempts (5 attempts per 15 minutes)
+        $codeAttemptKey = 'auth:verify_code:' . hash('sha256', (string) ($request->ip() . '|' . $normalizedEmail));
+        if (RateLimiter::tooManyAttempts($codeAttemptKey, 5)) {
+            return $this->tooManyAttemptsResponse(RateLimiter::availableIn($codeAttemptKey), 'TOO_MANY_ATTEMPTS');
+        }
+
+        $user = User::where('email', $normalizedEmail)->first();
+        if (!$user) {
+            RateLimiter::hit($codeAttemptKey, 900);
+            return $this->notFoundResponse('User not found.');
+        }
+
+        // Minimal response without user details to prevent enumeration
+        if ($user->hasVerifiedEmail()) {
+            return $this->successResponse(
+                message: 'Email address is already verified.',
+                extra: [
+                    'status' => 'already_verified',
+                    'email_verified_at' => $user->email_verified_at,
+                ]
+            );
+        }
+
+        $cachedCode = Cache::get("auth:email_verify_code:{$user->id}");
+        if (!$cachedCode || !hash_equals((string) $cachedCode, trim($request->code))) {
+            RateLimiter::hit($codeAttemptKey, 900);
+            return $this->errorResponse(
+                'The verification code is invalid or has expired.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::INVALID_CODE
+            );
+        }
+
+        // Atomically consume code and clear rate limiter
+        Cache::forget("auth:email_verify_code:{$user->id}");
+        RateLimiter::clear($codeAttemptKey);
+
+        $user->markEmailAsVerified();
+
+        Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('auth_user_id', $user->id);
+        $request->attributes->set('auth_tenant_id', $user->tenant_id);
+
+        $this->recordAuditLog(
+            action: 'auth.email_verified',
+            module: 'auth',
+            entityType: 'user',
+            entityId: (string) $user->id,
+            details: "Email address {$user->email} verified via 6-digit OTP code",
+            userId: $user->id,
+            userName: $user->name,
+            tenantId: $user->tenant_id
+        );
+
+        return $this->successResponse(
+            message: 'Email address verified successfully.',
+            extra: [
+                'email_verified_at' => $user->email_verified_at,
+                'user' => new UserResource($user),
+            ]
+        );
+    }
+
+    /**
+     * Check Email Verification Status for a User.
+     * GET|POST /api/v1/auth/email/check
+     */
+    public function checkEmailVerification(Request $request)
+    {
+        $email = $request->input('email') ?? $request->user()?->email;
+
+        if (!$email) {
+            return $this->errorResponse(
+                'Email address is required.',
+                HttpStatus::UNPROCESSABLE_ENTITY
+            );
+        }
+
+        $user = User::where('email', trim($email))->first();
+        if (!$user) {
+            return $this->notFoundResponse('User account not found.');
+        }
+
+        return $this->successResponse(
+            extra: [
+                'email' => $user->email,
+                'is_verified' => $user->hasVerifiedEmail(),
+                'email_verified_at' => $user->email_verified_at,
+            ]
+        );
+    }
+
+    /**
+     * Registration.
+     * POST /api/v1/auth/register
+     */
     public function register(RegisterRequest $request)
     {
-
-
         $email = $request->email;
         $phone = $request->phone;
 
         if (!$email && !$phone) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Please provide either an email address or a phone number.'
-            ], 422);
+            return $this->errorResponse(
+                'Please provide either an email address or a phone number.',
+                HttpStatus::UNPROCESSABLE_ENTITY
+            );
         }
 
         if ($email && User::where('email', $email)->exists()) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'This email address is already registered.'
-            ], 422);
+            return $this->errorResponse(
+                'This email address is already registered.',
+                HttpStatus::UNPROCESSABLE_ENTITY
+            );
         }
 
         if ($phone && User::where('phone', $phone)->exists()) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'This phone number is already registered.'
-            ], 422);
+            return $this->errorResponse(
+                'This phone number is already registered.',
+                HttpStatus::UNPROCESSABLE_ENTITY
+            );
         }
 
         if (!$email && $phone) {
@@ -471,21 +1192,58 @@ class AuthController extends Controller
         }
 
         $user = User::create([
+            'uuid' => (string) \Illuminate\Support\Str::uuid(),
             'name' => $request->name,
             'email' => $email,
             'password' => Hash::make($request->password),
-            'role' => $request->role ?? 'user',
+            'role' => 'user',
             'phone' => $phone,
+            'is_active' => true,
         ]);
 
-        $token = $user->createToken('pos_token')->plainTextToken;
+        if (filter_var($email, FILTER_VALIDATE_EMAIL) && !str_ends_with($email, '@phone.codebridges.com')) {
+            try {
+                $user->sendEmailVerificationNotification();
+            } catch (\Throwable $e) {
+                Log::warning('Email verification dispatch failed: ' . $e->getMessage());
+            }
+        }
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'User account registered successfully.',
-            'user' => $user,
-            'token' => $token,
-        ], 201);
+        /** @var JwtService $jwtService */
+        $jwtService = app(JwtService::class);
+        $jwtToken = $jwtService->generateTokenForUser($user);
+        $refreshToken = $jwtService->generateRefreshTokenForUser($user);
+        $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
+        $plainToken = $user->createToken('pos_token', ['*'], $expiresAt)->plainTextToken;
+
+        Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('auth_user_id', $user->id);
+        $request->attributes->set('auth_tenant_id', $user->tenant_id);
+
+        $this->recordAuditLog(
+            action: 'auth.register',
+            module: 'auth',
+            entityType: 'user',
+            entityId: (string) $user->id,
+            details: "User registered account {$user->email}",
+            userId: $user->id,
+            userName: $user->name,
+            tenantId: $user->tenant_id
+        );
+
+        return $this->createdResponse(
+            message: 'User account registered successfully.',
+            extra: [
+                'token' => $jwtToken,
+                'access_token' => $jwtToken,
+                'refresh_token' => $refreshToken,
+                'sanctum_token' => $plainToken,
+                'token_type' => 'Bearer',
+                'expires_in' => $jwtService->getTtlSeconds(),
+                'user' => new UserResource($user),
+            ]
+        );
     }
 
     /**
@@ -505,10 +1263,12 @@ class AuthController extends Controller
             }
         }
 
-        return response()->json([
-            'status' => 'success',
-            'user' => new UserResource($user),
-        ]);
+        return $this->successResponse(
+         
+            extra: [
+                'user' => new UserResource($user),
+            ]
+        );
     }
 
     /**
@@ -519,7 +1279,7 @@ class AuthController extends Controller
     {
         $user = $request->user();
         if (!$user) {
-            return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
+            return $this->unauthorizedResponse();
         }
 
         $validated = $request->validated();
@@ -527,7 +1287,27 @@ class AuthController extends Controller
         $updateData = [];
         if (isset($validated['name'])) $updateData['name'] = trim($validated['name']);
         if (array_key_exists('phone', $validated)) $updateData['phone'] = $validated['phone'];
-        if (array_key_exists('pin_code', $validated)) $updateData['pin_code'] = $validated['pin_code'];
+
+        // Secure PIN update: Require explicit tenant membership, hash with bcrypt
+        if (!empty($validated['pin_code'])) {
+            if (empty($user->tenant_id)) {
+                return $this->errorResponse(
+                    'Setting a POS PIN requires an active tenant membership.',
+                    HttpStatus::UNPROCESSABLE_ENTITY,
+                    ResponseCode::TENANT_REQUIRED
+                );
+            }
+
+            UserPosPin::updateOrCreate(
+                ['tenant_id' => $user->tenant_id, 'user_id' => $user->id],
+                [
+                    'pin_hash' => Hash::make((string) $validated['pin_code']),
+                    'is_active' => true,
+                    'failed_attempts' => 0,
+                    'updated_at' => now(),
+                ]
+            );
+        }
 
         // Profile Image CRUD
         // 1. Delete / Remove Avatar
@@ -547,9 +1327,13 @@ class AuthController extends Controller
             }
 
             if (!$uploadedUrl) {
-                $ext = $file->getClientOriginalExtension() ?: 'png';
-                $filename = 'avatar_' . $user->id . '_' . time() . '.' . $ext;
-                $file->storeAs('avatars', $filename, 'public');
+                $ext = $file->guessExtension() ?: 'png';
+                $safeExt = in_array(strtolower($ext), ['jpg', 'jpeg', 'png', 'webp', 'gif'], true) ? strtolower($ext) : 'png';
+                $filename = 'avatar_' . $user->id . '_' . \Illuminate\Support\Str::random(16) . '.' . $safeExt;
+                $stored = $file->storeAs('avatars', $filename, 'public');
+                if (!$stored) {
+                    return $this->serverErrorResponse('Failed to store avatar image.');
+                }
                 $uploadedUrl = '/storage/avatars/' . $filename;
             }
 
@@ -585,27 +1369,49 @@ class AuthController extends Controller
             }
         }
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Profile updated successfully.',
-            'user' => $freshUser,
-        ]);
+        Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('auth_user_id', $user->id);
+        $request->attributes->set('auth_tenant_id', $user->tenant_id);
+
+        $this->recordAuditLog(
+            action: 'auth.profile_update',
+            module: 'auth',
+            entityType: 'user',
+            entityId: (string) $user->id,
+            details: "User updated profile attributes",
+            userId: $user->id,
+            userName: $freshUser->name ?? $user->name,
+            tenantId: $freshUser->tenant_id ?? $user->tenant_id
+        );
+
+        return $this->successResponse(
+            data: new UserResource($freshUser),
+            message: 'Profile updated successfully.',
+            extra: [
+                'user' => new UserResource($freshUser),
+            ]
+        );
     }
 
+    /**
+     * Update account password and invalidate existing active sessions.
+     * PUT /api/v1/auth/password
+     */
     public function updatePassword(UpdatePasswordRequest $request)
     {
         $user = $request->user();
         if (!$user) {
-            return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
+            return $this->unauthorizedResponse();
         }
 
         $validated = $request->validated();
 
         if (!Hash::check($validated['current_password'], $user->password)) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'The current password you provided is incorrect.',
-            ], 422);
+            return $this->errorResponse(
+                'The current password you provided is incorrect.',
+                HttpStatus::UNPROCESSABLE_ENTITY
+            );
         }
 
         DB::table('users')->where('id', $user->id)->update([
@@ -613,20 +1419,74 @@ class AuthController extends Controller
             'updated_at' => now(),
         ]);
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Account password updated successfully.',
-        ]);
+        // Revoke all personal access tokens for this user
+        $user->tokens()->delete();
+
+        // Invalidate all active JWT and refresh tokens globally
+        /** @var JwtService $jwtService */
+        $jwtService = app(JwtService::class);
+        $jwtService->revokeAllUserTokens($user->id);
+
+        Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('auth_user_id', $user->id);
+        $request->attributes->set('auth_tenant_id', $user->tenant_id);
+
+        $this->recordAuditLog(
+            action: 'auth.password_update',
+            module: 'auth',
+            entityType: 'user',
+            entityId: (string) $user->id,
+            details: "User changed password and invalidated all active sessions",
+            userId: $user->id,
+            userName: $user->name,
+            tenantId: $user->tenant_id
+        );
+
+        return $this->successResponse(message: 'Account password updated successfully.');
     }
 
+    /**
+     * User Logout & Token Revocation.
+     * POST /api/v1/auth/logout
+     */
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()?->delete();
+        $user = $request->user();
+        if ($user) {
+            Auth::setUser($user);
+        $request->setUserResolver(fn () => $user);
+        $request->attributes->set('auth_user_id', $user->id);
+        $request->attributes->set('auth_tenant_id', $user->tenant_id);
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Logged out successfully',
-        ]);
+        $this->recordAuditLog(
+                action: 'auth.logout',
+                module: 'auth',
+                entityType: 'user',
+                entityId: (string) $user->id,
+                details: "User logged out and session terminated",
+                userId: $user->id,
+                userName: $user->name,
+                tenantId: $user->tenant_id
+            );
+        }
+
+        $request->user()?->currentAccessToken()?->delete();
+
+        // Also revoke stateless JWT token in Redis if Bearer token is present
+        $token = $request->bearerToken();
+        if ($token && substr_count($token, '.') === 2) {
+            /** @var JwtService $jwtService */
+            $jwtService = app(JwtService::class);
+            $payload = $jwtService->verify($token);
+            if (!empty($payload['jti'])) {
+                $exp = $payload['exp'] ?? (time() + $jwtService->getTtlSeconds());
+                $remainingTtl = max(0, $exp - time());
+                $jwtService->revokeToken($payload['jti'], $remainingTtl);
+            }
+        }
+
+        return $this->successResponse(message: 'Logged out successfully');
     }
 
     private function parseDeviceName(?string $userAgent): string

@@ -58,6 +58,11 @@ class MeetingNotificationController extends Controller
         ]);
     }
 
+    public function markRead(Request $request, $id)
+    {
+        return $this->markAsRead($request, $id);
+    }
+
     /**
      * Mark single notification as read.
      * PATCH /api/v1/meetings/notifications/{id}/read

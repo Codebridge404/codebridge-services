@@ -64,13 +64,20 @@ class RoleAndPermissionSeeder extends Seeder
                 if ($existing) {
                     $permissionIdsMap[$permName] = $existing->id;
                 } else {
-                    $id = DB::table('permissions')->insertGetId([
+                    $insertPerm = [
                         'name' => $permName,
-                        'group' => $group,
+                        'slug' => $permName,
                         'description' => $description,
                         'created_at' => now(),
                         'updated_at' => now(),
-                    ]);
+                    ];
+                    if (Schema::hasColumn('permissions', 'group')) {
+                        $insertPerm['group'] = $group;
+                    }
+                    if (Schema::hasColumn('permissions', 'is_system_default')) {
+                        $insertPerm['is_system_default'] = true;
+                    }
+                    $id = DB::table('permissions')->insertGetId($insertPerm);
                     $permissionIdsMap[$permName] = $id;
                 }
             }

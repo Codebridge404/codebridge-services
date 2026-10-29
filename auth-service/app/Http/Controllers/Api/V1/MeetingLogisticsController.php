@@ -9,6 +9,8 @@ use App\Http\Requests\Meeting\UpdateMaterialRequest;
 use App\Http\Requests\Meeting\UpdateStaffRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 /**
  * [BD-0069] Meeting Resource Allocation & Equipment Logistics Controller
@@ -33,6 +35,26 @@ use Illuminate\Support\Facades\DB;
  */
 class MeetingLogisticsController extends Controller
 {
+    public function getMaterials(Request $request)
+    {
+        return $this->materials($request);
+    }
+
+    public function deleteMaterial($id)
+    {
+        return $this->destroyMaterial($id);
+    }
+
+    public function getStaff(Request $request)
+    {
+        return $this->staff($request);
+    }
+
+    public function deleteStaff($id)
+    {
+        return $this->destroyStaff($id);
+    }
+
     /**
      * List all materials / equipment with real-time stock levels.
      * GET /api/v1/meetings/materials
@@ -54,18 +76,19 @@ class MeetingLogisticsController extends Controller
         // Seed default corporate materials if empty
         if ($materials->isEmpty() && !empty($tenantId)) {
             $defaults = [
-                ['name' => '4K Ultra-HD Mobile Projector', 'category' => 'audio_visual', 'quantity_total' => 4, 'quantity_available' => 4],
-                ['name' => 'Jabra Wireless Conference Speakerphone', 'category' => 'audio_visual', 'quantity_total' => 6, 'quantity_available' => 6],
-                ['name' => 'Logitech 4K ConferenceCam Bar', 'category' => 'audio_visual', 'quantity_total' => 3, 'quantity_available' => 3],
-                ['name' => 'Magnetic Mobile Whiteboard & Pens', 'category' => 'stationery', 'quantity_total' => 8, 'quantity_available' => 8],
-                ['name' => 'Wireless Presenter & Laser Pointer', 'category' => 'audio_visual', 'quantity_total' => 10, 'quantity_available' => 10],
-                ['name' => 'Executive Catering Coffee & Pastry Set', 'category' => 'catering', 'quantity_total' => 5, 'quantity_available' => 5],
+                ['name' => '4K Ultra-HD Mobile Projector', 'material_type' => 'audio_visual', 'total_quantity' => 4],
+                ['name' => 'Jabra Wireless Conference Speakerphone', 'material_type' => 'audio_visual', 'total_quantity' => 6],
+                ['name' => 'Logitech 4K ConferenceCam Bar', 'material_type' => 'audio_visual', 'total_quantity' => 3],
+                ['name' => 'Magnetic Mobile Whiteboard & Pens', 'material_type' => 'stationery', 'total_quantity' => 8],
+                ['name' => 'Wireless Presenter & Laser Pointer', 'material_type' => 'audio_visual', 'total_quantity' => 10],
+                ['name' => 'Executive Catering Coffee & Pastry Set', 'material_type' => 'catering', 'total_quantity' => 5],
             ];
 
             foreach ($defaults as $d) {
                 DB::table('meeting_materials')->insert(array_merge($d, [
+                    'uuid' => (string) Str::uuid(),
                     'tenant_id' => $tenantId,
-                    'status' => 'active',
+                    'is_operational' => 1,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]));
@@ -73,6 +96,14 @@ class MeetingLogisticsController extends Controller
 
             $materials = DB::table('meeting_materials')->where('tenant_id', $tenantId)->get();
         }
+
+        $materials = $materials->map(function ($m) {
+            $m->category = $m->material_type ?? 'audio_visual';
+            $m->quantity_total = (int) ($m->total_quantity ?? 1);
+            $m->quantity_available = (int) ($m->total_quantity ?? 1);
+            $m->status = ($m->is_operational ?? 1) ? 'active' : 'inactive';
+            return $m;
+        });
 
         return response()->json(['status' => 'success', 'data' => $materials]);
     }
@@ -86,20 +117,28 @@ class MeetingLogisticsController extends Controller
         $validated = $request->validated();
 
         $user = $request->user();
-        $qty = $validated['quantity_total'];
+        $qty = $validated['quantity_total'] ?? $validated['total_quantity'] ?? 1;
+        $category = $validated['category'] ?? $validated['material_type'] ?? 'audio_visual';
 
         $id = DB::table('meeting_materials')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $user?->tenant_id,
             'name' => $validated['name'],
-            'category' => $validated['category'] ?? 'audio_visual',
-            'quantity_total' => $qty,
-            'quantity_available' => $qty,
-            'status' => $validated['status'] ?? 'active',
+            'material_type' => $category,
+            'total_quantity' => $qty,
+            'is_operational' => 1,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
         $material = DB::table('meeting_materials')->where('id', $id)->first();
+        if ($material) {
+            $material->category = $material->material_type;
+            $material->quantity_total = (int) $material->total_quantity;
+            $material->quantity_available = (int) $material->total_quantity;
+            $material->status = $material->is_operational ? 'active' : 'inactive';
+        }
+
         return response()->json(['status' => 'success', 'message' => 'Material added successfully.', 'data' => $material], 201);
     }
 
@@ -115,11 +154,31 @@ class MeetingLogisticsController extends Controller
         }
 
         $validated = $request->validated();
+        $updateData = ['updated_at' => now()];
 
-        $updateData = array_merge($validated, ['updated_at' => now()]);
+        if (isset($validated['name'])) {
+            $updateData['name'] = $validated['name'];
+        }
+        if (isset($validated['category']) || isset($validated['material_type'])) {
+            $updateData['material_type'] = $validated['category'] ?? $validated['material_type'];
+        }
+        if (isset($validated['quantity_total']) || isset($validated['total_quantity'])) {
+            $updateData['total_quantity'] = $validated['quantity_total'] ?? $validated['total_quantity'];
+        }
+        if (isset($validated['status'])) {
+            $updateData['is_operational'] = $validated['status'] === 'active' ? 1 : 0;
+        }
+
         DB::table('meeting_materials')->where('id', $id)->update($updateData);
 
         $fresh = DB::table('meeting_materials')->where('id', $id)->first();
+        if ($fresh) {
+            $fresh->category = $fresh->material_type;
+            $fresh->quantity_total = (int) $fresh->total_quantity;
+            $fresh->quantity_available = (int) $fresh->total_quantity;
+            $fresh->status = $fresh->is_operational ? 'active' : 'inactive';
+        }
+
         return response()->json(['status' => 'success', 'message' => 'Material updated successfully.', 'data' => $fresh]);
     }
 
@@ -141,6 +200,21 @@ class MeetingLogisticsController extends Controller
     {
         $user = $request->user();
         $tenantId = $user?->tenant_id;
+
+        if (!Schema::hasTable('meeting_staff')) {
+            $query = DB::table('employees as e');
+            if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+                $query->where('e.tenant_id', $tenantId);
+            }
+            $staff = $query->select(
+                'e.id',
+                DB::raw("CONCAT(e.first_name, ' ', e.last_name) as name"),
+                DB::raw("COALESCE(e.designation, e.position, 'Staff') as role"),
+                'e.phone',
+                'e.status'
+            )->get();
+            return response()->json(['status' => 'success', 'data' => $staff]);
+        }
 
         $query = DB::table('meeting_staff');
         if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
