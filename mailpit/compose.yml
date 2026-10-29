@@ -12,14 +12,9 @@ services:
       MP_SMTP_AUTH_ACCEPT_ANY: 1
       MP_SMTP_AUTH_ALLOW_INSECURE: 1
     networks:
-      - smartpos-network
       - codebridge-network
 
 networks:
-  smartpos-network:
-    name: smartpos-network
-    external: true
   codebridge-network:
     name: codebridge-network
     external: true
-
