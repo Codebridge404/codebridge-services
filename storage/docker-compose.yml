@@ -21,7 +21,7 @@ services:
           - minio
           - s3
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://localhost:9000/minio/health/live || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -36,13 +36,14 @@ services:
         condition: service_healthy
     volumes:
       - minio-data:/data
-    entrypoint: >
-      /bin/sh -c "
-      mkdir -p /data/codebridge-auth/avatars /data/codebridge-operations/products
-      chmod -R 777 /data
-      echo 'MinIO buckets initialized successfully.';
-      exit 0;
-      "
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /data/codebridge-auth/avatars /data/codebridge-operations/products
+        chmod -R 777 /data
+        echo 'MinIO buckets initialized successfully.'
+        exit 0
     networks:
       - codebridge-network
 

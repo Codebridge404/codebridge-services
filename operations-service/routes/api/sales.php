@@ -30,6 +30,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/offline-sync', [OfflineSyncController::class, 'sync']);
         Route::get('/offline-sync/conflicts', [OfflineSyncController::class, 'conflicts']);
         Route::get('/offline-sync/conflicts/{id}', [OfflineSyncController::class, 'showConflict']);
+        Route::patch('/offline-sync/conflicts/{id}/resolve', [OfflineSyncController::class, 'resolveConflict']);
         Route::get('/sales/{id}/receipt', [ReceiptController::class, 'show']);
         Route::get('/sales/{id}/receipt/html', [ReceiptController::class, 'html']);
         Route::post('/sales/{id}/send-receipt', [ReceiptController::class, 'sendDigitalReceipt']);
