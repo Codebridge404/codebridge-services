@@ -44,6 +44,8 @@ class User extends Authenticatable implements MustVerifyEmail
         'avatar_url',
         'is_active',
         'two_factor_secret',
+        'two_factor_recovery_codes',
+        'two_factor_confirmed_at',
         'two_factor_enabled',
     ];
 
@@ -430,6 +432,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'remember_token',
         'pin_code',
         'two_factor_secret',
+        'two_factor_recovery_codes',
     ];
 
     /**
@@ -441,6 +444,7 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return [
             'email_verified_at' => 'datetime',
+            'two_factor_confirmed_at' => 'datetime',
             'password' => 'hashed',
             'two_factor_enabled' => 'boolean',
             'is_active' => 'boolean',

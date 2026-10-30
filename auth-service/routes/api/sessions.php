@@ -11,4 +11,3 @@ use Illuminate\Support\Facades\Route;
 Route::get('/auth/sessions', [AuthController::class, 'sessions']);
 Route::delete('/auth/sessions/{id}', [AuthController::class, 'revokeSession']);
 Route::post('/auth/logout-all-devices', [AuthController::class, 'logoutAllDevices']);
-Route::post('/auth/2fa/toggle', [AuthController::class, 'toggle2fa']);

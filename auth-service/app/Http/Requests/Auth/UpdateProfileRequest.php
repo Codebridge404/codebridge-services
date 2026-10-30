@@ -21,13 +21,14 @@ class UpdateProfileRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
-            'name' => ['sometimes', 'string', 'max:255'],
+        $rules = [
+            'name' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'email' => ['sometimes', 'nullable', 'string', 'max:255'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
-            'pin_code' => ['sometimes', 'nullable', 'string', 'max:10'],
-            'avatar_url' => ['sometimes', 'nullable', 'string'],
-            'remove_avatar' => ['sometimes', 'nullable', 'boolean'],
-            'avatar' => ['sometimes', 'nullable', 'file', 'mimes:jpeg,png,jpg,webp,gif,svg', 'max:10240'],
         ];
+
+      
+
+        return $rules;
     }
 }

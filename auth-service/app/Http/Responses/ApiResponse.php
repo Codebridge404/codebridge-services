@@ -17,7 +17,24 @@ trait ApiResponse
         array $meta = [],
         array $extra = []
     ): JsonResponse {
-        return (new ApiSuccessResponse($data, $message, $statusCode, $headers, $meta, $extra))->toResponse(request());
+        $payload = [
+            'status' => 'success',
+            'message' => $message,
+        ];
+
+        if ($data !== null) {
+            $payload['data'] = $data;
+        }
+
+        if (!empty($meta)) {
+            $payload['meta'] = $meta;
+        }
+
+        if (!empty($extra)) {
+            $payload = array_merge($payload, $extra);
+        }
+
+        return response()->json($payload, $statusCode, $headers);
     }
 
     /**
@@ -29,7 +46,20 @@ trait ApiResponse
         array $headers = [],
         array $extra = []
     ): JsonResponse {
-        return (new ApiSuccessResponse($data, $message, HttpStatus::CREATED, $headers, [], $extra))->toResponse(request());
+        $payload = [
+            'status' => 'success',
+            'message' => $message,
+        ];
+
+        if ($data !== null) {
+            $payload['data'] = $data;
+        }
+
+        if (!empty($extra)) {
+            $payload = array_merge($payload, $extra);
+        }
+
+        return response()->json($payload, HttpStatus::CREATED, $headers);
     }
 
     /**
@@ -51,7 +81,21 @@ trait ApiResponse
         array $headers = [],
         array $extra = []
     ): JsonResponse {
-        return (new ApiErrorResponse($message, $statusCode, $errorCode, $errors, $headers, null, $extra))->toResponse(request());
+        $payload = [
+            'status' => 'error',
+            'message' => $message,
+            'code' => $errorCode ?? 'ERROR',
+        ];
+
+        if ($errors !== null) {
+            $payload['errors'] = $errors;
+        }
+
+        if (!empty($extra)) {
+            $payload = array_merge($payload, $extra);
+        }
+
+        return response()->json($payload, $statusCode, $headers);
     }
 
     /**
