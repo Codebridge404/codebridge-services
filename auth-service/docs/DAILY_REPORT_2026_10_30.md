@@ -21,13 +21,14 @@ Today's engineering efforts focused on three critical architectural milestones f
 ### A. MinIO S3 Storage & WebP Processing Pipeline
 - **Filesystem Configuration**:
   - Configured `'minio'` disk in `config/filesystems.php` with `use_path_style_endpoint => true` and target bucket `codebridge-auth`.
-  - Added URL builder producing public URLs: `http://localhost:9000/codebridge-auth/avatars/{filename}.webp`.
+  - Added URL builder producing public URLs: `http://localhost:9000/codebridge-auth/avatars/{filename}.webp` and `http://localhost:9000/codebridge-auth/logos/{filename}.webp`.
 - **Image Conversion Service** (`app/Services/ImageService.php`):
   - Built pure PHP GD converter (`convertToWebp()`) at 85% compression quality.
   - Enabled full 8-bit alpha channel transparency preservation (`imagesavealpha` and `imagealphablending($image, false)`).
-  - Handles multipart uploads, raw string files, and `data:image/...;base64` inputs.
-  - Automatic garbage collection of replaced or removed avatars.
+  - Handles multipart uploads, raw string files, and `data:image/...;base64` inputs for both user avatars (`storeAvatar`) and organization logos (`storeLogo`).
+  - Automatic garbage collection of replaced or removed assets from MinIO S3 bucket.
   - Fault-tolerant fallback to local public disk if MinIO S3 is temporarily unreachable.
+- **Legacy Service Removal**: Completely removed `CloudinaryService.php`. Migrated `TenantController` logo upload workflows directly into `ImageService` to unify all digital media processing onto MinIO S3.
 
 ### B. Dedicated Profile Avatar Endpoint
 - **Request Class** (`app/Http/Requests/Auth/UploadProfileImageRequest.php`):
@@ -112,7 +113,14 @@ sequenceDiagram
 | **New Test** | `tests/Feature/AvatarUploadTest.php` | Created (7 tests) |
 | **New Test** | `tests/Feature/TwoFactorAuthenticationTest.php` | Created (10 tests) |
 | **New Docs** | `docs/DAILY_REPORT_2026_10_30.md` | Created |
+| **Deleted** | `app/Services/CloudinaryService.php` | Deleted (deprecated in favor of MinIO S3 WebP) |
+| **Modified** | `app/Http/Controllers/Api/V1/TenantController.php` | Updated (uses ImageService for logo storage) |
 | **Modified** | `app/Http/Controllers/Api/V1/AuthController.php` | Updated |
+| **Modified** | `app/Http/Middleware/EnsureRole.php` | Updated (strict role separation) |
+| **Modified** | `app/Services/JwtService.php` | Updated (enforce JWT_SECRET >= 32 chars) |
+| **Modified** | `config/jwt.php` | Updated (no fallback default secret) |
+| **Modified** | `docker-compose.yml` | Updated (127.0.0.1 port binding, no fallback passwords) |
+| **Modified** | `composer.json` | Updated (Laravel ^12.68, bacon/bacon-qr-code) |
 | **Modified** | `app/Models/User.php` | Updated |
 | **Modified** | `routes/api/auth.php` | Updated |
 | **Modified** | `routes/api/sessions.php` | Updated |

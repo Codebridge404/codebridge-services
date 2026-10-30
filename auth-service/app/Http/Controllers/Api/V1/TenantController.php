@@ -809,39 +809,23 @@ class TenantController extends Controller
             }
         }
 
-        // Handle uploaded file or direct logo URL / Base64 Data URL
-        if ($request->hasFile('logo')) {
-            $file = $request->file('logo');
-
-            // 1. Check if Cloudinary is configured
-            $cloudinary = new \App\Services\CloudinaryService();
-            if ($cloudinary->isConfigured()) {
-                $cloudUrl = $cloudinary->upload($file, 'codebridges/logos');
-                if ($cloudUrl) {
-                    $updateData['logo_url'] = $cloudUrl;
+        // Handle uploaded file or direct logo URL / Base64 Data URL (stored to MinIO S3 WebP)
+        if ($request->hasFile('logo') || ($request->has('logo_url') && !empty($request->logo_url))) {
+            $logoSource = $request->file('logo') ?? $request->logo_url;
+            try {
+                /** @var \App\Services\ImageService $imageService */
+                $imageService = app(\App\Services\ImageService::class);
+                $updateData['logo_url'] = $imageService->storeLogo($logoSource, $tenant->id, $tenant->logo_url ?? null);
+            } catch (\Throwable $e) {
+                Log::warning('[TenantController] Logo upload failed, falling back: ' . $e->getMessage());
+                if ($request->hasFile('logo')) {
+                    $file = $request->file('logo');
+                    $ext = $file->getClientOriginalExtension() ?: 'png';
+                    $filename = 'logo_' . $tenant->id . '_' . time() . '.' . $ext;
+                    $file->storeAs('logos', $filename, 'public');
+                    $updateData['logo_url'] = '/storage/logos/' . $filename;
                 }
             }
-
-            // 2. Fallback to local storage if Cloudinary is not configured or fails
-            if (empty($updateData['logo_url'])) {
-                $ext = $file->getClientOriginalExtension() ?: 'png';
-                $filename = 'logo_' . $tenant->id . '_' . time() . '.' . $ext;
-                $file->storeAs('logos', $filename, 'public');
-                $updateData['logo_url'] = '/storage/logos/' . $filename;
-            }
-        } elseif ($request->has('logo_url')) {
-            $logoUrl = $request->logo_url;
-            // If base64 string and Cloudinary is configured, upload to Cloudinary CDN
-            if (!empty($logoUrl) && str_starts_with($logoUrl, 'data:image/')) {
-                $cloudinary = new \App\Services\CloudinaryService();
-                if ($cloudinary->isConfigured()) {
-                    $cloudUrl = $cloudinary->upload($logoUrl, 'codebridges/logos');
-                    if ($cloudUrl) {
-                        $logoUrl = $cloudUrl;
-                    }
-                }
-            }
-            $updateData['logo_url'] = $logoUrl;
         }
 
         if (!empty($updateData)) {
