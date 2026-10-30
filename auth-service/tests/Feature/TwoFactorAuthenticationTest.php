@@ -52,14 +52,14 @@ class TwoFactorAuthenticationTest extends TestCase
 
         $secret = $response->json('secret');
         $this->assertNotEmpty($secret);
-        $this->assertEquals(16, strlen($secret));
+        $this->assertEquals(32, strlen($secret));
 
         $setupUri = $response->json('setup_uri');
         $this->assertStringStartsWith('otpauth://totp/', $setupUri);
         $this->assertStringContainsString('twofactor.setup%40codebridge.dev', $setupUri);
 
         $qrCodeUrl = $response->json('qr_code_url');
-        $this->assertStringStartsWith('https://api.qrserver.com', $qrCodeUrl);
+        $this->assertStringStartsWith('data:image/svg+xml', $qrCodeUrl);
 
         // 2FA remains not enabled until confirmed
         $user->refresh();

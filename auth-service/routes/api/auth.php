@@ -12,11 +12,11 @@ use Illuminate\Support\Facades\Route;
 Route::middleware('auth_throttle:5,15')->group(function () {
     Route::post('/auth/login', [AuthController::class, 'login']);
     Route::post('/auth/quick-switch', [AuthController::class, 'quickSwitch']);
+    Route::post('/auth/2fa/challenge', [TwoFactorController::class, 'challenge']);
 });
 
 Route::post('/auth/register', [AuthController::class, 'register']);
 Route::post('/auth/refresh', [AuthController::class, 'refresh']);
-Route::post('/auth/2fa/challenge', [TwoFactorController::class, 'challenge']);
 Route::get('/auth/verify-invite', [AuthController::class, 'verifyInvite']);
 Route::post('/auth/accept-invite', [AuthController::class, 'acceptInvite']);
 
@@ -25,13 +25,15 @@ Route::post('/auth/accept-invite', [AuthController::class, 'acceptInvite']);
 | Email Verification Routes (Mailpit / SMTP)
 |--------------------------------------------------------------------------
 */
-Route::get('/auth/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])->name('verification.verify');
-Route::post('/auth/email/create-link', [AuthController::class, 'createVerificationLink']);
-Route::post('/auth/email/send-link', [AuthController::class, 'createVerificationLink']);
-Route::post('/auth/email/verify-code', [AuthController::class, 'verifyEmailCode']);
-Route::match(['get', 'post'], '/auth/email/check', [AuthController::class, 'checkEmailVerification']);
-Route::post('/auth/email/verification-notification', [AuthController::class, 'sendVerificationNotification']);
-Route::get('/auth/email/template-preview', [AuthController::class, 'previewEmailTemplate']);
+Route::middleware('auth_throttle:10,1')->group(function () {
+    Route::get('/auth/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])->name('verification.verify');
+    Route::post('/auth/email/create-link', [AuthController::class, 'createVerificationLink']);
+    Route::post('/auth/email/send-link', [AuthController::class, 'createVerificationLink']);
+    Route::post('/auth/email/verify-code', [AuthController::class, 'verifyEmailCode']);
+    Route::match(['get', 'post'], '/auth/email/check', [AuthController::class, 'checkEmailVerification']);
+    Route::post('/auth/email/verification-notification', [AuthController::class, 'sendVerificationNotification']);
+    Route::get('/auth/email/template-preview', [AuthController::class, 'previewEmailTemplate']);
+});
 
 /*
 |--------------------------------------------------------------------------
