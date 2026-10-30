@@ -95,12 +95,28 @@ class CloudinaryService
         // 1. Prioritize MinIO S3 Object Storage (Default)
         if ($this->isS3Configured()) {
             try {
+                /** @var ImageService $imageService */
+                $imageService = app(ImageService::class);
+
                 if ($file instanceof UploadedFile) {
-                    $ext = $file->getClientOriginalExtension() ?: 'png';
-                    $filename = uniqid('asset_') . '_' . time() . '.' . $ext;
-                    $path = Storage::disk('s3')->putFileAs($folder, $file, $filename, 'public');
-                    if ($path) {
-                        return Storage::disk('s3')->url($path);
+                    $webpBytes = $imageService->convertToWebp($file);
+                    if ($webpBytes !== null) {
+                        $filename = $folder . '/asset_' . uniqid() . '_' . time() . '.webp';
+                        $stored = Storage::disk('s3')->put($filename, $webpBytes, [
+                            'visibility'  => 'public',
+                            'mimetype'    => 'image/webp',
+                            'ContentType' => 'image/webp',
+                        ]);
+                        if ($stored) {
+                            return Storage::disk('s3')->url($filename);
+                        }
+                    } else {
+                        $ext = $file->getClientOriginalExtension() ?: 'png';
+                        $filename = uniqid('asset_') . '_' . time() . '.' . $ext;
+                        $path = Storage::disk('s3')->putFileAs($folder, $file, $filename, 'public');
+                        if ($path) {
+                            return Storage::disk('s3')->url($path);
+                        }
                     }
                 } elseif (is_string($file)) {
                     // Direct URL pass-through if already a remote web URL
@@ -109,6 +125,18 @@ class CloudinaryService
                     }
                     // Handle Base64 Data URL (e.g. data:image/png;base64,...)
                     if (str_starts_with($file, 'data:image/')) {
+                        $webpBytes = $imageService->convertToWebp($file);
+                        if ($webpBytes !== null) {
+                            $filename = $folder . '/asset_' . uniqid() . '_' . time() . '.webp';
+                            $stored = Storage::disk('s3')->put($filename, $webpBytes, [
+                                'visibility'  => 'public',
+                                'mimetype'    => 'image/webp',
+                                'ContentType' => 'image/webp',
+                            ]);
+                            if ($stored) {
+                                return Storage::disk('s3')->url($filename);
+                            }
+                        }
                         $ext = 'png';
                         if (preg_match('/^data:image\/(\w+);base64,/', $file, $matches)) {
                             $ext = $matches[1] === 'jpeg' ? 'jpg' : $matches[1];

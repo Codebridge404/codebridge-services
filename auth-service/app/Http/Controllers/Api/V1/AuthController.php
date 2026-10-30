@@ -11,6 +11,7 @@ use App\Http\Requests\Auth\RegisterRequest;
 use App\Http\Requests\Auth\SendVerificationLinkRequest;
 use App\Http\Requests\Auth\UpdatePasswordRequest;
 use App\Http\Requests\Auth\UpdateProfileRequest;
+use App\Http\Requests\Auth\UploadProfileImageRequest;
 use App\Http\Resources\User\UserResource;
 use App\Models\Outlet;
 use App\Models\Tenant;
@@ -21,6 +22,7 @@ use App\Models\UserPosPin;
 use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
 use App\Services\JwtService;
+use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -54,6 +56,8 @@ class AuthController extends Controller
      * Central Authentication supporting Email and Phone Number Login.
      * POST /api/v1/auth/login
      */
+    #[OpenApiResponse(status: 200, description: 'Login successful', type: 'array{status: string, message: string, access_token: string, token?: string, refresh_token: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 403, description: 'Two-factor authentication required', type: 'array{status: string, code: string, message: string, status_mfa?: string, two_factor_required?: bool, challenge_token?: string, expires_in?: int}')]
     public function login(LoginRequest $request)
     {
         $rawEmail = $request->input('email');
@@ -171,6 +175,10 @@ class AuthController extends Controller
 
         // MFA verification check
         if ((bool) ($user->two_factor_enabled ?? false)) {
+            /** @var \App\Services\TwoFactorService $twoFactorService */
+            $twoFactorService = app(\App\Services\TwoFactorService::class);
+            $challengeToken = $twoFactorService->createChallengeToken($user);
+
             return $this->forbiddenResponse(
                 message: 'Two-factor authentication is required.',
                 errorCode: ResponseCode::TWO_FACTOR_REQUIRED,
@@ -180,6 +188,9 @@ class AuthController extends Controller
                 ],
                 extra: [
                     'status' => 'requires_mfa',
+                    'two_factor_required' => true,
+                    'challenge_token' => $challengeToken,
+                    'expires_in' => 300,
                 ]
             );
         }
@@ -250,6 +261,7 @@ class AuthController extends Controller
      * Cashier Fast PIN Quick-Switch (Physical Register Quick-Switch).
      * POST /api/v1/auth/quick-switch
      */
+    #[OpenApiResponse(status: 200, description: 'Cashier quick-switch successful', type: 'array{status: string, message: string, access_token: string, token: string, refresh_token: string, token_type: string, expires_in: int, sanctum_token?: string, user: \App\Http\Resources\User\UserResource}')]
     public function quickSwitch(QuickSwitchRequest $request)
     {
         $pin = trim($request->pin_code);
@@ -410,6 +422,11 @@ class AuthController extends Controller
      * Refresh Access Token using Refresh Token.
      * POST /api/v1/auth/refresh
      */
+    #[OpenApiResponse(status: 200, description: 'Tokens refreshed successfully', type: 'array{status: string, message: string, access_token: string, token: string, refresh_token: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 401, description: 'Invalid or expired refresh token', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 403, description: 'Account inactive or locked out', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 404, description: 'User not found', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 422, description: 'Refresh token required', type: 'array{status: string, code: string, message: string}')]
     public function refresh(RefreshTokenRequest $request)
     {
         $refreshToken = $request->input('refresh_token') ?? $request->bearerToken();
@@ -503,6 +520,7 @@ class AuthController extends Controller
      * Active Devices & Sessions Listing.
      * GET /api/v1/auth/sessions
      */
+    #[OpenApiResponse(status: 200, description: 'Sessions retrieved successfully', type: 'array{status: string, message: string, data: array<int, array{id: string, name: string, device_name: string, ip_address: ?string, user_agent: ?string, is_current: bool, last_used_at: ?string, created_at: ?string}>}')]
     public function sessions(Request $request)
     {
         $user = $request->user();
@@ -536,6 +554,8 @@ class AuthController extends Controller
      * Remote Session Revocation.
      * DELETE /api/v1/auth/sessions/{id}
      */
+    #[OpenApiResponse(status: 200, description: 'Session terminated successfully', type: 'array{status: string, message: string}')]
+    #[OpenApiResponse(status: 404, description: 'Session not found or already terminated', type: 'array{status: string, code: string, message: string}')]
     public function revokeSession(Request $request, $id)
     {
         $user = $request->user();
@@ -553,6 +573,7 @@ class AuthController extends Controller
      * Terminate all devices except current.
      * POST /api/v1/auth/logout-all-devices
      */
+    #[OpenApiResponse(status: 200, description: 'Successfully terminated active session(s)', type: 'array{status: string, message: string, revoked_count: int}')]
     public function logoutAllDevices(Request $request)
     {
         $user = $request->user();
@@ -583,6 +604,9 @@ class AuthController extends Controller
      * Verify Staff Invitation Link.
      * GET /api/v1/auth/verify-invite?token=...
      */
+    #[OpenApiResponse(status: 200, description: 'Invitation is valid', type: 'array{status: string, message: string, data: array{email: string, role: string, tenant_name: string, outlet_name: string, expires_at: string}}')]
+    #[OpenApiResponse(status: 404, description: 'Invalid, expired, or already accepted invitation link', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 422, description: 'Missing invitation token', type: 'array{status: string, code: string, message: string}')]
     public function verifyInvite(Request $request)
     {
         $token = $request->query('token');
@@ -625,6 +649,10 @@ class AuthController extends Controller
      * Accept Invitation & Complete Staff Setup.
      * POST /api/v1/auth/accept-invite
      */
+    #[OpenApiResponse(status: 200, description: 'Membership accepted (MFA required)', type: 'array{status: string, message: string, code?: string}')]
+    #[OpenApiResponse(status: 201, description: 'Staff account setup completed successfully', type: 'array{status: string, message: string, access_token: string, token: string, refresh_token: string, sanctum_token?: string, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 403, description: 'Account suspended or forbidden', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 422, description: 'Invalid or expired invitation link', type: 'array{status: string, code: string, message: string}')]
     public function acceptInvite(AcceptInviteRequest $request)
     {
         $validated = $request->validated();
@@ -793,6 +821,9 @@ class AuthController extends Controller
      * Two-Factor Authentication Management.
      * POST /api/v1/auth/2fa/toggle
      */
+    #[OpenApiResponse(status: 200, description: 'Two-Factor Authentication disabled', type: 'array{status: string, message: string, two_factor_enabled: bool}')]
+    #[OpenApiResponse(status: 401, description: 'Unauthenticated', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 422, description: 'Current password required or 2FA enrollment incomplete', type: 'array{status: string, code: string, message: string}')]
     public function toggle2fa(Request $request)
     {
         $user = $request->user();
@@ -843,6 +874,8 @@ class AuthController extends Controller
      * Send or Resend Email Verification Link & 6-digit Code to Mailpit.
      * POST /api/v1/auth/email/verification-notification
      */
+    #[OpenApiResponse(status: 200, description: 'Verification email sent', type: 'array{status: string, message: string, mailpit_url?: string}')]
+    #[OpenApiResponse(status: 404, description: 'User account not found', type: 'array{status: string, code: string, message: string}')]
     public function sendVerificationNotification(Request $request)
     {
         $user = $request->user();
@@ -881,6 +914,8 @@ class AuthController extends Controller
      * POST /api/v1/auth/email/create-link
      * POST /api/v1/auth/email/send-link
      */
+    #[OpenApiResponse(status: 200, description: 'Verification link created and email dispatched to Mailpit', type: 'array{status: string, message: string, email: string, expires_at: string, otp_expires_at: string, mail_sent: bool, mailpit_url: string}')]
+    #[OpenApiResponse(status: 404, description: 'User account not found', type: 'array{status: string, code: string, message: string}')]
     public function createVerificationLink(SendVerificationLinkRequest $request)
     {
         $user = $request->user();
@@ -980,6 +1015,9 @@ class AuthController extends Controller
      * Verify Email Address via Signed Verification Link.
      * GET /api/v1/auth/email/verify/{id}/{hash}
      */
+    #[OpenApiResponse(status: 200, description: 'Email address verified or already verified', type: 'array{status: string, message: string, status?: string, email_verified_at?: string}')]
+    #[OpenApiResponse(status: 403, description: 'Invalid or expired verification hash', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 404, description: 'User not found', type: 'array{status: string, code: string, message: string}')]
     public function verifyEmail(Request $request, $id, $hash)
     {
         // Enforce Laravel signed route verification while allowing optional redirect_url parameter
@@ -1054,6 +1092,9 @@ class AuthController extends Controller
      * Verify Email Address via 6-digit OTP Code.
      * POST /api/v1/auth/email/verify-code
      */
+    #[OpenApiResponse(status: 200, description: 'Email address verified successfully', type: 'array{status: string, message: string, email_verified_at: string, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 404, description: 'User not found', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 422, description: 'Invalid or expired verification code', type: 'array{status: string, code: string, message: string}')]
     public function verifyEmailCode(Request $request)
     {
         $request->validate([
@@ -1131,6 +1172,9 @@ class AuthController extends Controller
      * Check Email Verification Status for a User.
      * GET|POST /api/v1/auth/email/check
      */
+    #[OpenApiResponse(status: 200, description: 'Email verification status checked', type: 'array{status: string, message: string, email: string, is_verified: bool, email_verified_at: ?string}')]
+    #[OpenApiResponse(status: 404, description: 'User account not found', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 422, description: 'Email address is required', type: 'array{status: string, code: string, message: string}')]
     public function checkEmailVerification(Request $request)
     {
         $email = $request->input('email') ?? $request->user()?->email;
@@ -1160,6 +1204,7 @@ class AuthController extends Controller
      * Registration.
      * POST /api/v1/auth/register
      */
+    #[OpenApiResponse(status: 201, description: 'User account registered successfully', type: 'array{status: string, message: string, access_token: string, token: string, refresh_token: string, sanctum_token?: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
     public function register(RegisterRequest $request)
     {
         $email = $request->email;
@@ -1235,7 +1280,6 @@ class AuthController extends Controller
         return $this->createdResponse(
             message: 'User account registered successfully.',
             extra: [
-                'token' => $jwtToken,
                 'access_token' => $jwtToken,
                 'refresh_token' => $refreshToken,
                 'sanctum_token' => $plainToken,
@@ -1250,6 +1294,7 @@ class AuthController extends Controller
      * Get currently authenticated user details.
      * GET /api/v1/me
      */
+    #[OpenApiResponse(status: 200, description: 'Authenticated user profile', type: 'array{status: string, message: string, user: \App\Http\Resources\User\UserResource}')]
     public function me(Request $request)
     {
         $user = $request->user();
@@ -1272,10 +1317,14 @@ class AuthController extends Controller
     }
 
     /**
-     * Update user profile attributes and avatar.
+     * Update user .
      * PUT|POST /api/v1/auth/profile
      */
-    public function updateProfile(UpdateProfileRequest $request)
+    #[OpenApiResponse(status: 200, description: 'Profile updated successfully', type: 'array{status: string, message: string, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 401, description: 'Unauthenticated', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 422, description: 'Tenant membership required for PIN update', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 500, description: 'Failed to store avatar image', type: 'array{status: string, code: string, message: string}')]
+    public function update(UpdateProfileRequest $request)
     {
         $user = $request->user();
         if (!$user) {
@@ -1309,46 +1358,40 @@ class AuthController extends Controller
             );
         }
 
-        // Profile Image CRUD
+        // Profile Image CRUD (MinIO S3 with WebP conversion & local fallback)
+        $avatarFile = $request->file('avatar') ?? $request->file('avatar_url');
+
         // 1. Delete / Remove Avatar
-        if ($request->boolean('remove_avatar') || ($request->has('avatar_url') && empty($request->avatar_url) && !$request->hasFile('avatar'))) {
+        if ($request->boolean('remove_avatar') || ($request->has('avatar_url') && empty($request->avatar_url) && !$avatarFile)) {
+            app(\App\Services\ImageService::class)->deleteAvatar($user->avatar_url);
             $updateData['avatar_url'] = null;
         }
-        // 2. Create / Update Avatar from File Upload
-        elseif ($request->hasFile('avatar')) {
-            $file = $request->file('avatar');
+        // 2. Create / Update Avatar from File Upload (accepts both avatar_url and avatar)
+        elseif ($avatarFile) {
             $uploadedUrl = null;
 
-            if (class_exists(\App\Services\CloudinaryService::class)) {
-                $cloudinary = new \App\Services\CloudinaryService();
-                if ($cloudinary->isConfigured()) {
-                    $uploadedUrl = $cloudinary->upload($file, 'codebridges/avatars');
-                }
-            }
-
-            if (!$uploadedUrl) {
-                $ext = $file->guessExtension() ?: 'png';
-                $safeExt = in_array(strtolower($ext), ['jpg', 'jpeg', 'png', 'webp', 'gif'], true) ? strtolower($ext) : 'png';
-                $filename = 'avatar_' . $user->id . '_' . \Illuminate\Support\Str::random(16) . '.' . $safeExt;
-                $stored = $file->storeAs('avatars', $filename, 'public');
-                if (!$stored) {
-                    return $this->serverErrorResponse('Failed to store avatar image.');
-                }
-                $uploadedUrl = '/storage/avatars/' . $filename;
+            try {
+                /** @var \App\Services\ImageService $imageService */
+                $imageService = app(\App\Services\ImageService::class);
+                $uploadedUrl = $imageService->storeAvatar($avatarFile, $user->id, $user->avatar_url);
+            } catch (\Throwable $e) {
+                Log::error('[updateProfile] Avatar upload failed: ' . $e->getMessage());
+                return $this->serverErrorResponse('Failed to store avatar image.');
             }
 
             $updateData['avatar_url'] = $uploadedUrl;
         }
-        // 3. Create / Update Avatar from Direct URL or Base64
-        elseif ($request->has('avatar_url') && !empty($request->avatar_url)) {
+        // 3. Create / Update Avatar from Direct URL or Base64 (converts Base64 to .webp -> MinIO)
+        elseif ($request->has('avatar_url') && !empty($request->avatar_url) && is_string($request->avatar_url)) {
             $url = $request->avatar_url;
-            if (str_starts_with($url, 'data:image/') && class_exists(\App\Services\CloudinaryService::class)) {
-                $cloudinary = new \App\Services\CloudinaryService();
-                if ($cloudinary->isConfigured()) {
-                    $cloudUrl = $cloudinary->upload($url, 'codebridges/avatars');
-                    if ($cloudUrl) {
-                        $url = $cloudUrl;
-                    }
+            if (str_starts_with($url, 'data:image/')) {
+                try {
+                    /** @var \App\Services\ImageService $imageService */
+                    $imageService = app(\App\Services\ImageService::class);
+                    $url = $imageService->storeAvatar($url, $user->id, $user->avatar_url);
+                } catch (\Throwable $e) {
+                    Log::error('[updateProfile] Base64 avatar upload failed: ' . $e->getMessage());
+                    return $this->serverErrorResponse('Failed to process avatar image.');
                 }
             }
             $updateData['avatar_url'] = $url;
@@ -1358,7 +1401,12 @@ class AuthController extends Controller
 
         DB::table('users')->where('id', $user->id)->update($updateData);
 
-        $freshUser = User::find($user->id);
+        $freshUser = User::find($user->id) ?? $user;
+        if (!empty($uploadedUrl)) {
+            $freshUser->avatar_url = $uploadedUrl;
+        } elseif (array_key_exists('avatar_url', $updateData)) {
+            $freshUser->avatar_url = $updateData['avatar_url'];
+        }
         if ($freshUser && $freshUser->tenant_id) {
             $tenant = DB::table('tenants')->where('id', $freshUser->tenant_id)->first();
             if ($tenant) {
@@ -1386,7 +1434,6 @@ class AuthController extends Controller
         );
 
         return $this->successResponse(
-            data: new UserResource($freshUser),
             message: 'Profile updated successfully.',
             extra: [
                 'user' => new UserResource($freshUser),
@@ -1395,9 +1442,104 @@ class AuthController extends Controller
     }
 
     /**
+     * Backward-compatible alias for update.
+     */
+    public function updateProfile(UpdateProfileRequest $request)
+    {
+        return $this->update($request);
+    }
+
+    /**
+     * Upload User Profile Picture / Avatar (Isolated from profile update).
+     * POST /api/v1/auth/upload-profile
+     * POST /api/v1/auth/profile/avatar
+     */
+    #[OpenApiResponse(
+        status: 200,
+        description: 'Profile avatar uploaded and converted to WebP successfully',
+        type: 'array{status: string, message: string, avatar_url: string}'
+    )]
+    #[OpenApiResponse(status: 401, description: 'Unauthenticated', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 422, description: 'Validation error: image file required', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 500, description: 'Failed to process and store image', type: 'array{status: string, code: string, message: string}')]
+    public function uploadProfile(UploadProfileImageRequest $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return $this->unauthorizedResponse();
+        }
+
+        $avatarFile = $request->file('avatar') ?? $request->file('avatar_url');
+
+        if (!$avatarFile && $request->filled('avatar_url') && is_string($request->avatar_url)) {
+            $avatarFile = $request->avatar_url;
+        }
+
+        if (!$avatarFile) {
+            return $this->errorResponse('Image file is required.', HttpStatus::UNPROCESSABLE_ENTITY, ResponseCode::VALIDATION_ERROR);
+        }
+
+        try {
+            /** @var \App\Services\ImageService $imageService */
+            $imageService = app(\App\Services\ImageService::class);
+            $uploadedUrl = $imageService->storeAvatar($avatarFile, $user->id, $user->avatar_url);
+        } catch (\Throwable $e) {
+            Log::error('[uploadProfile] Avatar upload failed: ' . $e->getMessage());
+            return $this->serverErrorResponse('Failed to store avatar image.');
+        }
+
+        DB::table('users')->where('id', $user->id)->update([
+            'avatar_url' => $uploadedUrl,
+            'updated_at' => now(),
+        ]);
+
+        $freshUser = User::find($user->id) ?? $user;
+        if (!empty($uploadedUrl)) {
+            $freshUser->avatar_url = $uploadedUrl;
+        }
+        if ($freshUser && $freshUser->tenant_id) {
+            $tenant = DB::table('tenants')->where('id', $freshUser->tenant_id)->first();
+            if ($tenant) {
+                $freshUser->tenant_name = $tenant->name;
+                $freshUser->company_name = $tenant->name;
+                $freshUser->tenant_logo_url = $tenant->logo_url ?? null;
+                $freshUser->logo_url = $tenant->logo_url ?? null;
+            }
+        }
+
+        if ($freshUser) {
+            Auth::setUser($freshUser);
+            $request->setUserResolver(fn () => $freshUser);
+            $request->attributes->set('auth_user_id', $freshUser->id);
+            $request->attributes->set('auth_tenant_id', $freshUser->tenant_id);
+        }
+
+        $this->recordAuditLog(
+            action: 'auth.avatar_upload',
+            module: 'auth',
+            entityType: 'user',
+            entityId: (string) $user->id,
+            details: "User uploaded profile avatar to MinIO WebP",
+            userId: $user->id,
+            userName: $freshUser->name ?? $user->name,
+            tenantId: $freshUser->tenant_id ?? $user->tenant_id
+        );
+
+        return $this->successResponse(
+            message: 'Profile image uploaded successfully.',
+            extra: [
+                'avatar_url' => $uploadedUrl,
+            ]
+        );
+    }
+
+    /**
      * Update account password and invalidate existing active sessions.
      * PUT /api/v1/auth/password
      */
+    #[OpenApiResponse(status: 200, description: 'Account password updated successfully', type: 'array{status: string, message: string}')]
+    #[OpenApiResponse(status: 401, description: 'Unauthenticated', type: 'array{status: string, code: string, message: string}')]
+    #[OpenApiResponse(status: 422, description: 'Current password provided is incorrect', type: 'array{status: string, code: string, message: string}')]
     public function updatePassword(UpdatePasswordRequest $request)
     {
         $user = $request->user();
@@ -1450,6 +1592,7 @@ class AuthController extends Controller
      * User Logout & Token Revocation.
      * POST /api/v1/auth/logout
      */
+    #[OpenApiResponse(status: 200, description: 'Logged out successfully', type: 'array{status: string, message: string}')]
     public function logout(Request $request)
     {
         $user = $request->user();
