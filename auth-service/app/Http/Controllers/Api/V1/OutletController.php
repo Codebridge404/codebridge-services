@@ -192,6 +192,7 @@ class OutletController extends Controller
      */
     public function getBusinessProfile($id)
     {
+        \App\Services\TenantAccess::record('outlets', $id);
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
@@ -283,6 +284,7 @@ class OutletController extends Controller
      */
     public function getTerminalSettings($id)
     {
+        \App\Services\TenantAccess::record('outlets', $id);
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
@@ -435,12 +437,14 @@ class OutletController extends Controller
      */
     public function updateReceiptBranding(Request $request, $id)
     {
+        \App\Services\TenantAccess::record('outlets', $id, $request);
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found'], 404);
         }
 
         $validated = $request->validate([
+            'logo' => 'nullable|file|mimes:jpeg,png,jpg,webp,gif|max:10240',
             'receipt_header' => 'nullable|string|max:500',
             'receipt_footer' => 'nullable|string|max:500',
             'receipt_logo_url' => 'nullable|string|max:500',

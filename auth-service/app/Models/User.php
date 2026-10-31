@@ -118,6 +118,7 @@ class User extends Authenticatable implements MustVerifyEmail
     protected static function booted(): void
     {
         static::creating(function (User $user) {
+            $user->is_active ??= true;
             if (empty($user->uuid)) {
                 $user->uuid = (string) \Illuminate\Support\Str::uuid();
             }
@@ -146,6 +147,8 @@ class User extends Authenticatable implements MustVerifyEmail
             }
 
             if ($roleId) {
+                \Illuminate\Support\Facades\DB::table('user_roles')->where('user_id', $user->id)
+                    ->where('tenant_id', $user->tenant_id)->update(['is_active' => false]);
                 \Illuminate\Support\Facades\DB::table('user_roles')->updateOrInsert(
                     ['user_id' => $user->id, 'role_id' => $roleId],
                     [
@@ -190,6 +193,8 @@ class User extends Authenticatable implements MustVerifyEmail
                 }
             }
 
+            $user->pendingRole = null;
+            $user->pendingRoleId = null;
             $user->unsetRelation('roles');
             $user->unsetRelation('userRoles');
             $user->unsetRelation('tenantUsers');
@@ -302,7 +307,7 @@ class User extends Authenticatable implements MustVerifyEmail
         }
 
         if ($this->relationLoaded('roles')) {
-            $activeRole = $this->roles->firstWhere('pivot.is_active', true) ?? $this->roles->first();
+            $activeRole = $this->roles->first(fn ($role) => $role->pivot->is_active && ($role->pivot->tenant_id === null || (int) $role->pivot->tenant_id === $this->tenant_id));
             if ($activeRole) {
                 return $activeRole->slug;
             }
@@ -312,12 +317,12 @@ class User extends Authenticatable implements MustVerifyEmail
             return !empty($this->pendingRole) ? $this->pendingRole : 'user';
         }
 
-        $activeRole = $this->roles()->wherePivot('is_active', true)->first() ?? $this->roles()->first();
+        $activeRole = $this->activeRoles()->first();
         if ($activeRole) {
             return $activeRole->slug;
         }
 
-        return !empty($this->pendingRole) ? $this->pendingRole : 'user';
+        return 'user';
     }
 
     /**
@@ -334,7 +339,7 @@ class User extends Authenticatable implements MustVerifyEmail
         }
 
         if ($this->relationLoaded('roles')) {
-            $activeRole = $this->roles->firstWhere('pivot.is_active', true) ?? $this->roles->first();
+            $activeRole = $this->roles->first(fn ($role) => $role->pivot->is_active && ($role->pivot->tenant_id === null || (int) $role->pivot->tenant_id === $this->tenant_id));
             return $activeRole?->id;
         }
 
@@ -345,7 +350,7 @@ class User extends Authenticatable implements MustVerifyEmail
             return null;
         }
 
-        $activeRole = $this->roles()->wherePivot('is_active', true)->first() ?? $this->roles()->first();
+        $activeRole = $this->activeRoles()->first();
         return $activeRole?->id ?? (!empty($this->pendingRole) ? Role::where('slug', $this->pendingRole)->value('id') : null);
     }
 
@@ -401,7 +406,7 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function hasRole(string $role): bool
     {
-        return $this->role === $role || $this->roles()->where('slug', $role)->exists();
+        return $this->role === $role || $this->activeRoles()->where('slug', $role)->exists();
     }
 
     /**
@@ -518,6 +523,26 @@ class User extends Authenticatable implements MustVerifyEmail
     /**
      * Get the roles assigned to this user via user_roles pivot (Image 2 & 3).
      */
+    public function activeRoles()
+    {
+        return $this->roles()->wherePivot('is_active', true)
+            ->where(function ($query) {
+                $query->whereNull('user_roles.tenant_id');
+                if ($this->tenant_id) $query->orWhere('user_roles.tenant_id', $this->tenant_id);
+            });
+    }
+
+    public function getAllPermissions()
+    {
+        if (in_array($this->role, ['super_admin', 'organization', 'admin', 'administrator', 'owner'], true)) {
+            return collect([(object) ['name' => '*']]);
+        }
+        return Permission::query()->whereIn('id', function ($query) {
+            $query->select('permission_id')->from('role_permissions')
+                ->whereIn('role_id', $this->activeRoles()->select('roles.id'));
+        })->get();
+    }
+
     public function roles()
     {
         return $this->belongsToMany(Role::class, 'user_roles', 'user_id', 'role_id')

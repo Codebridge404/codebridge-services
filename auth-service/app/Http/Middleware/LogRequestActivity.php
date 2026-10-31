@@ -28,6 +28,12 @@ class LogRequestActivity
      * Sensitive parameters to redact from logged payloads.
      */
     protected array $sensitiveKeys = [
+        'code',
+        'hash',
+        'signature',
+        'challenge_token',
+        'bot_token',
+        'recovery_code',
         'password',
         'password_confirmation',
         'current_password',
@@ -153,7 +159,7 @@ class LogRequestActivity
 
         // 3. Log activity stream
         $userInfo = $user ? "User #{$user->id} [{$user->role}]" : "Guest";
-        Log::info("HTTP ACTIVITY | {$method} {$request->fullUrl()} | Status: {$statusCode} | {$durationMs}ms | {$userInfo} | IP: {$request->ip()}");
+        Log::info("HTTP ACTIVITY | {$method} {$request->route()?->uri()} | Status: {$statusCode} | {$durationMs}ms | {$userInfo} | IP: {$request->ip()}");
 
         return $response;
     }
@@ -210,10 +216,10 @@ class LogRequestActivity
                 'environment' => config('app.env', 'production'),
                 'instance_name' => gethostname() ?: 'auth-node-1',
                 'method' => strtoupper($request->method()),
-                'path' => substr($request->path(), 0, 500),
+                'path' => substr(preg_replace('#(email/verify/[^/]+/)[^/]+#', '$1[redacted]', $request->path()), 0, 500),
                 'route_name' => $route?->getName(),
-                'route_params' => $route?->parameters(),
-                'query_params' => $request->query(),
+                'route_params' => $this->sanitizeInput($route?->parameters() ?? []),
+                'query_params' => $this->sanitizeInput($request->query()),
                 'request_data' => count($requestData) > 0 ? $requestData : null,
                 'status_code' => $statusCode,
                 'error_code' => $errorCode,

@@ -22,7 +22,7 @@ class ClockOutRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'attendance_id' => ['nullable'],
+            'attendance_id' => ['nullable', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
         ];
     }

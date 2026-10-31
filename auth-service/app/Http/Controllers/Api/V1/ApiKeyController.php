@@ -78,10 +78,9 @@ class ApiKeyController extends Controller
         $user = $request->user();
 
         // Generate full secret key (e.g. cb_live_a1b2c3d4e5...)
-        $randomSecret = Str::random(36);
         $rawKey = 'cb_live_' . Str::random(32);
         $prefix = substr($rawKey, 0, 12);
-        $hashedSecret = hash('sha256', $randomSecret);
+        $hashedSecret = hash('sha256', $rawKey);
 
         $expiresAt = isset($validated['expires_in_days'])
             ? now()->addDays($validated['expires_in_days'])
@@ -94,7 +93,7 @@ class ApiKeyController extends Controller
             'tenant_id' => $user->tenant_id,
             'user_id' => $user->id,
             'name' => $validated['name'],
-            'key' => $rawKey,
+            'key' => $hashedSecret,
             'key_prefix' => $prefix,
             'secret' => $hashedSecret,
             'permissions' => json_encode($permissions),

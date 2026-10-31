@@ -55,8 +55,24 @@ class TwoFactorController extends Controller
             return $this->unauthorizedResponse();
         }
 
+        // [P1] If 2FA is already enabled, require password reauthentication to prevent unauthorized replacement
+        if ($user->two_factor_enabled) {
+            if (!$request->filled('password') || !Hash::check((string) $request->input('password'), $user->password)) {
+                return $this->errorResponse(
+                    'Current password confirmation is required to reconfigure two-factor authentication.',
+                    HttpStatus::UNPROCESSABLE_ENTITY,
+                    ResponseCode::INVALID_CREDENTIALS
+                );
+            }
+        }
+
+        // [P1] Keep the replacement secret pending in cache until confirmed with a valid TOTP code.
+        // Never overwrite an existing active authenticator before successful confirmation.
         $secret = $this->twoFactorService->generateSecretKey(32);
-        $this->twoFactorService->storeSecret($user, $secret);
+        $this->twoFactorService->storePendingSecret($user, $secret);
+        if (!$user->two_factor_enabled && empty($user->two_factor_secret)) {
+            $this->twoFactorService->storeSecret($user, $secret);
+        }
 
         $company = config('app.name', 'Codebridge');
         $setupUri = $this->twoFactorService->getSetupUri($company, $user->email, $secret);
@@ -99,7 +115,12 @@ class TwoFactorController extends Controller
             return $this->unauthorizedResponse();
         }
 
-        $secret = $this->twoFactorService->getDecryptedSecret($user);
+        // [P1] Retrieve pending secret first, with fallback to initial secret if not yet enabled
+        $secret = $this->twoFactorService->getPendingSecret($user);
+        if (!$secret && !$user->two_factor_enabled) {
+            $secret = $this->twoFactorService->getDecryptedSecret($user);
+        }
+
         if (!$secret) {
             return $this->errorResponse(
                 'Two-factor setup has not been initiated. Please call /auth/2fa/setup first.',
@@ -116,6 +137,10 @@ class TwoFactorController extends Controller
                 ResponseCode::VALIDATION_ERROR
             );
         }
+
+        // Save confirmed secret permanently and clear pending secret
+        $this->twoFactorService->storeSecret($user, $secret);
+        $this->twoFactorService->clearPendingSecret($user);
 
         $recoveryCodes = $this->twoFactorService->generateRecoveryCodes(8);
         $this->twoFactorService->storeRecoveryCodes($user, $recoveryCodes);
@@ -205,6 +230,9 @@ class TwoFactorController extends Controller
         $deviceName = $request->input('device_name') ?? $this->parseDeviceName($request->userAgent());
         $expiresAt = now()->addSeconds($this->jwtService->getTtlSeconds());
         $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
+        $this->jwtService->bindSession($tokenResult->accessToken);
+        $jwtToken = $this->jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
+        $refreshToken = $this->jwtService->generateRefreshTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
 
         DB::table('personal_access_tokens')
             ->where('id', $tokenResult->accessToken->id)

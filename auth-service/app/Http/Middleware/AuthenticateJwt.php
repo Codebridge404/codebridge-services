@@ -33,10 +33,21 @@ class AuthenticateJwt
     {
         $token = $request->bearerToken();
 
+        if ($request->is('api/v1/auth/refresh')) return $next($request);
+
         if ($token && substr_count($token, '.') === 2) {
             $payload = $this->jwtService->verify($token);
 
             if ($payload && !empty($payload['sub'])) {
+                // [P1] Reject refresh tokens from accessing standard API endpoints
+                if (($payload['token_use'] ?? 'access') === 'refresh' && !$request->is('api/v1/auth/refresh')) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'INVALID_TOKEN_TYPE',
+                        'message' => 'Refresh token cannot be used for API authentication.',
+                    ], 401);
+                }
+
                 // Check if token has been explicitly revoked
                 if (!empty($payload['jti']) && $this->jwtService->isRevoked($payload['jti'])) {
                     return response()->json([
@@ -48,7 +59,7 @@ class AuthenticateJwt
 
                 // Check if user session has been revoked globally
                 $iat = $payload['iat'] ?? 0;
-                if (!empty($payload['sub']) && $this->jwtService->isUserSessionRevoked($payload['sub'], (int) $iat)) {
+                if (!empty($payload['sub']) && $this->jwtService->isUserSessionRevoked($payload['sub'], (int) $iat, $payload['session_version'] ?? null)) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'TOKEN_REVOKED',
@@ -58,37 +69,38 @@ class AuthenticateJwt
 
                 $user = User::find($payload['sub']);
 
+                // [P1] Reject missing users in the authoritative auth service
                 if (!$user) {
-                    // Create in-memory user from verified JWT claims
-                    $user = new User([
-                        'id' => (int) $payload['sub'],
-                        'name' => $payload['name'] ?? 'User',
-                        'email' => $payload['email'] ?? '',
-                        'role' => $payload['role'] ?? 'cashier',
-                        'tenant_id' => $payload['tenant_id'] ?? null,
-                        'outlet_id' => $payload['outlet_id'] ?? null,
-                    ]);
-                    $user->id = (int) $payload['sub'];
-                    $user->exists = true;
-                } else {
-                    // Verify that the user account is active and not locked out
-                    if (!$user->is_active) {
-                        return response()->json([
-                            'status' => 'error',
-                            'code' => 'ACCOUNT_DEACTIVATED',
-                            'message' => 'User account is deactivated.',
-                        ], 401);
-                    }
-
-                    if ($user->isLockedOut()) {
-                        return response()->json([
-                            'status' => 'error',
-                            'code' => 'ACCOUNT_LOCKED_OUT',
-                            'message' => 'User account is temporarily locked out.',
-                        ], 401);
-                    }
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'USER_NOT_FOUND',
+                        'message' => 'User account does not exist or has been deleted.',
+                    ], 401);
                 }
 
+                // Verify that the user account is active and not locked out
+                if (!$user->is_active) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'ACCOUNT_DEACTIVATED',
+                        'message' => 'User account is deactivated.',
+                    ], 401);
+                }
+
+                if ($user->isLockedOut()) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'ACCOUNT_LOCKED_OUT',
+                        'message' => 'User account is temporarily locked out.',
+                    ], 401);
+                }
+
+                if (!empty($payload['sid'])) {
+                    $session = $this->jwtService->sessionForPayload($payload);
+                    if (!$session) return response()->json(['status' => 'error', 'code' => 'TOKEN_REVOKED', 'message' => 'Session has been revoked.'], 401);
+                    $user->withAccessToken($session);
+                }
+                $request->attributes->set('is_pos_session', !empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos');
                 Auth::setUser($user);
                 Auth::guard('sanctum')->setUser($user);
                 $request->setUserResolver(fn () => $user);

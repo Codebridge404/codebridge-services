@@ -118,10 +118,11 @@ class CrmController extends Controller
             $query->where('tenant_id', $tenantId);
         }
 
+        abort_unless((clone $query)->exists(), 404);
         $validated['updated_at'] = now();
         $query->update($validated);
 
-        $deal = DB::table('deals')->where('id', $id)->first();
+        $deal = $query->first();
 
         return response()->json([
             'status' => 'success',

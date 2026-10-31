@@ -48,7 +48,7 @@ class SessionsSecurityTest extends TestCase
      */
     public function test_pin_verification_requires_pin_code(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->inWorkspace()->create();
 
         Sanctum::actingAs($user, ['*']);
 

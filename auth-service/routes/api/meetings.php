@@ -79,8 +79,8 @@ Route::post('/meetings/notifications/mark-all-read', [MeetingNotificationControl
 
 // Runtime Governance & Dynamic System Settings
 Route::get('/meetings/system-settings', [MeetingSettingController::class, 'index']);
-Route::put('/meetings/system-settings/batch', [MeetingSettingController::class, 'updateBatch']);
-Route::post('/meetings/system-settings/reset', [MeetingSettingController::class, 'resetDefaults']);
+Route::put('/meetings/system-settings/batch', [MeetingSettingController::class, 'batchUpdate']);
+Route::post('/meetings/system-settings/reset', [MeetingSettingController::class, 'reset']);
 
 // Telegram Bot Alerts Gateway & Dynamic Templates Engine
 Route::get('/meetings/telegram/status', [MeetingTelegramController::class, 'status']);
