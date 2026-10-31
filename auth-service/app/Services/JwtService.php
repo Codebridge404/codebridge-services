@@ -63,6 +63,7 @@ class JwtService
             'name' => $user->name,
             'email' => $user->email,
             'role' => $user->role,
+            'token_use' => 'access',
             'tenant_id' => $user->tenant_id,
             'outlet_id' => $user->outlet_id,
             'department_id' => $user->department_id ?? null,

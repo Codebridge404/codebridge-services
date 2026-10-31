@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: auth-configmap
+  namespace: codebridge
+  labels:
+    app.kubernetes.io/name: auth-service
+    app.kubernetes.io/part-of: codebridge
+data:
+  APP_NAME: "CodeBridges Auth"
+  APP_ENV: "production"
+  APP_DEBUG: "false"
+  APP_URL: "http://auth.codebridge.local"
+
+  # Database Host & Port (ClusterIP Service)
+  DB_CONNECTION: "mysql"
+  DB_HOST: "auth-mysql"
+  DB_PORT: "3306"
+  DB_DATABASE: "codebridge_auth"
+  DB_USERNAME: "codebridge_auth"
+
+  # Redis Host & Port (ClusterIP Service)
+  REDIS_HOST: "auth-redis"
+  REDIS_PORT: "6379"
+
+  # Caching, Sessions, Queue
+  CACHE_STORE: "redis"
+  SESSION_DRIVER: "redis"
+  QUEUE_CONNECTION: "redis"
+
+  # Object Storage (MinIO S3 Service)
+  FILESYSTEM_DISK: "minio"
+  MINIO_ENDPOINT: "http://minio:9000"
+  MINIO_BUCKET: "codebridge-auth"
+  MINIO_URL: "http://minio.codebridge.local/codebridge-auth"
+
+  # JWT Token Expiration Defaults
+  JWT_ACCESS_TTL: "15"
+  JWT_REFRESH_TTL: "43200"
+  JWT_ISSUER: "codebridge-auth-service"
+

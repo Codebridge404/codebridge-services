@@ -179,5 +179,44 @@ class JwtAuthenticationTest extends TestCase
         ]);
         $invalidResponse->assertStatus(401);
     }
+
+    public function test_refresh_token_cannot_be_used_to_authenticate_api_requests(): void
+    {
+        $user = User::factory()->create();
+        $jwtService = app(JwtService::class);
+        $refreshToken = $jwtService->generateRefreshTokenForUser($user);
+
+        // Try to access protected API endpoint with refresh token
+        $response = $this->withHeaders([
+            'Authorization' => "Bearer {$refreshToken}",
+        ])->getJson('/api/v1/me');
+
+        $response->assertStatus(401)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'INVALID_TOKEN_TYPE',
+            ]);
+    }
+
+    public function test_missing_user_with_signed_jwt_is_rejected(): void
+    {
+        $user = User::factory()->create();
+        $jwtService = app(JwtService::class);
+        $jwtToken = $jwtService->generateTokenForUser($user);
+
+        // Now permanently delete the user from database
+        $user->delete();
+
+        // Attempt authentication with validly signed token for non-existent user
+        $response = $this->withHeaders([
+            'Authorization' => "Bearer {$jwtToken}",
+        ])->getJson('/api/v1/me');
+
+        $response->assertStatus(401)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'USER_NOT_FOUND',
+            ]);
+    }
 }
 
