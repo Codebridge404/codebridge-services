@@ -12,7 +12,7 @@ class TenantSeeder extends Seeder
     public function run(): void
     {
         // Find super admin user
-        $superAdmin = DB::table('users')->where('email', 'vibolsen2002@gmail.com')->first()
+        $superAdmin = DB::table('users')->where('email', 'codebridge2026@gmail.com')->first()
             ?? DB::table('users')
                 ->join('user_roles', 'users.id', '=', 'user_roles.user_id')
                 ->join('roles', 'user_roles.role_id', '=', 'roles.id')

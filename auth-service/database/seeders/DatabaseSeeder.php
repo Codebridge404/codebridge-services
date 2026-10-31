@@ -14,11 +14,12 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // 0. Seed Granular Permissions, System Roles, and Role-Permission Mappings
+        // 0. Seed Granular Permissions, System Roles, Role-Permission Mappings, and Platform Modules
         $this->call([
             PermissionSeeder::class,
             RoleSeeder::class,
             RolePermissionSeeder::class,
+            PlatformModuleSeeder::class,
         ]);
         // 1. Outlet & Register First
         $existingOutlet = DB::table('outlets')->where('code', 'PP-01')->first();
@@ -55,11 +56,11 @@ class DatabaseSeeder extends Seeder
 
         $users = [
             [
-                'email' => 'vibolsen2002@gmail.com',
-                'name' => 'Vibol (Platform Super Admin)',
+                'email' => 'codebridge2026@gmail.com',
+                'name' => 'CodeBridges',
                 'role' => 'super_admin',
                 'role_id' => $roleMap['super_admin'] ?? null,
-                'password' => Hash::make('Vibol@2020'),
+                'password' => Hash::make('Code@2026'),
                 'pin_code' => null,
             ],
             [
