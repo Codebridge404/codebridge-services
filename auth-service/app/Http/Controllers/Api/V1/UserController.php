@@ -125,21 +125,19 @@ class UserController extends Controller
 
     private function resolveRoleAndId($role, $roleId = null, $currentUser = null): array
     {
-        if ($role === 'super_admin') {
-            if (!$currentUser || $currentUser->role !== 'super_admin') {
-                // Non-super_admin cannot grant super_admin privileges
-                $role = 'employee';
-            } else {
-                $rId = $roleId ?? DB::table('roles')->where('slug', 'super_admin')->value('id');
-                return ['super_admin', $rId];
+        if ($currentUser?->role !== 'super_admin' && $role === 'super_admin') abort(403);
+        $record = $roleId ? DB::table('roles')->where('id', $roleId)->first()
+            : DB::table('roles')->where('slug', $role)->first();
+        abort_unless($record, 422, 'The selected role does not exist.');
+        if ($currentUser?->role !== 'super_admin') {
+            abort_if($record->slug === 'super_admin', 403, 'Only a super administrator may assign this role.');
+            $tenant = $record->tenant_id ?? $record->company_id ?? null;
+            abort_if($tenant && (int) $tenant !== $currentUser?->tenant_id, 403);
+            if (!\App\Services\TenantAccess::isAdmin($currentUser)) {
+                abort_unless(in_array($record->slug, ['cashier', 'employee', 'user'], true), 403);
             }
         }
-        if (in_array($role, ['admin', 'organization', 'administrator', 'owner'])) {
-            $rId = $roleId ?? DB::table('roles')->whereIn('slug', ['organization', 'admin'])->value('id');
-            return ['organization', $rId];
-        }
-        $rId = $roleId ?: (DB::table('roles')->where('slug', $role)->value('id') ?? DB::table('roles')->where('slug', 'employee')->value('id'));
-        return ['employee', $rId];
+        return [$record->slug, $record->id];
     }
 
     private function checkQuota($currentUser, $tenantId): ?string
@@ -222,7 +220,9 @@ class UserController extends Controller
 
         $outletUuid = null;
         if (!empty($validated['outlet_id'])) {
-            $outletUuid = \App\Models\Outlet::where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id'])->value('uuid');
+            $outlet = \App\Models\Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
+            abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
+            $outletUuid = $outlet->uuid;
         }
 
         DB::table('users')->where('id', $targetUser->id)->update([
@@ -293,7 +293,9 @@ class UserController extends Controller
 
         $outletUuid = null;
         if (!empty($validated['outlet_id'])) {
-            $outletUuid = \App\Models\Outlet::where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id'])->value('uuid');
+            $outlet = \App\Models\Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
+            abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
+            $outletUuid = $outlet->uuid;
         }
 
         $userId = DB::table('users')->insertGetId([
@@ -451,7 +453,9 @@ class UserController extends Controller
         }
 
         if (!empty($validated['outlet_id'])) {
-            $outletUuid = \App\Models\Outlet::where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id'])->value('uuid');
+            $outlet = \App\Models\Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
+            abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
+            $outletUuid = $outlet->uuid;
             if ($outletUuid) {
                 $effectiveTenantId = $targetUser->tenant_id ?? $currentUser?->tenant_id ?? 1;
                 $tuId = DB::table('tenant_users')->where('tenant_id', $effectiveTenantId)->where('user_id', $id)->value('id');
@@ -467,6 +471,8 @@ class UserController extends Controller
         if (!empty($validated['role']) || !empty($validated['role_id'])) {
             [$pRole, $rId] = $this->resolveRoleAndId($validated['role'] ?? 'employee', $validated['role_id'] ?? null, $currentUser);
             if ($rId) {
+                DB::table('user_roles')->where('user_id', $id)
+                    ->where('tenant_id', $currentUser?->tenant_id)->update(['is_active' => false]);
                 DB::table('user_roles')->updateOrInsert(
                     ['user_id' => $id, 'role_id' => $rId],
                     [
@@ -478,7 +484,11 @@ class UserController extends Controller
             }
         }
 
-        if (!empty($validated['password'])) $updateData['password'] = Hash::make($validated['password']);
+        if (!empty($validated['password'])) {
+            $updateData['password'] = Hash::make($validated['password']);
+            $targetUser->tokens()->delete();
+            app(\App\Services\JwtService::class)->revokeAllUserTokens($id);
+        }
         $updateData['updated_at'] = now();
 
         DB::table('users')->where('id', $id)->update($updateData);
@@ -501,6 +511,8 @@ class UserController extends Controller
 
         $validated = $request->validated();
         DB::table('users')->where('id', $id)->update(['password' => Hash::make($validated['new_password']), 'updated_at' => now()]);
+        $targetUser->tokens()->delete();
+        app(\App\Services\JwtService::class)->revokeAllUserTokens($id);
         return response()->json(['status' => 'success', 'message' => 'User password reset successfully.']);
     }
 
@@ -509,32 +521,18 @@ class UserController extends Controller
         $validated = $request->validated();
         $currentUser = $request->user();
 
-        $pin = $validated['pin_code'];
-        $pinHash = hash('sha256', $pin);
-
-        $query = DB::table('users as u')
-            ->join('user_pos_pins as upp', 'upp.user_id', '=', 'u.id')
-            ->join('tenant_users as tu', 'tu.user_id', '=', 'u.id')
-            ->leftJoin('user_roles as ur', function ($j) {
-                $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
-            })
-            ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-            ->where(function ($w) use ($pin, $pinHash) {
-                $w->where('upp.pin_hash', $pinHash)->orWhere('upp.pin_hash', $pin);
-            })
-            ->where('u.is_active', true)
-            ->where(function ($q) {
-                $allowed = ['super_admin', 'organization', 'admin', 'outlet_manager', 'supervisor'];
-                $q->whereIn('r.slug', $allowed);
-            });
-
-        // Enforce tenant boundary: PIN must belong to current tenant (unless super_admin)
-        if ($currentUser && $currentUser->role !== 'super_admin' && !empty($currentUser->tenant_id)) {
-            $query->where('tu.tenant_id', $currentUser->tenant_id);
+        $supervisor = null;
+        $pins = \App\Models\UserPosPin::where('tenant_id', $currentUser->tenant_id)
+            ->where('is_active', true)->with('user')->get();
+        foreach ($pins as $candidate) {
+            $staff = $candidate->user;
+            if (!$staff || !$staff->is_active || $staff->isLockedOut() || $candidate->isLockedOut()) continue;
+            if (!$staff->activeRoles()->whereIn('slug', ['super_admin', 'organization', 'admin', 'outlet_manager', 'supervisor'])->exists()) continue;
+            if (\App\Services\PinService::matches($validated['pin_code'], $candidate->pin_hash)) {
+                $supervisor = $staff;
+                break;
+            }
         }
-
-        $supervisor = $query->select('u.id', 'u.name', DB::raw('COALESCE(r.slug, "employee") as role'))
-            ->first();
 
         if (!$supervisor) {
             return response()->json(['status' => 'error', 'message' => 'Invalid authorization PIN code or unauthorized role.'], 403);

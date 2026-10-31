@@ -33,12 +33,14 @@ class AuthenticateJwt
     {
         $token = $request->bearerToken();
 
+        if ($request->is('api/v1/auth/refresh')) return $next($request);
+
         if ($token && substr_count($token, '.') === 2) {
             $payload = $this->jwtService->verify($token);
 
             if ($payload && !empty($payload['sub'])) {
                 // [P1] Reject refresh tokens from accessing standard API endpoints
-                if (($payload['token_use'] ?? 'access') === 'refresh') {
+                if (($payload['token_use'] ?? 'access') === 'refresh' && !$request->is('api/v1/auth/refresh')) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'INVALID_TOKEN_TYPE',
@@ -57,7 +59,7 @@ class AuthenticateJwt
 
                 // Check if user session has been revoked globally
                 $iat = $payload['iat'] ?? 0;
-                if (!empty($payload['sub']) && $this->jwtService->isUserSessionRevoked($payload['sub'], (int) $iat)) {
+                if (!empty($payload['sub']) && $this->jwtService->isUserSessionRevoked($payload['sub'], (int) $iat, $payload['session_version'] ?? null)) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'TOKEN_REVOKED',
@@ -93,6 +95,12 @@ class AuthenticateJwt
                     ], 401);
                 }
 
+                if (!empty($payload['sid'])) {
+                    $session = $this->jwtService->sessionForPayload($payload);
+                    if (!$session) return response()->json(['status' => 'error', 'code' => 'TOKEN_REVOKED', 'message' => 'Session has been revoked.'], 401);
+                    $user->withAccessToken($session);
+                }
+                $request->attributes->set('is_pos_session', !empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos');
                 Auth::setUser($user);
                 Auth::guard('sanctum')->setUser($user);
                 $request->setUserResolver(fn () => $user);

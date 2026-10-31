@@ -28,10 +28,11 @@ class StoreCreditInvoicingTest extends TestCase
 
     public function test_can_issue_store_credit_top_up_invoice(): void
     {
-        $user = User::factory()->create(['role' => 'admin']);
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
         Sanctum::actingAs($user, ['*']);
 
         $customer = Customer::create([
+            'tenant_id' => $user->tenant_id,
             'name' => 'Sophea Pich',
             'phone' => '+85512345678',
             'email' => 'sophea@example.com',
@@ -89,10 +90,11 @@ class StoreCreditInvoicingTest extends TestCase
 
     public function test_can_issue_and_redeem_digital_voucher(): void
     {
-        $user = User::factory()->create(['role' => 'admin']);
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
         Sanctum::actingAs($user, ['*']);
 
         $customer = Customer::create([
+            'tenant_id' => $user->tenant_id,
             'name' => 'Chanthy Kao',
             'phone' => '+85598765432',
             'store_credit' => 0.00,
@@ -158,10 +160,11 @@ class StoreCreditInvoicingTest extends TestCase
 
     public function test_expired_store_credit_and_vouchers_are_reclaimed(): void
     {
-        $user = User::factory()->create(['role' => 'admin']);
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
         Sanctum::actingAs($user, ['*']);
 
         $customer = Customer::create([
+            'tenant_id' => $user->tenant_id,
             'name' => 'Dara Meas',
             'store_credit' => 40.00,
             'is_active' => true,
@@ -220,10 +223,11 @@ class StoreCreditInvoicingTest extends TestCase
 
     public function test_customer_credit_statement_endpoint(): void
     {
-        $user = User::factory()->create(['role' => 'admin']);
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
         Sanctum::actingAs($user, ['*']);
 
         $customer = Customer::create([
+            'tenant_id' => $user->tenant_id,
             'name' => 'Borey Vong',
             'store_credit' => 150.00,
             'loyalty_points' => 120,

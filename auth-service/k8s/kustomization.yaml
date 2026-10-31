@@ -15,6 +15,7 @@ resources:
   - auth-deployment.yaml
   - auth-service.yaml
   - horizon-deployment.yaml
+  - scheduler-cronjob.yaml
   - ingress.yaml
   - gateway.yaml
 

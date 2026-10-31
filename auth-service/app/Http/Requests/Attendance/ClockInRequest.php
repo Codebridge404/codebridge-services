@@ -22,9 +22,9 @@ class ClockInRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'user_id' => ['nullable'],
-            'employee_id' => ['nullable'],
-            'outlet_id' => ['nullable'],
+            'user_id' => ['nullable', 'integer', 'min:1'],
+            'employee_id' => ['nullable', 'integer', 'min:1'],
+            'outlet_id' => ['nullable', 'integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
         ];
     }

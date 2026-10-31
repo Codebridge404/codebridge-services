@@ -15,3 +15,4 @@
 
 # Optional: Run daily backup status & integrity check report at 06:00 AM
 0 6 * * * /var/www/codebridge/codebridge-services/auth-service/deploy/backup/status.sh >> /var/log/codebridge-backup-status.log 2>&1
+

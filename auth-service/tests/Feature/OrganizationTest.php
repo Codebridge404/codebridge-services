@@ -27,7 +27,7 @@ class OrganizationTest extends TestCase
      */
     public function test_authenticated_user_can_view_organization_entities(): void
     {
-        $user = User::factory()->create([
+        $user = User::factory()->inWorkspace()->create([
             'role' => 'admin',
         ]);
 
@@ -53,7 +53,7 @@ class OrganizationTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $user = User::factory()->create([
+        $user = User::factory()->inWorkspace()->create([
             'role' => 'admin',
             'tenant_id' => $tenantId,
         ]);

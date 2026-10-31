@@ -45,6 +45,7 @@ class MeetingSettingController extends Controller
             });
         }
 
+        $query->where('setting_key', 'not like', '%token%')->where('setting_key', 'not like', '%secret%');
         $settings = $query->orderBy('category', 'asc')->orderBy('setting_key', 'asc')->get();
 
         // Seed default corporate governance policies if empty
@@ -80,7 +81,7 @@ class MeetingSettingController extends Controller
                 ]));
             }
 
-            $settings = DB::table('meeting_system_settings')->where('tenant_id', $tenantId)->get();
+            $settings = DB::table('meeting_system_settings')->where('tenant_id', $tenantId)->where('setting_key', 'not like', '%token%')->where('setting_key', 'not like', '%secret%')->get();
         }
 
         return response()->json(['status' => 'success', 'data' => $settings]);

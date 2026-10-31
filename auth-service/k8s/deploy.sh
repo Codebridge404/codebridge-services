@@ -62,7 +62,7 @@ kubectl rollout status deployment/minio -n codebridge --timeout=120s || true
 log_info "Triggering database migration Job..."
 kubectl delete job auth-migration-job -n codebridge --ignore-not-found=true
 kubectl apply -f migration-job.yaml
-kubectl wait --for=condition=complete job/auth-migration-job -n codebridge --timeout=120s || log_warn "Migration job still completing in background."
+kubectl wait --for=condition=complete job/auth-migration-job -n codebridge --timeout=120s 
 
 # 6. Wait for Auth Service deployment rollout
 log_info "Waiting for auth-service deployment rollout..."

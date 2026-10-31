@@ -443,6 +443,7 @@ class MeetingTelegramController extends Controller
                 ->where('setting_key', 'notification.telegram_enabled')
                 ->where(function ($q) use ($tenantId) {
                     if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                    else $q->whereNull('tenant_id');
                 })->value('setting_value');
 
             if ($enabled !== 'true' && $enabled !== '1') {
@@ -453,6 +454,7 @@ class MeetingTelegramController extends Controller
                 ->where('setting_key', 'notification.telegram_bot_token')
                 ->where(function ($q) use ($tenantId) {
                     if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                    else $q->whereNull('tenant_id');
                 })->value('setting_value');
 
             if (empty($token) && !empty($tenantId)) {
@@ -467,6 +469,7 @@ class MeetingTelegramController extends Controller
                 ->where('setting_key', 'notification.telegram_default_chat_id')
                 ->where(function ($q) use ($tenantId) {
                     if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                    else $q->whereNull('tenant_id');
                 })->value('setting_value');
 
             if (empty($chatId) && !empty($tenantId)) {
@@ -482,6 +485,7 @@ class MeetingTelegramController extends Controller
                 ->where('template_type', $type)
                 ->where(function ($q) use ($tenantId) {
                     if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                    else $q->whereNull('tenant_id');
                 })->first();
 
             $raw = $templateRow ? $templateRow->body : (self::$factoryDefaults[$type] ?? "Notice: {title}");
@@ -518,6 +522,7 @@ class MeetingTelegramController extends Controller
             ->whereIn('setting_key', $keys)
             ->where(function ($q) use ($tenantId) {
                 if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                    else $q->whereNull('tenant_id');
             })
             ->get();
 
@@ -551,6 +556,7 @@ class MeetingTelegramController extends Controller
             ->where('setting_key', $key)
             ->where(function ($q) use ($tenantId) {
                 if ($tenantId) $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                    else $q->whereNull('tenant_id');
             })
             ->value('setting_value');
     }

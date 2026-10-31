@@ -68,6 +68,7 @@ class JwtService
             'outlet_id' => $user->outlet_id,
             'department_id' => $user->department_id ?? null,
             'permissions' => $permissions,
+            'session_version' => (int) \Illuminate\Support\Facades\Cache::get('session_version:' . $user->id, 0),
             'iat' => $now,
             'nbf' => $now,
             'exp' => $exp,
@@ -122,14 +123,17 @@ class JwtService
     public function revokeAllUserTokens(int|string $userId, ?int $ttl = null): void
     {
         $seconds = $ttl ?? ($this->refreshTtl * 60);
+        $version = (int) \Illuminate\Support\Facades\Cache::get("session_version:{$userId}", 0);
+        \Illuminate\Support\Facades\Cache::put("session_version:{$userId}", $version + 1, $seconds);
         \Illuminate\Support\Facades\Cache::put("revoked_user_sessions:{$userId}", time(), $seconds);
     }
 
     /**
      * Check if a user's tokens issued before a specific timestamp are revoked.
      */
-    public function isUserSessionRevoked(int|string $userId, int $tokenIssuedAt): bool
+    public function isUserSessionRevoked(int|string $userId, int $tokenIssuedAt, ?int $version = null): bool
     {
+        if ($version !== null) return $version !== (int) \Illuminate\Support\Facades\Cache::get("session_version:{$userId}", 0);
         $revokedAt = \Illuminate\Support\Facades\Cache::get("revoked_user_sessions:{$userId}");
         return $revokedAt !== null && $tokenIssuedAt <= (int) $revokedAt;
     }
@@ -146,6 +150,7 @@ class JwtService
             'iss' => $this->issuer,
             'sub' => (string) $user->id,
             'token_use' => 'refresh',
+            'session_version' => (int) \Illuminate\Support\Facades\Cache::get('session_version:' . $user->id, 0),
             'iat' => $now,
             'nbf' => $now,
             'exp' => $exp,
@@ -165,6 +170,8 @@ class JwtService
             return null;
         }
 
+        if (!empty($payload['sid']) && !$this->sessionForPayload($payload)) return null;
+
         // Must be explicitly marked as a refresh token
         if (($payload['token_use'] ?? null) !== 'refresh') {
             return null;
@@ -177,11 +184,24 @@ class JwtService
 
         // Check if user's global sessions were invalidated
         $iat = $payload['iat'] ?? 0;
-        if (isset($payload['sub']) && $this->isUserSessionRevoked($payload['sub'], (int) $iat)) {
+        if (isset($payload['sub']) && $this->isUserSessionRevoked($payload['sub'], (int) $iat, $payload['session_version'] ?? null)) {
             return null;
         }
 
         return $payload;
+    }
+
+    public function bindSession($token): void
+    {
+        $token->forceFill(['session_expires_at' => now()->addSeconds($this->getRefreshTtlSeconds())])->save();
+    }
+
+    public function sessionForPayload(array $payload)
+    {
+        if (empty($payload['sid'])) return null;
+        return \Laravel\Sanctum\PersonalAccessToken::where('id', $payload['sid'])
+            ->where('tokenable_id', $payload['sub'])->where('tokenable_type', User::class)
+            ->where('session_expires_at', '>', now())->first();
     }
 
     /**

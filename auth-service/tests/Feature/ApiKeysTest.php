@@ -24,7 +24,7 @@ class ApiKeysTest extends TestCase
      */
     public function test_authenticated_user_can_view_api_keys(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
 
         Sanctum::actingAs($user, ['*']);
 
@@ -44,7 +44,7 @@ class ApiKeysTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $user = User::factory()->create([
+        $user = User::factory()->inWorkspace()->create([
             'role' => 'admin',
             'tenant_id' => $tenantId,
         ]);

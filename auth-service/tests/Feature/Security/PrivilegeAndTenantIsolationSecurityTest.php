@@ -180,7 +180,7 @@ class PrivilegeAndTenantIsolationSecurityTest extends TestCase
             'role' => 'super_admin',
         ]);
 
-        $response->assertStatus(200);
+        $response->assertStatus(403);
 
         $fresh = User::find($tenant1User->id);
         $this->assertNotEquals('super_admin', $fresh->role);
