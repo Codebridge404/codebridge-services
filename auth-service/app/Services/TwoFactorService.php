@@ -185,6 +185,41 @@ class TwoFactorService
     }
 
     /**
+     * Store an encrypted pending 2FA secret in cache until confirmed with a valid TOTP code.
+     * Prevents overwriting or breaking an active authenticator during setup.
+     */
+    public function storePendingSecret(User $user, string $secret): void
+    {
+        $encrypted = Crypt::encryptString($secret);
+        \Illuminate\Support\Facades\Cache::put("2fa_pending_secret:{$user->id}", $encrypted, now()->addMinutes(15));
+    }
+
+    /**
+     * Get the decrypted pending 2FA secret for a user awaiting confirmation.
+     */
+    public function getPendingSecret(User $user): ?string
+    {
+        $encrypted = \Illuminate\Support\Facades\Cache::get("2fa_pending_secret:{$user->id}");
+        if (!$encrypted) {
+            return null;
+        }
+
+        try {
+            return Crypt::decryptString($encrypted);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    /**
+     * Clear any pending 2FA secret once confirmed or cancelled.
+     */
+    public function clearPendingSecret(User $user): void
+    {
+        \Illuminate\Support\Facades\Cache::forget("2fa_pending_secret:{$user->id}");
+    }
+
+    /**
      * Get decrypted recovery codes array for a user.
      */
     public function getRecoveryCodes(User $user): array

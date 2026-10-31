@@ -96,7 +96,8 @@ class MeetingController extends Controller
         $currentUser = $request->user();
         $tenantId = $currentUser?->tenant_id;
 
-        $room = DB::table('meeting_rooms')->where('id', $validated['room_id'])->first();
+        return DB::transaction(function () use ($validated, $currentUser, $tenantId, $request) {
+        $room = DB::table('meeting_rooms')->where('id', $validated['room_id'])->lockForUpdate()->first();
         if (!$room) {
             return response()->json(['status' => 'error', 'message' => 'Selected meeting room does not exist.'], 404);
         }
@@ -128,9 +129,9 @@ class MeetingController extends Controller
         // 3. Materials Stock Validation & Reservation
         if (!empty($validated['materials']) && is_array($validated['materials'])) {
             foreach ($validated['materials'] as $mat) {
-                $item = DB::table('meeting_materials')->where('id', $mat['material_id'])->first();
+                $item = DB::table('meeting_materials')->where('id', $mat['material_id'])->lockForUpdate()->first();
                 $qtyReq = $mat['quantity'] ?? 1;
-                if ($item && $item->quantity_available < $qtyReq) {
+                if (!$item || !$item->is_operational || $item->quantity_available < $qtyReq) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'INSUFFICIENT_STOCK',
@@ -268,6 +269,7 @@ class MeetingController extends Controller
             'requires_approval' => $requiresApproval,
             'data' => ['id' => $meetingId],
         ], 201);
+        });
     }
 
     /**
@@ -290,7 +292,7 @@ class MeetingController extends Controller
         $materials = DB::table('meeting_material_allocations as ma')
             ->join('meeting_materials as m', 'ma.material_id', '=', 'm.id')
             ->where('ma.meeting_id', $id)
-            ->select('ma.*', 'm.name', 'm.category')
+            ->select('ma.*', 'm.name', 'm.material_type as category')
             ->get();
         $staff = DB::table('meeting_staff_allocations as sa')
             ->join('meeting_staff as s', 'sa.staff_id', '=', 's.id')
@@ -305,6 +307,7 @@ class MeetingController extends Controller
             'status' => 'success',
             'data' => [
                 'meeting' => $meeting,
+                'check_in_url' => \Illuminate\Support\Facades\URL::temporarySignedRoute('meetings.public-check-in', \Carbon\Carbon::parse($meeting->end_time), ['id' => $meeting->id]),
                 'attendees' => $attendees,
                 'materials' => $materials,
                 'staff' => $staff,
@@ -326,13 +329,20 @@ class MeetingController extends Controller
         }
 
         $validated = $request->validated();
-
+        return DB::transaction(function () use ($validated, $meeting, $request, $id) {
+            $roomId = $validated['room_id'] ?? $meeting->room_id;
+            DB::table('meeting_rooms')->whereIn('id', array_unique([$meeting->room_id, $roomId]))->orderBy('id')->lockForUpdate()->get();
+            $start = $validated['start_time'] ?? $meeting->start_time;
+            $end = $validated['end_time'] ?? $meeting->end_time;
+            abort_unless(\Carbon\Carbon::parse($end)->gt(\Carbon\Carbon::parse($start)), 422);
+            abort_if($this->findConflict($roomId, $start, $end, $id), 422, 'The room is already booked.');
         DB::table('meetings')->where('id', $id)->update(array_merge($validated, ['updated_at' => now()]));
 
         $user = $request->user();
         $this->recordMeetingAuditLog($user?->id, $user?->name, 'meeting_updated', ['meeting_id' => $id, 'title' => $validated['title'] ?? $meeting->title], $request);
 
         return response()->json(['status' => 'success', 'message' => 'Meeting updated.']);
+        });
     }
 
     /**
@@ -644,7 +654,7 @@ class MeetingController extends Controller
 
     public function destroyAttachment($meetingId, $attachmentId)
     {
-        DB::table('meeting_attachments')->where('id', $attachmentId)->delete();
+        DB::table('meeting_attachments')->where('id', $attachmentId)->where('meeting_id', $meetingId)->delete();
         return response()->json(['status' => 'success', 'message' => 'Attachment deleted.']);
     }
 
@@ -658,7 +668,9 @@ class MeetingController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Meeting not found.'], 404);
         }
 
-        DB::table('meetings')->where('id', $id)->update([
+        abort_unless(in_array($meeting->status, ['scheduled', 'in_progress'], true), 409, 'Meeting cannot be checked in.');
+        abort_unless(now()->between(\Carbon\Carbon::parse($meeting->start_time)->subMinutes(15), \Carbon\Carbon::parse($meeting->end_time)), 409, 'Outside the check-in window.');
+        DB::table('meetings')->where('id', $id)->whereIn('status', ['scheduled', 'in_progress'])->update([
             'status' => 'in_progress',
             'checked_in_at' => now(),
             'updated_at' => now(),
@@ -830,14 +842,8 @@ class MeetingController extends Controller
             ]);
 
             // Restock materials
-            $allocations = DB::table('meeting_material_allocations')->where('meeting_id', $m->id)->get();
-            foreach ($allocations as $alloc) {
-                DB::table('meeting_materials')
-                    ->where('id', $alloc->material_id)
-                    ->increment('quantity_available', $alloc->quantity_allocated);
-            }
+            (new self())->restoreAllocatedMaterials($m->id);
 
-            // In-app alert to organizer
             DB::table('meeting_notifications')->insert([
                 'tenant_id' => $m->tenant_id,
                 'user_id' => $m->organizer_id,
@@ -1009,15 +1015,18 @@ class MeetingController extends Controller
     // Helper: Restore material stock back to inventory
     private function restoreAllocatedMaterials($meetingId)
     {
-        $allocations = DB::table('meeting_material_allocations')->where('meeting_id', $meetingId)->get();
-        foreach ($allocations as $alloc) {
-            DB::table('meeting_materials')
-                ->where('id', $alloc->material_id)
-                ->increment('quantity_available', $alloc->quantity_allocated);
-        }
+        DB::transaction(function () use ($meetingId) {
+            $allocations = DB::table('meeting_material_allocations')->where('meeting_id', $meetingId)
+                ->whereNull('released_at')->where('status', 'allocated')->lockForUpdate()->get();
+            foreach ($allocations as $allocation) {
+                DB::table('meeting_materials')->where('id', $allocation->material_id)->increment('quantity_available', $allocation->quantity_allocated);
+                DB::table('meeting_material_allocations')->where('id', $allocation->id)->update([
+                    'status' => 'released', 'released_at' => now(), 'updated_at' => now(),
+                ]);
+            }
+        });
     }
 
-    // Helper: Generate subsequent occurrences for recurring meetings
     private function generateRecurringOccurrences($firstMeetingId, $validated, $seriesId, $currentUser, $tenantId, $requiresApproval, $initialStatus)
     {
         $start = strtotime($validated['start_time']);

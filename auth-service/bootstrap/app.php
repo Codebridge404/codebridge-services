@@ -21,6 +21,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->append(LogRequestActivity::class);
         $middleware->alias([
             'role' => EnsureRole::class,
+            'workspace' => \App\Http\Middleware\EnsureWorkspace::class,
+            'pos_scope' => \App\Http\Middleware\RestrictPosSession::class,
+            'meeting_access' => \App\Http\Middleware\AuthorizeMeetingAccess::class,
             'quota' => TenantQuotaMiddleware::class,
             'api_key' => ApiKeyMiddleware::class,
             'auth_throttle' => RateLimitAuthMiddleware::class,

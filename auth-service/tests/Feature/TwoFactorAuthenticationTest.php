@@ -342,5 +342,50 @@ class TwoFactorAuthenticationTest extends TestCase
                 'two_factor_enabled' => false,
             ]);
     }
+
+    public function test_2fa_reconfiguration_requires_password_and_preserves_existing_secret_until_confirmed(): void
+    {
+        $password = 'SecretPass123!';
+        $user = User::factory()->create([
+            'password' => Hash::make($password),
+            'two_factor_enabled' => true,
+        ]);
+
+        $initialSecret = $this->twoFactorService->generateSecretKey(32);
+        $this->twoFactorService->storeSecret($user, $initialSecret);
+
+        Sanctum::actingAs($user, ['*']);
+
+        // 1. Setup without password when 2FA is enabled fails
+        $unauthSetup = $this->postJson('/api/v1/auth/2fa/setup');
+        $unauthSetup->assertStatus(422)
+            ->assertJson([
+                'code' => 'INVALID_CREDENTIALS',
+            ]);
+
+        // Existing secret in database is untouched!
+        $this->assertEquals($initialSecret, $this->twoFactorService->getDecryptedSecret($user));
+
+        // 2. Setup with valid password succeeds and returns a new pending secret
+        $validSetup = $this->postJson('/api/v1/auth/2fa/setup', [
+            'password' => $password,
+        ]);
+        $validSetup->assertStatus(200);
+        $replacementSecret = $validSetup->json('secret');
+        $this->assertNotEquals($initialSecret, $replacementSecret);
+
+        // Before confirmation, the active secret is STILL the initial secret
+        $this->assertEquals($initialSecret, $this->twoFactorService->getDecryptedSecret($user));
+
+        // 3. Confirm with code from replacement secret successfully updates
+        $code = $this->twoFactorService->calculateCode($replacementSecret);
+        $confirmRes = $this->postJson('/api/v1/auth/2fa/confirm', [
+            'code' => $code,
+        ]);
+        $confirmRes->assertStatus(200);
+
+        // Now the secret is updated
+        $this->assertEquals($replacementSecret, $this->twoFactorService->getDecryptedSecret($user));
+    }
 }
 

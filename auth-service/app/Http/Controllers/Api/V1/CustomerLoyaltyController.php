@@ -42,7 +42,7 @@ class CustomerLoyaltyController extends Controller
         $user = $request->user();
 
         return DB::transaction(function () use ($id, $validated, $user) {
-            $customer = DB::table('customers')->where('id', $id)->first();
+            $customer = DB::table('customers')->where('id', $id)->lockForUpdate()->first();
             if (!$customer) {
                 return response()->json([
                     'status' => 'error',
@@ -51,7 +51,7 @@ class CustomerLoyaltyController extends Controller
             }
 
             if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
-                if ($customer->tenant_id && $customer->tenant_id != $user->tenant_id) {
+                if ($customer->tenant_id != $user->tenant_id) {
                     return response()->json(['status' => 'error', 'message' => 'Unauthorized access to customer in another organization.'], 403);
                 }
             }
@@ -112,7 +112,8 @@ class CustomerLoyaltyController extends Controller
         $validated = $request->validated();
         $user = $request->user();
 
-        $customer = DB::table('customers')->where('id', $id)->first();
+        return DB::transaction(function () use ($id, $validated, $user) {
+        $customer = DB::table('customers')->where('id', $id)->lockForUpdate()->first();
         if (!$customer) {
             return response()->json([
                 'status' => 'error',
@@ -121,7 +122,7 @@ class CustomerLoyaltyController extends Controller
         }
 
         if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
-            if ($customer->tenant_id && $customer->tenant_id != $user->tenant_id) {
+            if ($customer->tenant_id != $user->tenant_id) {
                 return response()->json(['status' => 'error', 'message' => 'Unauthorized access to customer in another organization.'], 403);
             }
         }
@@ -145,6 +146,7 @@ class CustomerLoyaltyController extends Controller
                 'points_change' => $pointsChange,
             ],
         ]);
+        });
     }
 
     /**
@@ -155,7 +157,7 @@ class CustomerLoyaltyController extends Controller
         $user = $request->user();
 
         return DB::transaction(function () use ($id, $user) {
-            $customer = DB::table('customers')->where('id', $id)->first();
+            $customer = DB::table('customers')->where('id', $id)->lockForUpdate()->first();
             if (!$customer) {
                 return response()->json([
                     'status' => 'error',
@@ -164,7 +166,7 @@ class CustomerLoyaltyController extends Controller
             }
 
             if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
-                if ($customer->tenant_id && $customer->tenant_id != $user->tenant_id) {
+                if ($customer->tenant_id != $user->tenant_id) {
                     return response()->json(['status' => 'error', 'message' => 'Unauthorized access to customer in another organization.'], 403);
                 }
             }
@@ -222,7 +224,8 @@ class CustomerLoyaltyController extends Controller
      */
     public function getHistory(Request $request, $id)
     {
-        $customer = DB::table('customers')->where('id', $id)->first();
+        \App\Services\TenantAccess::record('customers', $id, $request);
+        $customer = DB::table('customers')->where('id', $id)->lockForUpdate()->first();
         if (!$customer) {
             return response()->json([
                 'status' => 'error',

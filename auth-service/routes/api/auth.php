@@ -40,7 +40,8 @@ Route::middleware('auth_throttle:10,1')->group(function () {
 | Authenticated User Profile & Identity Lifecycle
 |--------------------------------------------------------------------------
 */
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'pos_scope'])->group(function () {
+    require __DIR__ . '/sessions.php';
     Route::get('/me', [AuthController::class, 'me']);
     Route::match(['put', 'post'], '/auth/profile', [AuthController::class, 'update']);
     Route::post('/auth/upload-profile', [AuthController::class, 'uploadProfile']);

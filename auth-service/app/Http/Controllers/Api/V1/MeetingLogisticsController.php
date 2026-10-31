@@ -88,6 +88,7 @@ class MeetingLogisticsController extends Controller
                 DB::table('meeting_materials')->insert(array_merge($d, [
                     'uuid' => (string) Str::uuid(),
                     'tenant_id' => $tenantId,
+                    'quantity_available' => $d['total_quantity'],
                     'is_operational' => 1,
                     'created_at' => now(),
                     'updated_at' => now(),
@@ -100,7 +101,7 @@ class MeetingLogisticsController extends Controller
         $materials = $materials->map(function ($m) {
             $m->category = $m->material_type ?? 'audio_visual';
             $m->quantity_total = (int) ($m->total_quantity ?? 1);
-            $m->quantity_available = (int) ($m->total_quantity ?? 1);
+            $m->quantity_available = (int) ($m->quantity_available ?? 0);
             $m->status = ($m->is_operational ?? 1) ? 'active' : 'inactive';
             return $m;
         });
@@ -126,6 +127,7 @@ class MeetingLogisticsController extends Controller
             'name' => $validated['name'],
             'material_type' => $category,
             'total_quantity' => $qty,
+            'quantity_available' => $qty,
             'is_operational' => 1,
             'created_at' => now(),
             'updated_at' => now(),
@@ -135,7 +137,7 @@ class MeetingLogisticsController extends Controller
         if ($material) {
             $material->category = $material->material_type;
             $material->quantity_total = (int) $material->total_quantity;
-            $material->quantity_available = (int) $material->total_quantity;
+            $material->quantity_available = (int) $material->quantity_available;
             $material->status = $material->is_operational ? 'active' : 'inactive';
         }
 
@@ -163,7 +165,11 @@ class MeetingLogisticsController extends Controller
             $updateData['material_type'] = $validated['category'] ?? $validated['material_type'];
         }
         if (isset($validated['quantity_total']) || isset($validated['total_quantity'])) {
-            $updateData['total_quantity'] = $validated['quantity_total'] ?? $validated['total_quantity'];
+            $newTotal = $validated['quantity_total'] ?? $validated['total_quantity'];
+            $reserved = $item->total_quantity - $item->quantity_available;
+            abort_if($newTotal < $reserved, 422, 'Stock cannot be reduced below reserved quantity.');
+            $updateData['total_quantity'] = $newTotal;
+            $updateData['quantity_available'] = $newTotal - $reserved;
         }
         if (isset($validated['status'])) {
             $updateData['is_operational'] = $validated['status'] === 'active' ? 1 : 0;
@@ -175,7 +181,7 @@ class MeetingLogisticsController extends Controller
         if ($fresh) {
             $fresh->category = $fresh->material_type;
             $fresh->quantity_total = (int) $fresh->total_quantity;
-            $fresh->quantity_available = (int) $fresh->total_quantity;
+            $fresh->quantity_available = (int) $fresh->quantity_available;
             $fresh->status = $fresh->is_operational ? 'active' : 'inactive';
         }
 

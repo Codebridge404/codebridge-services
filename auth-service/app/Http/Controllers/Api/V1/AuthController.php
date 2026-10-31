@@ -205,6 +205,9 @@ class AuthController extends Controller
         $deviceName = $request->device_name ?? $this->parseDeviceName($request->userAgent());
         $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
         $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
+        $jwtService->bindSession($tokenResult->accessToken);
+        $jwtToken = $jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
+        $refreshToken = $jwtService->generateRefreshTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
 
         DB::table('personal_access_tokens')
             ->where('id', $tokenResult->accessToken->id)
@@ -301,12 +304,12 @@ class AuthController extends Controller
                 continue;
             }
 
-            $isBcrypt = str_starts_with($posPin->pin_hash, '$2y$') || str_starts_with($posPin->pin_hash, '$2a$');
+            $isBcrypt = str_starts_with($posPin->pin_hash, '$2') || str_starts_with($posPin->pin_hash, '$argon2');
             $matches = false;
             if ($isBcrypt) {
                 $matches = Hash::check($pin, $posPin->pin_hash);
             } else {
-                $matches = hash_equals(hash('sha256', $pin), $posPin->pin_hash) || $posPin->pin_hash === $pin;
+                $matches = \App\Services\PinService::matches($pin, $posPin->pin_hash);
                 if ($matches) {
                     // Transparently upgrade legacy hash to bcrypt
                     $posPin->update(['pin_hash' => Hash::make($pin)]);
@@ -390,7 +393,9 @@ class AuthController extends Controller
 
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
+        $jwtService->bindSession($tokenResult->accessToken);
         $posClaims = [
+            'sid' => (string) $tokenResult->accessToken->id,
             'scope' => 'pos',
             'is_pos_session' => true,
             'trusted_device_id' => $deviceId,
@@ -511,8 +516,12 @@ class AuthController extends Controller
             }
         }
 
-        $newAccessToken = $jwtService->generateTokenForUser($user);
-        $newRefreshToken = $jwtService->generateRefreshTokenForUser($user);
+        $claims = array_intersect_key($payload, array_flip(['sid', 'scope', 'is_pos_session', 'trusted_device_id']));
+        if (!empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos') {
+            $claims['permissions'] = ['pos:access', 'pos:sales', 'pos:orders', 'pos:cashier'];
+        }
+        $newAccessToken = $jwtService->generateTokenForUser($user, $claims);
+        $newRefreshToken = $jwtService->generateRefreshTokenForUser($user, $claims);
 
         return $this->successResponse(
             message: 'Token refreshed successfully.',
@@ -571,7 +580,9 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
+        $session = $user->tokens()->where('id', $id)->first();
         $deleted = $user->tokens()->where('id', $id)->delete();
+        if ($deleted && !$session?->session_expires_at) app(JwtService::class)->revokeAllUserTokens($user->id);
 
         if (!$deleted) {
             return $this->notFoundResponse('Session not found or already terminated.');
@@ -601,7 +612,7 @@ class AuthController extends Controller
         // Globally invalidate all existing stateless JWT tokens for this user
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
-        $jwtService->revokeAllUserTokens($user->id);
+        if (!$currentTokenId || $request->boolean('include_current')) $jwtService->revokeAllUserTokens($user->id);
 
         return $this->successResponse(
             message: "Successfully terminated {$revokedCount} active session(s).",
@@ -797,6 +808,9 @@ class AuthController extends Controller
             $refreshToken = $jwtService->generateRefreshTokenForUser($user);
             $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
             $tokenResult = $user->createToken('POS Web Portal', ['*'], $expiresAt);
+            $jwtService->bindSession($tokenResult->accessToken);
+            $jwtToken = $jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
+            $refreshToken = $jwtService->generateRefreshTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
 
             Auth::setUser($user);
         $request->setUserResolver(fn () => $user);
@@ -1285,7 +1299,11 @@ class AuthController extends Controller
         $jwtToken = $jwtService->generateTokenForUser($user);
         $refreshToken = $jwtService->generateRefreshTokenForUser($user);
         $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
-        $plainToken = $user->createToken('pos_token', ['*'], $expiresAt)->plainTextToken;
+        $tokenResult = $user->createToken('pos_token', ['*'], $expiresAt);
+        $plainToken = $tokenResult->plainTextToken;
+        $jwtService->bindSession($tokenResult->accessToken);
+        $jwtToken = $jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
+        $refreshToken = $jwtService->generateRefreshTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
 
         Auth::setUser($user);
         $request->setUserResolver(fn () => $user);
@@ -1410,7 +1428,8 @@ class AuthController extends Controller
         // 3. Create / Update Avatar from Direct URL or Base64 (converts Base64 to .webp -> MinIO)
         elseif ($request->has('avatar_url') && !empty($request->avatar_url) && is_string($request->avatar_url)) {
             $url = $request->avatar_url;
-            if (str_starts_with($url, 'data:image/')) {
+            if (str_starts_with($url, 'data:')) {
+                abort_unless(preg_match('#^data:image/(png|jpeg|webp|gif);base64,#', $url), 422, 'Unsupported avatar image.');
                 try {
                     /** @var \App\Services\ImageService $imageService */
                     $imageService = app(\App\Services\ImageService::class);
@@ -1652,6 +1671,10 @@ class AuthController extends Controller
                 $exp = $payload['exp'] ?? (time() + $jwtService->getTtlSeconds());
                 $remainingTtl = max(0, $exp - time());
                 $jwtService->revokeToken($payload['jti'], $remainingTtl);
+                if (empty($payload['sid'])) {
+                    $user->tokens()->delete();
+                    $jwtService->revokeAllUserTokens($user->id);
+                }
             }
         }
 

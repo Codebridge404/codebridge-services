@@ -25,6 +25,11 @@ class UpdateProfileRequest extends FormRequest
             'name' => ['sometimes', 'nullable', 'string', 'max:255'],
             'email' => ['sometimes', 'nullable', 'string', 'max:255'],
             'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
+            'pin_code' => ['sometimes', 'string', 'regex:/^[0-9]{4,10}$/'],
+            'avatar' => ['sometimes', 'file', 'mimes:jpeg,png,jpg,webp,gif', 'max:10240'],
+            'avatar_url' => $this->hasFile('avatar_url')
+                ? ['file', 'mimes:jpeg,png,jpg,webp,gif', 'max:10240']
+                : ['sometimes', 'nullable', 'string', 'max:14000000'],
         ];
 
       

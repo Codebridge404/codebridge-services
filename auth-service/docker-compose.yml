@@ -68,6 +68,25 @@ services:
       - auth-network
       - codebridge-network
 
+  auth-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["php", "artisan", "schedule:work"]
+    env_file:
+      - .env
+    volumes:
+      - .:/var/www/html
+      - auth-vendor:/var/www/html/vendor
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      - auth-network
+
   # 3. Dedicated Auth MySQL Database (codebridge_auth)
   auth-mysql:
     image: mysql:8.4

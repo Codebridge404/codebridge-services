@@ -762,6 +762,7 @@ class TenantController extends Controller
      */
     public function updateProfile(UpdateTenantProfileRequest $request)
     {
+        abort_unless(\App\Services\TenantAccess::isAdmin($request->user()), 403);
         $tenant = $this->resolveTenant($request);
         if (!$tenant) {
             return response()->json([
@@ -862,6 +863,12 @@ class TenantController extends Controller
      */
     protected function resolveTenant(Request $request)
     {
+        if ($request->user()?->role !== 'super_admin') {
+            abort_unless($request->user()?->tenant_id, 403);
+            if ($request->filled('tenant_id')) abort_unless((int) $request->tenant_id === $request->user()->tenant_id, 403);
+            return DB::table('tenants')->where('id', $request->user()->tenant_id)->first();
+        }
+
         // 1. By direct tenant_id parameter
         if ($request->filled('tenant_id')) {
             $t = DB::table('tenants')->where('id', $request->tenant_id)->first();

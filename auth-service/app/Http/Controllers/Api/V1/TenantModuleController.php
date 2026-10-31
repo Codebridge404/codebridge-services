@@ -118,6 +118,7 @@ class TenantModuleController extends Controller
      */
     public function update(UpdateModulesRequest $request)
     {
+        abort_unless(\App\Services\TenantAccess::isAdmin($request->user()), 403);
 
 
         $tenantId = $request->input('tenant_id');
@@ -164,6 +165,15 @@ class TenantModuleController extends Controller
 
         $modules = array_values(array_unique($request->input('modules')));
 
+        if ($authUser->role !== 'super_admin') {
+            $subscription = DB::table('tenant_subscriptions')->where('tenant_id', $tenant->id)
+                ->where('status', 'active')->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
+                ->orderByDesc('id')->first();
+            $allowed = $subscription?->plan_id ? DB::table('subscription_plan_modules')->where('plan_id', $subscription->plan_id)->pluck('module_id')->all() : [];
+            $allowed = array_merge($allowed, DB::table('platform_modules')->where('is_core', true)->where('is_active', true)->pluck('id')->all());
+            abort_if(array_diff($modules, $allowed), 403, 'The subscription does not include these modules.');
+        }
+        DB::transaction(function () use ($tenant, $modules, $authUser) {
         DB::table('tenants')->where('id', $tenant->id)->update([
             'enabled_modules' => json_encode($modules),
             'updated_at'      => now(),
@@ -184,6 +194,8 @@ class TenantModuleController extends Controller
                 );
             }
         }
+
+        });
 
         // Record audit event
         if ($authUser && class_exists(AuditLogController::class)) {

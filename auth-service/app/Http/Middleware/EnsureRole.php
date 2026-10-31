@@ -53,7 +53,7 @@ class EnsureRole
         $userRoles = array_filter([$user->role]);
         if (method_exists($user, 'roles')) {
             try {
-                $assignedSlugs = $user->roles()->pluck('slug')->toArray();
+                $assignedSlugs = $user->activeRoles()->pluck('slug')->toArray();
                 $userRoles = array_merge($userRoles, $assignedSlugs);
             } catch (\Throwable $e) {
                 // Database or relation fallback

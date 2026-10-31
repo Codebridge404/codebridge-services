@@ -26,7 +26,7 @@ class MeetingsTest extends TestCase
      */
     public function test_authenticated_user_can_view_meetings_and_rooms(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->inWorkspace()->create();
 
         Sanctum::actingAs($user, ['*']);
 
@@ -49,7 +49,7 @@ class MeetingsTest extends TestCase
             'updated_at' => now(),
         ]);
 
-        $user = User::factory()->create([
+        $user = User::factory()->inWorkspace()->create([
             'role' => 'admin',
             'tenant_id' => $tenantId,
         ]);
