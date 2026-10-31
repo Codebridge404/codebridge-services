@@ -1,0 +1,15 @@
+**/.env
+**/.env.*
+**/.git
+**/vendor
+**/node_modules
+**/storage/**
+**/bootstrap/cache/*.php
+**/*.pem
+**/*.key
+**/*.sql
+**/*.sqlite
+**/*.zip
+deploy/secrets/**
+deploy/rendered/**
+**/auth.json

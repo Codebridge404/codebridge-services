@@ -1,0 +1,9 @@
+**
+!gateway/
+!gateway/**
+!deploy/
+!deploy/scripts/
+!deploy/scripts/prepare-gateway.py
+!deploy/docker/
+!deploy/docker/gateway.Dockerfile
+!deploy/docker/gateway.Dockerfile.dockerignore

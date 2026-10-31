@@ -1,0 +1,12 @@
+# New, dedicated single-node K3s installation only.
+# Inspect/merge with any existing /etc/rancher/k3s/config.yaml; never replace blindly.
+write-kubeconfig-mode: "0600"
+secrets-encryption: true
+# Stage beside existing Docker without claiming ports 80/443.
+# Remove this disable list only after planning public port ownership/cutover.
+disable:
+  - traefik
+  - servicelb
+# Defaults retain containerd, CoreDNS and local-path storage.
+# Configure node-ip to the actual private interface if the VPS has several NICs.
+# Check default 10.42.0.0/16 pod and 10.43.0.0/16 service ranges for conflicts.

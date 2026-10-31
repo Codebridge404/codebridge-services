@@ -1,6 +1,6 @@
 # CodeBridge infrastructure foundation
 
-This folder starts infrastructure configuration for the existing repository. It is based on the demo branch and does not deploy or modify the existing services.
+This folder contains the initial host preparation playbook. The additive Docker/K3s application deployment now lives in [`deploy/`](../deploy/README.md); start there for the VPS runbook. Existing Compose services and volumes are not automatically changed.
 
 ## Existing project
 
@@ -12,7 +12,7 @@ This folder starts infrastructure configuration for the existing repository. It 
 
 - `ansible/`: configure an existing VPS over SSH. The example installs basic packages and creates an application directory; Docker is assumed to be installed.
 - Terraform is optional. Add `terraform/` after deciding whether to provision a new VPS or import an existing one and reviewing the Contabo provider.
-- K3s is a later step. Add `k3s/` only after defining registry images, secrets, database storage, gateway, workers, migration and rollback procedures. PHP-FPM does not serve HTTP directly; its health checks require an HTTP server or another appropriate probe.
+- [`../deploy/`](../deploy/README.md): production image definitions, a K3s configuration, manifest renderer, staged deployment commands, migration jobs, and a rollback runbook. It preserves the gateway routes and keeps background processing paused until cutover. PHP-FPM has an Nginx sidecar for HTTP readiness checks.
 
 ## Try Ansible
 
@@ -41,6 +41,6 @@ Keep existing APP_KEY values and persistent data; do not run destructive databas
 2. Test the Ansible playbook on a non-production server.
 3. Design and test a production Compose configuration with private data services, HTTPS, and managed secrets.
 4. Add automated tests, a rollback plan, and a production deployment workflow.
-5. Consider Terraform for infrastructure provisioning and K3s for orchestration after the single-server deployment is reliable.
+5. Follow the staged K3s runbook after validating private data connectivity, TLS, backups and server capacity. Terraform remains optional for infrastructure provisioning.
 
 A single VPS remains a single point of failure. Blue-green deployments require separate application versions, traffic switching, compatible migrations, and careful worker coordination; this foundation does not implement them.

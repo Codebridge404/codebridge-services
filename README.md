@@ -70,6 +70,12 @@ graph TD
 
 ## 🚀 Quickstart & Setup
 
+For VPS deployment with Docker-built images and Kubernetes (K3s), see
+[`deploy/README.md`](deploy/README.md) or the [Khmer quick start](deploy/START_HERE_KH.md).
+That runbook preserves the existing gateway paths, uses explicit migration stages,
+and keeps existing Docker data services in place. The Compose quickstart below is
+for development; it is not a production cutover procedure.
+
 ### Prerequisites
 - [Docker Desktop](https://www.docker.com/) (with Docker Compose v2)
 - Git

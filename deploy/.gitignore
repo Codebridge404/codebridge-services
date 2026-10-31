@@ -1,0 +1,6 @@
+/config.json
+/rendered/
+__pycache__/
+**/__pycache__/
+/secrets/*
+!/secrets/*.example

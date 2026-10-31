@@ -1,0 +1,31 @@
+{
+  "namespace": "codebridge",
+  "release": "r20261031-1",
+  "storage_class": "local-path",
+  "storage_size": "10Gi",
+  "image_pull_secret": "registry-credentials",
+  "services": [
+    {
+      "name": "auth",
+      "app_image": "ghcr.io/YOUR_ORG/codebridge-auth-app:r20261031-1",
+      "web_image": "ghcr.io/YOUR_ORG/codebridge-auth-web:r20261031-1",
+      "replicas": 2,
+      "redis_db": "0",
+      "redis_cache_db": "1"
+    },
+    {
+      "name": "operations",
+      "app_image": "ghcr.io/YOUR_ORG/codebridge-operations-app:r20261031-1",
+      "web_image": "ghcr.io/YOUR_ORG/codebridge-operations-web:r20261031-1",
+      "replicas": 2,
+      "redis_db": "0",
+      "redis_cache_db": "1"
+    }
+  ],
+  "host": "api.example.com",
+  "gateway_image": "ghcr.io/YOUR_ORG/codebridge-gateway:r20261031-1",
+  "activate_background": false,
+  "trusted_proxy_cidrs": [
+    "10.42.0.0/16"
+  ]
+}

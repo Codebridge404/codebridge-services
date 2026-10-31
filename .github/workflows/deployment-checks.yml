@@ -1,0 +1,46 @@
+name: VPS deployment checks
+
+on:
+  pull_request:
+    branches: [demo, master]
+    paths: ['deploy/**', 'gateway/**', 'auth-service/**', 'operations-service/**', '.github/workflows/deployment-checks.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manifests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deployment regression checks
+        run: |
+          python3 -m unittest discover -s deploy/tests -v
+          python3 deploy/scripts/render.py deploy/config.example.json --allow-placeholders
+          bash -n deploy/scripts/build.sh deploy/scripts/preflight.sh deploy/scripts/deploy.sh deploy/scripts/apply-secrets.sh
+          sh -n deploy/docker/entrypoint.sh
+  service-images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [auth, operations]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production PHP and HTTP images
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          docker build -f deploy/docker/Dockerfile --target app --build-arg "SERVICE_DIR=$SERVICE-service" -t "codebridge-$SERVICE-app:test" .
+          docker build -f deploy/docker/Dockerfile --target web --build-arg "SERVICE_DIR=$SERVICE-service" -t "codebridge-$SERVICE-web:test" .
+          docker run --rm --entrypoint php "codebridge-$SERVICE-app:test" -v
+  gateway-image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f deploy/docker/gateway.Dockerfile -t codebridge-gateway:test .
+      - name: Validate Nginx and upstream config without a cluster
+        run: >-
+          docker run --rm --add-host auth-service:127.0.0.1 --add-host operations-service:127.0.0.1
+          --entrypoint nginx codebridge-gateway:test -t
