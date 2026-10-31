@@ -29,11 +29,18 @@ class JwtService
 
     public function __construct()
     {
-        $this->secret = config('jwt.secret', env('JWT_SECRET', 'codebridge_enterprise_stateless_jwt_secret_key_2026_secured'));
-        $this->algo = config('jwt.algo', env('JWT_ALGO', 'HS256'));
-        $this->ttl = (int) config('jwt.ttl', env('JWT_ACCESS_TTL', 15));
-        $this->refreshTtl = (int) config('jwt.refresh_ttl', env('JWT_REFRESH_TTL', 43200));
-        $this->issuer = config('jwt.issuer', 'codebridge-auth-service');
+        $this->secret = (string) config('jwt.secret');
+
+        if (blank($this->secret) || strlen($this->secret) < 32) {
+            throw new \RuntimeException(
+                'JWT_SECRET must be configured and at least 32 characters.'
+            );
+        }
+
+        $this->algo = (string) config('jwt.algo', 'HS256');
+        $this->ttl = (int) config('jwt.ttl', 15);
+        $this->refreshTtl = (int) config('jwt.refresh_ttl', 43200);
+        $this->issuer = (string) config('jwt.issuer', 'codebridge-auth-service');
     }
 
     /**

@@ -7,9 +7,10 @@
     "license": "MIT",
     "require": {
         "php": "^8.2",
+        "bacon/bacon-qr-code": "^3.1",
         "dedoc/scramble": "^0.13.40",
         "firebase/php-jwt": "^7.2",
-        "laravel/framework": "^12.0",
+        "laravel/framework": "^12.68",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.10.1",
         "league/flysystem-aws-s3-v3": "^3.0"

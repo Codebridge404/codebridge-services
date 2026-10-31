@@ -44,7 +44,7 @@ class TwoFactorController extends Controller
     #[OpenApiResponse(
         status: 200,
         description: 'Two-factor authentication secret and QR code generated successfully',
-        type: 'array{status: string, message: string, secret: string, setup_uri: string, qr_code_url: string}'
+        type: 'array{status: string, message: string, secret: string, setup_uri: string, qr_code_url: string, qr_code_svg: string}'
     )]
     #[OpenApiResponse(status: 401, description: 'Unauthenticated', type: 'array{status: string, code: string, message: string}')]
     public function setup(Request $request)
@@ -55,12 +55,13 @@ class TwoFactorController extends Controller
             return $this->unauthorizedResponse();
         }
 
-        $secret = $this->twoFactorService->generateSecretKey(16);
+        $secret = $this->twoFactorService->generateSecretKey(32);
         $this->twoFactorService->storeSecret($user, $secret);
 
         $company = config('app.name', 'Codebridge');
         $setupUri = $this->twoFactorService->getSetupUri($company, $user->email, $secret);
-        $qrCodeUrl = $this->twoFactorService->getQrCodeUrl($setupUri);
+        $qrCodeSvg = $this->twoFactorService->getQrCodeSvg($setupUri);
+        $qrCodeDataUri = $this->twoFactorService->getQrCodeDataUri($setupUri);
 
         return $this->successResponse(
             message: 'Two-factor authentication secret generated. Scan the QR code or enter the secret manually, then verify with /auth/2fa/confirm.',
@@ -71,7 +72,8 @@ class TwoFactorController extends Controller
             extra: [
                 'secret' => $secret,
                 'setup_uri' => $setupUri,
-                'qr_code_url' => $qrCodeUrl,
+                'qr_code_url' => $qrCodeDataUri,
+                'qr_code_svg' => $qrCodeSvg,
             ]
         );
     }

@@ -128,6 +128,42 @@ class ImageService
     }
 
     /**
+     * Process, convert to WebP, and store a tenant organization logo.
+     */
+    public function storeLogo(mixed $file, int|string $tenantId, ?string $oldLogoUrl = null): string
+    {
+        $webpBytes = $this->convertToWebp($file, 85);
+
+        if ($webpBytes !== null) {
+            $filename = 'logos/logo_' . $tenantId . '_' . Str::random(16) . '.webp';
+            $mimeType = 'image/webp';
+            $contentToUpload = $webpBytes;
+        } else {
+            if ($file instanceof UploadedFile) {
+                $ext = strtolower($file->guessExtension() ?: $file->getClientOriginalExtension() ?: 'png');
+                $filename = 'logos/logo_' . $tenantId . '_' . Str::random(16) . '.' . $ext;
+                $mimeType = $file->getMimeType() ?: 'application/octet-stream';
+                $contentToUpload = file_get_contents($file->getRealPath());
+            } elseif (is_string($file) && str_starts_with($file, 'data:image/svg+xml')) {
+                $filename = 'logos/logo_' . $tenantId . '_' . Str::random(16) . '.svg';
+                $mimeType = 'image/svg+xml';
+                $commaPos = strpos($file, ',');
+                $contentToUpload = $commaPos !== false ? base64_decode(substr($file, $commaPos + 1)) : $file;
+            } else {
+                throw new \RuntimeException('Failed to process or convert the uploaded logo to WebP.');
+            }
+        }
+
+        $url = $this->uploadToMinio($contentToUpload, $filename, $mimeType);
+
+        if ($oldLogoUrl && $oldLogoUrl !== $url) {
+            $this->deleteAvatar($oldLogoUrl);
+        }
+
+        return $url;
+    }
+
+    /**
      * Upload binary asset to MinIO S3 with graceful local storage fallback.
      */
     public function uploadToMinio(string $binaryContent, string $path, string $mimeType = 'image/webp'): string

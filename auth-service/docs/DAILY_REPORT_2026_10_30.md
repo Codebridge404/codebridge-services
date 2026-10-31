@@ -21,13 +21,14 @@ Today's engineering efforts focused on three critical architectural milestones f
 ### A. MinIO S3 Storage & WebP Processing Pipeline
 - **Filesystem Configuration**:
   - Configured `'minio'` disk in `config/filesystems.php` with `use_path_style_endpoint => true` and target bucket `codebridge-auth`.
-  - Added URL builder producing public URLs: `http://localhost:9000/codebridge-auth/avatars/{filename}.webp`.
+  - Added URL builder producing public URLs: `http://localhost:9000/codebridge-auth/avatars/{filename}.webp` and `http://localhost:9000/codebridge-auth/logos/{filename}.webp`.
 - **Image Conversion Service** (`app/Services/ImageService.php`):
   - Built pure PHP GD converter (`convertToWebp()`) at 85% compression quality.
   - Enabled full 8-bit alpha channel transparency preservation (`imagesavealpha` and `imagealphablending($image, false)`).
-  - Handles multipart uploads, raw string files, and `data:image/...;base64` inputs.
-  - Automatic garbage collection of replaced or removed avatars.
+  - Handles multipart uploads, raw string files, and `data:image/...;base64` inputs for both user avatars (`storeAvatar`) and organization logos (`storeLogo`).
+  - Automatic garbage collection of replaced or removed assets from MinIO S3 bucket.
   - Fault-tolerant fallback to local public disk if MinIO S3 is temporarily unreachable.
+- **Legacy Service Removal**: Completely removed `CloudinaryService.php`. Migrated `TenantController` logo upload workflows directly into `ImageService` to unify all digital media processing onto MinIO S3.
 
 ### B. Dedicated Profile Avatar Endpoint
 - **Request Class** (`app/Http/Requests/Auth/UploadProfileImageRequest.php`):
@@ -48,16 +49,28 @@ Today's engineering efforts focused on three critical architectural milestones f
 - **TOTP Engine** (`app/Services/TwoFactorService.php`):
   - RFC 6238 / RFC 4226 compliant HMAC-SHA1 algorithm with 30-second time steps and 6-digit codes.
   - $\pm 30$-second clock drift window ($T - 1, T, T + 1$).
+  - Upgraded secret key to **32 characters (160-bit entropy)**.
+  - **Local QR Code SVG Generation**: Integrated `bacon/bacon-qr-code` to generate SVG locally without sending secrets or `otpauth://` URIs to third-party servers.
   - Encrypted database storage of secret keys and recovery codes via `Crypt::encryptString`.
   - 8 emergency one-time recovery codes (`XXXX-XXXX`) with single-use consumption.
   - 5-minute cached pre-authentication challenge tokens (`auth:2fa_challenge:{token}`).
 - **TwoFactor Controller & Routing** (`app/Http/Controllers/Api/V1/TwoFactorController.php`):
-  - `POST /api/v1/auth/2fa/setup`: Generates Base32 secret, `otpauth://totp/...` URI, and QR code URL.
+  - `POST /api/v1/auth/2fa/setup`: Generates 32-character Base32 secret, `otpauth://totp/...` URI, and local SVG data URI.
   - `POST /api/v1/auth/2fa/confirm`: Validates code, activates 2FA, generates recovery codes.
   - `POST /api/v1/auth/login`: Intercepts credentials for 2FA-enabled accounts, returning HTTP 403 and `challenge_token` (**no tokens leaked**).
-  - `POST /api/v1/auth/2fa/challenge`: Validates challenge token + TOTP or recovery code; issues JWT and Sanctum tokens.
+  - `POST /api/v1/auth/2fa/challenge`: Rate-limited via `auth_throttle`. Validates challenge token + TOTP or recovery code; issues JWT and Sanctum tokens.
   - `POST /api/v1/auth/2fa/disable`: Disables 2FA and clears secrets after password verification.
   - `POST /api/v1/auth/2fa/toggle`: Backward compatibility for existing session management tests.
+
+### D. Security Hardening & Modernization Audits
+1. **JWT Secret Enforcement**: Removed hardcoded fallback default secrets in `config/jwt.php`; `JwtService` now enforces mandatory `JWT_SECRET` from `.env` with a minimum 32-character requirement.
+2. **Local 2FA QR Code Privacy**: Switched to local SVG generation via `bacon/bacon-qr-code`, eliminating external HTTP calls for TOTP secret provisioning.
+3. **2FA Challenge & POS PIN Security**: Added rate limiting (`auth_throttle:5,15`) to `/auth/2fa/challenge`. Hardened POS PIN quick-switch to bind to trusted device sessions and issue restricted POS capabilities (`pos:access`, `pos:sales`, `pos:orders`, `pos:cashier`) instead of wildcard `*`.
+4. **Open Redirect Elimination**: Implemented `getSafeRedirectUrl()` in `AuthController` to validate redirect URLs strictly against allowlisted frontend domains.
+5. **Anti-Enumeration on Email Verification**: Sanitized `sendVerificationNotification()` to return generic success responses for unregistered emails, preventing user harvesting. Added rate-limiting throttle group to verification routes.
+6. **Docker Network & Credential Hardening**: Bound MySQL and Redis container ports strictly to `127.0.0.1` and removed fallback default passwords from compose environments.
+7. **Strict Role Separation**: Refactored `EnsureRole` middleware to stop conflating `admin`, `owner`, and `organization` into a single role pool, strictly preserving least-privilege boundaries.
+8. **Framework Modernization**: Upgraded Laravel Framework to **`^12.68` (v12.70.2)**.
 
 ```mermaid
 sequenceDiagram
@@ -100,7 +113,14 @@ sequenceDiagram
 | **New Test** | `tests/Feature/AvatarUploadTest.php` | Created (7 tests) |
 | **New Test** | `tests/Feature/TwoFactorAuthenticationTest.php` | Created (10 tests) |
 | **New Docs** | `docs/DAILY_REPORT_2026_10_30.md` | Created |
+| **Deleted** | `app/Services/CloudinaryService.php` | Deleted (deprecated in favor of MinIO S3 WebP) |
+| **Modified** | `app/Http/Controllers/Api/V1/TenantController.php` | Updated (uses ImageService for logo storage) |
 | **Modified** | `app/Http/Controllers/Api/V1/AuthController.php` | Updated |
+| **Modified** | `app/Http/Middleware/EnsureRole.php` | Updated (strict role separation) |
+| **Modified** | `app/Services/JwtService.php` | Updated (enforce JWT_SECRET >= 32 chars) |
+| **Modified** | `config/jwt.php` | Updated (no fallback default secret) |
+| **Modified** | `docker-compose.yml` | Updated (127.0.0.1 port binding, no fallback passwords) |
+| **Modified** | `composer.json` | Updated (Laravel ^12.68, bacon/bacon-qr-code) |
 | **Modified** | `app/Models/User.php` | Updated |
 | **Modified** | `routes/api/auth.php` | Updated |
 | **Modified** | `routes/api/sessions.php` | Updated |
@@ -145,3 +165,4 @@ docker compose -f codebridge-services/docker-compose.yml exec auth-service php a
   Tests:    112 passed (544 assertions)
   Duration: 18.54s
 ```
+

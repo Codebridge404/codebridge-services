@@ -32,9 +32,9 @@ class TwoFactorService
     protected const CODE_DIGITS = 6;
 
     /**
-     * Generate a new cryptographically secure Base32 secret key.
+     * Generate a new cryptographically secure Base32 secret key (32 characters / 160 bits).
      */
-    public function generateSecretKey(int $length = 16): string
+    public function generateSecretKey(int $length = 32): string
     {
         $secret = '';
         $max = strlen(self::BASE32_ALPHABET) - 1;
@@ -63,11 +63,35 @@ class TwoFactorService
     }
 
     /**
-     * Generate a QR code URL for displaying in API documentation and frontend views.
+     * Generate a local QR code SVG string without sending data to any external server.
+     */
+    public function getQrCodeSvg(string $setupUri, int $size = 200): string
+    {
+        $renderer = new \BaconQrCode\Renderer\ImageRenderer(
+            new \BaconQrCode\Renderer\RendererStyle\RendererStyle($size),
+            new \BaconQrCode\Renderer\Image\SvgImageBackEnd()
+        );
+        $writer = new \BaconQrCode\Writer($renderer);
+
+        return $writer->writeString($setupUri);
+    }
+
+    /**
+     * Generate a local data URI containing the QR code SVG for inline display.
+     */
+    public function getQrCodeDataUri(string $setupUri, int $size = 200): string
+    {
+        $svg = $this->getQrCodeSvg($setupUri, $size);
+
+        return 'data:image/svg+xml;base64,' . base64_encode($svg);
+    }
+
+    /**
+     * Backward-compatible helper returning local data URI (no external API calls).
      */
     public function getQrCodeUrl(string $setupUri, int $size = 200): string
     {
-        return 'https://api.qrserver.com/v1/create-qr-code/?data=' . rawurlencode($setupUri) . '&size=' . $size . 'x' . $size;
+        return $this->getQrCodeDataUri($setupUri, $size);
     }
 
     /**

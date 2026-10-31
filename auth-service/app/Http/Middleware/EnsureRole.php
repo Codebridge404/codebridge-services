@@ -60,11 +60,15 @@ class EnsureRole
             }
         }
 
-        // Normalize role aliases (organization <=> admin)
+        // Normalize direct linguistic synonyms (administrator <=> admin) without merging distinct privilege tiers (owner, organization, admin)
         $effectiveRoles = array_unique($userRoles);
-        if (array_intersect($effectiveRoles, ['organization', 'admin', 'administrator', 'owner'])) {
-            $effectiveRoles = array_unique(array_merge($effectiveRoles, ['organization', 'admin', 'administrator', 'owner']));
+        if (in_array('administrator', $effectiveRoles, true)) {
+            $effectiveRoles[] = 'admin';
         }
+        if (in_array('admin', $effectiveRoles, true)) {
+            $effectiveRoles[] = 'administrator';
+        }
+        $effectiveRoles = array_unique($effectiveRoles);
 
         if (empty(array_intersect($effectiveRoles, $roles))) {
             return response()->json([

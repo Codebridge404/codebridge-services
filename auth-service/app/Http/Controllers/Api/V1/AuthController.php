@@ -360,9 +360,13 @@ class AuthController extends Controller
 
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
-        $deviceName = $request->device_name ?? 'POS Register Terminal (' . $this->parseDeviceName($request->userAgent()) . ')';
+        $deviceId = $request->header('X-Device-Id') ?? $request->input('device_id') ?? $request->input('device_uuid');
+        $deviceName = $request->device_name ?? ($deviceId ? "Trusted POS Terminal ({$deviceId})" : 'POS Register Terminal (' . $this->parseDeviceName($request->userAgent()) . ')');
         $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
-        $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
+
+        // Enforce Principle of Least Privilege: POS PIN login grants limited POS abilities only
+        $posAbilities = ['pos:access', 'pos:sales', 'pos:orders', 'pos:cashier'];
+        $tokenResult = $user->createToken($deviceName, $posAbilities, $expiresAt);
         $plainToken = $tokenResult->plainTextToken;
 
         DB::table('personal_access_tokens')
@@ -385,8 +389,14 @@ class AuthController extends Controller
 
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
-        $jwtToken = $jwtService->generateTokenForUser($user);
-        $refreshToken = $jwtService->generateRefreshTokenForUser($user);
+        $posClaims = [
+            'scope' => 'pos',
+            'is_pos_session' => true,
+            'trusted_device_id' => $deviceId,
+            'permissions' => $posAbilities,
+        ];
+        $jwtToken = $jwtService->generateTokenForUser($user, $posClaims);
+        $refreshToken = $jwtService->generateRefreshTokenForUser($user, $posClaims);
 
         Auth::setUser($user);
         $request->setUserResolver(fn () => $user);
@@ -875,7 +885,6 @@ class AuthController extends Controller
      * POST /api/v1/auth/email/verification-notification
      */
     #[OpenApiResponse(status: 200, description: 'Verification email sent', type: 'array{status: string, message: string, mailpit_url?: string}')]
-    #[OpenApiResponse(status: 404, description: 'User account not found', type: 'array{status: string, code: string, message: string}')]
     public function sendVerificationNotification(Request $request)
     {
         $user = $request->user();
@@ -884,8 +893,22 @@ class AuthController extends Controller
             $user = User::where('email', trim($request->email))->first();
         }
 
+        // Rate limit verification email dispatch to prevent spam (5 requests per 5 minutes per IP)
+        $ipThrottleKey = 'auth:send_verification:ip:' . hash('sha256', (string) $request->ip());
+        if (RateLimiter::tooManyAttempts($ipThrottleKey, 5)) {
+            return $this->tooManyAttemptsResponse(RateLimiter::availableIn($ipThrottleKey), 'TOO_MANY_ATTEMPTS');
+        }
+        RateLimiter::hit($ipThrottleKey, 300);
+
+        // Anti-Account Enumeration: Return generic success response when unauthenticated and email is not found
         if (!$user) {
-            return $this->notFoundResponse('User account not found.');
+            return $this->successResponse(
+                message: 'If an account matches this email address, a verification email has been dispatched. Please check your inbox.',
+                headers: ['Cache-Control' => 'no-store'],
+                extra: [
+                    'mailpit_url' => 'http://localhost:8025',
+                ]
+            );
         }
 
         if ($user->hasVerifiedEmail()) {
@@ -1043,7 +1066,8 @@ class AuthController extends Controller
 
         if ($user->hasVerifiedEmail()) {
             if ($request->filled('redirect_url')) {
-                return redirect($request->query('redirect_url') . (str_contains($request->query('redirect_url'), '?') ? '&' : '?') . 'verified=1');
+                $safeRedirect = $this->getSafeRedirectUrl($request->query('redirect_url'));
+                return redirect($safeRedirect . (str_contains($safeRedirect, '?') ? '&' : '?') . 'verified=1');
             }
 
             return $this->successResponse(
@@ -1075,7 +1099,8 @@ class AuthController extends Controller
         );
 
         if ($request->filled('redirect_url')) {
-            return redirect($request->query('redirect_url') . (str_contains($request->query('redirect_url'), '?') ? '&' : '?') . 'verified=1');
+            $safeRedirect = $this->getSafeRedirectUrl($request->query('redirect_url'));
+            return redirect($safeRedirect . (str_contains($safeRedirect, '?') ? '&' : '?') . 'verified=1');
         }
 
         return $this->successResponse(
@@ -1642,5 +1667,41 @@ class AuthController extends Controller
         if (str_contains($userAgent, 'Android')) return 'Android POS Device';
         if (str_contains($userAgent, 'Linux')) return 'Linux Device';
         return 'Web Browser';
+    }
+
+    /**
+     * Validate and sanitize redirect_url against allowlisted frontend domains.
+     * Prevents Open Redirect (CWE-601) vulnerabilities.
+     */
+    protected function getSafeRedirectUrl(?string $redirectUrl): ?string
+    {
+        if (empty($redirectUrl)) {
+            return null;
+        }
+
+        $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:3000'));
+        $allowedHosts = array_filter([
+            parse_url($frontendUrl, PHP_URL_HOST),
+            'localhost',
+            '127.0.0.1',
+            'codebridge.dev',
+            'app.codebridge.dev',
+        ]);
+
+        $host = parse_url($redirectUrl, PHP_URL_HOST);
+        $scheme = parse_url($redirectUrl, PHP_URL_SCHEME);
+
+        // Allow safe relative paths
+        if (!$host && str_starts_with($redirectUrl, '/') && !str_starts_with($redirectUrl, '//')) {
+            return $redirectUrl;
+        }
+
+        // Validate scheme and host against allowlist
+        if ($scheme && in_array(strtolower($scheme), ['http', 'https'], true) && $host && in_array(strtolower($host), $allowedHosts, true)) {
+            return $redirectUrl;
+        }
+
+        // Fallback to configured safe frontend URL
+        return rtrim($frontendUrl, '/') . '/auth/login';
     }
 }
