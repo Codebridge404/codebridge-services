@@ -25,12 +25,33 @@ Key milestones delivered this week:
 ## 2. Weekly Chronological Progression
 
 ```mermaid
-timeline
-    title CodeBridges Week 44 Engineering Progression
-    Oct 25 - 27 : Schema & Multi-Tenancy Architecture : RBAC & Permission Matrix : Cross-Tenant Leakage Remediation
-    Oct 28 - 29 : Request/Resource Refactoring : OpenAPI Scalar Documentation : Email Verification & Audit Logs
-    Oct 30      : MinIO S3 Object Storage : WebP Image Pipeline : Authenticator-App 2FA (RFC 6238)
-    Oct 31      : Blue/Green & K8s Orchestration : Multi-Tier Backup System : 9-Pillar Testing Policy & PHP Test Suites
+flowchart LR
+    subgraph D1["Oct 25 - 27"]
+        direction TB
+        A1["Schema & Multi-Tenancy Architecture"]
+        A2["RBAC & Permission Matrix"]
+        A3["Tenant Isolation Enforcement"]
+    end
+    subgraph D2["Oct 28 - 29"]
+        direction TB
+        B1["Request / Resource Refactoring"]
+        B2["OpenAPI Scalar Documentation Hub"]
+        B3["Audit Logging & Email Verification"]
+    end
+    subgraph D3["Oct 30"]
+        direction TB
+        C1["MinIO S3 Media Storage"]
+        C2["WebP Image Converter Pipeline"]
+        C3["Authenticator 2FA (RFC 6238 TOTP)"]
+    end
+    subgraph D4["Oct 31"]
+        direction TB
+        E1["Blue/Green & K8s HA Deployment"]
+        E2["Multi-Tier Automated DR Backup"]
+        E3["9-Pillar Testing Policy & PHP Suites"]
+    end
+
+    D1 --> D2 --> D3 --> D4
 ```
 
 ---
@@ -143,3 +164,4 @@ flowchart TD
 2. **Operations Service K8s Manifests**: Expand Kubernetes manifests in `codebridge-services` to deploy `operations-service` alongside `auth-service` with automated horizontal pod autoscalers (HPA).
 3. **End-to-End Cross-Service Workflow Tests**: Implement automated integration tests simulating end-to-end user journeys (User logs in $\rightarrow$ obtains JWT $\rightarrow$ switches outlet $\rightarrow$ opens shift in operations $\rightarrow$ conducts sale).
 4. **CI/CD Pipeline Integration**: Register `check_rules.sh` directly into GitHub Actions (`.github/workflows/laravel.yml`) so PRs automatically run the 9 testing policy checks.
+
