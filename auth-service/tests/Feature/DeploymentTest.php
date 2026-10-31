@@ -172,14 +172,17 @@ BASH;
             $this->markTestSkipped('kubectl is not installed on this system.');
         }
 
-        $result = Process::path($k8sDir)->run('kubectl apply --dry-run=client -k .');
-        $this->assertTrue($result->successful(), "Kubernetes manifests failed dry-run validation: " . $result->errorOutput());
+        // kubectl kustomize validates manifest syntax and resource assembly offline without needing an active cluster in CI
+        $result = Process::path($k8sDir)->run('kubectl kustomize .');
+        $this->assertTrue($result->successful(), "Kubernetes manifests failed kustomize validation: " . $result->errorOutput());
 
         $output = $result->output();
-        $this->assertStringContainsString('deployment.apps/auth-service', $output);
-        $this->assertStringContainsString('service/auth-service', $output);
-        $this->assertStringContainsString('cronjob.batch/auth-scheduler', $output);
-        $this->assertStringContainsString('service/api-gateway', $output);
+        $this->assertStringContainsString('name: auth-service', $output);
+        $this->assertStringContainsString('name: auth-scheduler', $output);
+        $this->assertStringContainsString('name: api-gateway', $output);
+        $this->assertStringContainsString('kind: Deployment', $output);
+        $this->assertStringContainsString('kind: Service', $output);
+        $this->assertStringContainsString('kind: CronJob', $output);
     }
 
     /**
@@ -274,7 +277,7 @@ BASH;
      */
     public function test_live_kubernetes_cluster_if_available(): void
     {
-        $checkCluster = Process::run('kubectl cluster-info');
+        $checkCluster = Process::timeout(5)->run('kubectl cluster-info --request-timeout=5s');
         if (! $checkCluster->successful()) {
             $this->markTestSkipped('Kubernetes cluster is not currently reachable.');
         }
