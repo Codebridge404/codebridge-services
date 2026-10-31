@@ -23,12 +23,15 @@ use Illuminate\Support\Facades\DB;
  */
 class ReconciliationController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
+    protected function getTenantId(Request $request): ?int
     {
-        return $request->header('X-Tenant-Id')
+        $tid = $request->header('X-Tenant-Id')
             ?? $request->user()?->tenant_id
             ?? $request->query('tenant_id')
+            ?? $request->input('tenant_id')
             ?? null;
+
+        return (!empty($tid) && is_numeric($tid)) ? (int) $tid : null;
     }
 
     /**
@@ -38,6 +41,11 @@ class ReconciliationController extends Controller
     {
         $tenantId = $this->getTenantId($request);
         $batchCode = 'REC-BATCH-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
+
+        // If external settlement records or statement lines are provided, run classifier
+        if ($request->has('settlement_records') || $request->has('lines')) {
+            return $this->classify($request);
+        }
 
         // Audit recent payment attempts scoped by tenant
         $attemptsQuery = DB::table('payment_attempts');
@@ -115,6 +123,264 @@ class ReconciliationController extends Controller
                 'matched_count' => $matchedCount,
                 'mismatch_count' => $mismatchCount,
                 'total_discrepancy_amount' => $totalDiscrepancy,
+            ],
+        ], 201);
+    }
+
+    /**
+     * ABA PayWay & Bakong Settlement Exception Classifier
+     * Auto-classifies:
+     *  - amount_mismatch: internal payment expected amount != external settlement amount
+     *  - missing_internally: transaction exists in external settlement but absent from POS internal DB
+     *  - fee_mismatch: payment gateway deducted fee differs from agreed provider fee schedule
+     *  - missing_at_provider: internal paid record missing from settlement report
+     *
+     * POST /api/v1/reconciliation/classify
+     */
+    public function classify(Request $request)
+    {
+        $tenantId = $this->getTenantId($request);
+        $provider = strtolower((string) ($request->input('provider') ?? 'aba_payway'));
+        $defaultFeeRate = (float) ($request->input('fee_rate') ?? ($provider === 'bakong' ? 0.0025 : 0.0080)); // 0.25% Bakong, 0.8% ABA
+        $batchCode = 'REC-CLS-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
+
+        $records = $request->input('settlement_records') ?? $request->input('lines') ?? [];
+
+        // If no records passed in payload, inspect bank_statement_lines
+        $statementLineIds = [];
+        if (empty($records)) {
+            $stQuery = DB::table('bank_statement_lines')->where('match_status', 'unmatched');
+            if (!empty($tenantId) && $tenantId !== 'all') {
+                $hasTenant = DB::table('bank_statement_lines')->where('tenant_id', $tenantId)->exists();
+                if ($hasTenant) {
+                    $stQuery->where('tenant_id', $tenantId);
+                }
+            }
+            $statementRows = $stQuery->orderBy('id', 'desc')->limit(50)->get();
+            foreach ($statementRows as $row) {
+                $records[] = [
+                    'statement_line_id' => $row->id,
+                    'reference' => $row->transaction_reference,
+                    'amount' => (float) $row->amount_change,
+                    'currency' => $row->currency ?? 'USD',
+                ];
+            }
+        }
+
+        // If still empty, fall back to evaluating un-reconciled payment attempts
+        if (empty($records)) {
+            $paQuery = DB::table('payment_attempts')->orderBy('id', 'desc')->limit(30);
+            if (!empty($tenantId) && $tenantId !== 'all') {
+                $hasTenant = DB::table('payment_attempts')->where('tenant_id', $tenantId)->exists();
+                if ($hasTenant) {
+                    $paQuery->where('tenant_id', $tenantId);
+                }
+            }
+            $attempts = $paQuery->get();
+            foreach ($attempts as $att) {
+                $records[] = [
+                    'reference' => $att->merchant_reference,
+                    'hash' => $att->provider_transaction_id,
+                    'amount' => (float) $att->amount,
+                    'currency' => $att->currency ?? 'USD',
+                    'internal_attempt_id' => $att->id,
+                    'internal_payment_id' => $att->payment_id,
+                    'internal_status' => $att->status,
+                ];
+            }
+        }
+
+        $totalRecords = count($records);
+        $matchedCount = 0;
+        $amountMismatchCount = 0;
+        $missingInternallyCount = 0;
+        $feeMismatchCount = 0;
+        $missingAtProviderCount = 0;
+        $totalDiscrepancy = 0;
+        $rawExceptions = [];
+        $matchedLineIds = [];
+
+        foreach ($records as $item) {
+            $ref = trim((string) ($item['reference'] ?? $item['merchant_reference'] ?? $item['transaction_reference'] ?? ''));
+            $hash = trim((string) ($item['hash'] ?? $item['transaction_hash'] ?? ''));
+            $externalAmount = isset($item['amount']) ? (float) $item['amount'] : 0.0;
+            $externalFee = isset($item['fee']) ? (float) $item['fee'] : null;
+            $statementLineId = $item['statement_line_id'] ?? null;
+
+            // Search internal attempt
+            $attempt = null;
+            if (!empty($ref)) {
+                $attempt = DB::table('payment_attempts')->where('merchant_reference', $ref)->first();
+            }
+            if (!$attempt && !empty($hash)) {
+                $attempt = DB::table('payment_attempts')->where('provider_transaction_id', $hash)->first();
+            }
+            if (!$attempt && is_numeric($ref)) {
+                $attempt = DB::table('payment_attempts')->where('id', $ref)->orWhere('payment_id', $ref)->first();
+            }
+
+            // Search internal payment
+            $payment = null;
+            if ($attempt) {
+                $payment = DB::table('payments')->where('id', $attempt->payment_id)->first();
+            } elseif (!empty($ref)) {
+                $payment = DB::table('payments')->where('reference_number', $ref)->first();
+            }
+
+            // 1. Check missing_internally
+            if (!$attempt && !$payment) {
+                $missingInternallyCount++;
+                $discrepancy = $externalAmount;
+                $totalDiscrepancy += $discrepancy;
+
+                $rawExceptions[] = [
+                    'tenant_id' => $tenantId,
+                    'payment_id' => null,
+                    'merchant_reference' => $ref ?: ('EXT-' . strtoupper(substr(uniqid(), -6))),
+                    'expected_amount' => 0.00,
+                    'actual_amount' => $externalAmount,
+                    'discrepancy_amount' => $discrepancy,
+                    'exception_type' => 'missing_internally',
+                    'status' => 'pending',
+                    'notes' => "External settlement transaction '{$ref}' from {$provider} was not found internally in POS records.",
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+                continue;
+            }
+
+            $internalAmount = (float) ($attempt->amount ?? $payment->amount ?? 0);
+            $internalStatus = $attempt->status ?? $payment->status ?? 'created';
+
+            // 2. Check missing_at_provider
+            if ($internalStatus === 'paid' && $externalAmount <= 0.0) {
+                $missingAtProviderCount++;
+                $discrepancy = $internalAmount;
+                $totalDiscrepancy += $discrepancy;
+
+                $rawExceptions[] = [
+                    'tenant_id' => $tenantId,
+                    'payment_id' => $payment?->id ?? $attempt?->payment_id,
+                    'merchant_reference' => $ref ?: ($attempt->merchant_reference ?? 'N/A'),
+                    'expected_amount' => $internalAmount,
+                    'actual_amount' => 0.00,
+                    'discrepancy_amount' => $discrepancy,
+                    'exception_type' => 'missing_at_provider',
+                    'status' => 'pending',
+                    'notes' => "Internal payment '{$ref}' is marked paid but absent from {$provider} settlement report.",
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+                continue;
+            }
+
+            // 3. Check amount_mismatch
+            $amountDiff = abs($internalAmount - $externalAmount);
+            if ($amountDiff > 0.01) {
+                $amountMismatchCount++;
+                $totalDiscrepancy += $amountDiff;
+
+                $rawExceptions[] = [
+                    'tenant_id' => $tenantId,
+                    'payment_id' => $payment?->id ?? $attempt?->payment_id,
+                    'merchant_reference' => $ref ?: ($attempt->merchant_reference ?? 'N/A'),
+                    'expected_amount' => $internalAmount,
+                    'actual_amount' => $externalAmount,
+                    'discrepancy_amount' => $amountDiff,
+                    'exception_type' => 'amount_mismatch',
+                    'status' => 'pending',
+                    'notes' => "Settlement amount mismatch: Expected \${$internalAmount}, external settlement received \${$externalAmount}.",
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+                continue;
+            }
+
+            // 4. Check fee_mismatch
+            if ($externalFee !== null) {
+                $expectedFee = isset($item['expected_fee'])
+                    ? (float) $item['expected_fee']
+                    : round($internalAmount * $defaultFeeRate, 2);
+                $feeDiff = abs($expectedFee - $externalFee);
+
+                if ($feeDiff > 0.01) {
+                    $feeMismatchCount++;
+                    $totalDiscrepancy += $feeDiff;
+
+                    $rawExceptions[] = [
+                        'tenant_id' => $tenantId,
+                        'payment_id' => $payment?->id ?? $attempt?->payment_id,
+                        'merchant_reference' => $ref ?: ($attempt->merchant_reference ?? 'N/A'),
+                        'expected_amount' => $expectedFee,
+                        'actual_amount' => $externalFee,
+                        'discrepancy_amount' => $feeDiff,
+                        'exception_type' => 'fee_mismatch',
+                        'status' => 'pending',
+                        'notes' => "Gateway fee discrepancy: Expected agreed fee \${$expectedFee} ({$defaultFeeRate}%), provider deducted \${$externalFee}.",
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                    continue;
+                }
+            }
+
+            // All matched successfully
+            $matchedCount++;
+            if ($statementLineId) {
+                $matchedLineIds[] = $statementLineId;
+            }
+        }
+
+        $mismatchCount = count($rawExceptions);
+
+        // Record Reconciliation Batch Header
+        $batchId = DB::table('reconciliations')->insertGetId([
+            'tenant_id' => $tenantId,
+            'batch_code' => $batchCode,
+            'reconciled_date' => now()->toDateString(),
+            'total_records' => $totalRecords,
+            'matched_count' => $matchedCount,
+            'mismatch_count' => $mismatchCount,
+            'total_discrepancy_amount' => $totalDiscrepancy,
+            'status' => $mismatchCount > 0 ? 'warning' : 'completed',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Insert Classified Exceptions
+        foreach ($rawExceptions as $ex) {
+            $ex['reconciliation_id'] = $batchId;
+            DB::table('reconciliation_exceptions')->insert($ex);
+        }
+
+        // Update matched bank statement lines
+        if (!empty($matchedLineIds)) {
+            DB::table('bank_statement_lines')
+                ->whereIn('id', $matchedLineIds)
+                ->update([
+                    'match_status' => 'matched',
+                    'reconciliation_id' => $batchId,
+                    'updated_at' => now(),
+                ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Settlement exception classification completed.',
+            'data' => [
+                'reconciliation_id' => $batchId,
+                'batch_code' => $batchCode,
+                'provider' => $provider,
+                'total_records' => $totalRecords,
+                'matched_count' => $matchedCount,
+                'total_discrepancy_amount' => $totalDiscrepancy,
+                'breakdown' => [
+                    'amount_mismatch' => $amountMismatchCount,
+                    'missing_internally' => $missingInternallyCount,
+                    'fee_mismatch' => $feeMismatchCount,
+                    'missing_at_provider' => $missingAtProviderCount,
+                ],
+                'exceptions' => $rawExceptions,
             ],
         ], 201);
     }

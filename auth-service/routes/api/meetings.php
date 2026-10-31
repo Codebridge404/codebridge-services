@@ -51,6 +51,7 @@ Route::put('/meeting-rooms/{id}', [MeetingRoomController::class, 'update']);
 Route::delete('/meeting-rooms/{id}', [MeetingRoomController::class, 'destroy']);
 
 Route::post('/meetings/recurring/preview', [MeetingController::class, 'previewRecurring']);
+Route::get('/meetings/actions/my', [MeetingActionItemController::class, 'myActions']);
 Route::patch('/meetings/actions/{id}/status', [MeetingActionItemController::class, 'updateStatus']);
 Route::delete('/meetings/actions/{id}', [MeetingActionItemController::class, 'destroy']);
 
