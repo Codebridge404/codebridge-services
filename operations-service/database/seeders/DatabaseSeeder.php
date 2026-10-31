@@ -42,67 +42,8 @@ class DatabaseSeeder extends Seeder
             ]);
         }
 
-        // 2. Seed Users across all 8 RBAC Roles
-        $users = [
-            [
-                'email' => 'vibolsen2002@gmail.com',
-                'name' => 'Vibol',
-                'role' => 'super_admin',
-                'password' => Hash::make('Vibol@2020'),
-            ],
-            [
-                'email' => 'manager@pos.com',
-                'name' => 'Outlet Manager',
-                'role' => 'outlet_manager',
-                'password' => Hash::make('password'),
-            ],
-            [
-                'email' => 'supervisor@pos.com',
-                'name' => 'Store Supervisor',
-                'role' => 'supervisor',
-                'password' => Hash::make('password'),
-            ],
-            [
-                'email' => 'cashier@pos.com',
-                'name' => 'John Cashier',
-                'role' => 'cashier',
-                'password' => Hash::make('password'),
-            ],
-            [
-                'email' => 'inventory@pos.com',
-                'name' => 'Stock Clerk',
-                'role' => 'inventory_clerk',
-                'password' => Hash::make('password'),
-            ],
-            [
-                'email' => 'accountant@pos.com',
-                'name' => 'Finance Accountant',
-                'role' => 'accountant',
-                'password' => Hash::make('password'),
-            ],
-            [
-                'email' => 'customer@pos.com',
-                'name' => 'Demo Customer',
-                'role' => 'customer',
-                'password' => Hash::make('password'),
-            ],
-        ];
-
-        $adminUser = null;
-        foreach ($users as $userData) {
-            $user = User::updateOrCreate(
-                ['email' => $userData['email']],
-                [
-                    'name' => $userData['name'],
-                    'role' => $userData['role'],
-                    'outlet_id' => $outletId,
-                    'password' => $userData['password'],
-                ]
-            );
-            if ($userData['role'] === 'super_admin') {
-                $adminUser = $user;
-            }
-        }
+        // 2. Resolve Admin User from auth_db
+        $adminUser = User::where('email', 'vibolsen2002@gmail.com')->first() ?? User::first();
 
         // 3. Categories
         $existingBev = DB::table('categories')->where('slug', 'beverages')->first();

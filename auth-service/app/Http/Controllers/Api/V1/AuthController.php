@@ -248,6 +248,7 @@ class AuthController extends Controller
                 'Pragma' => 'no-cache',
             ],
             extra: [
+                'token' => $jwtToken,
                 'access_token' => $jwtToken,
                 'refresh_token' => $refreshToken,
                 'token_type' => 'Bearer',
