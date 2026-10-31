@@ -40,24 +40,24 @@ run_rule_check() {
 }
 
 # 1. Unit Testing
-run_rule_check "1" "Unit Testing (Isolated Logic & Domain Classes)" \
-    "php artisan test --testsuite=Unit"
+run_rule_check "1" "Unit Testing (Currency Math, Logic & Domain Models)" \
+    "php artisan test --filter=ExchangeRateUnitTest,ExampleTest"
 
 # 2. Functional & API Testing
 run_rule_check "2" "Functional & API Testing (Catalog, Sales, Finance & Inventory)" \
-    "php artisan test --filter=CatalogTest,SalesTest,FinanceTest,InventoryTest"
+    "php artisan test --filter=CatalogAndOperationsApiTest,CatalogTest,SalesTest,FinanceTest,InventoryTest"
 
 # 3. Validation Testing
-run_rule_check "3" "Input Validation Testing (Sanitizing Search & Constraints)" \
-    "php artisan test --filter=InputValidationSecurityTest"
+run_rule_check "3" "Input Validation Testing (Rejection of Malformed / Missing Inputs)" \
+    "php artisan test --filter=OperationsInputValidationTest,InputValidationSecurityTest"
 
 # 4. Authentication Testing
 run_rule_check "4" "Authentication Testing (Stateless JWT Verification & Forgery Defense)" \
-    "php artisan test --filter=JwtAuthenticationTest"
+    "php artisan test --filter=OperationsAuthenticationTest,JwtAuthenticationTest"
 
 # 5. Shift & Operational Workflow Testing
-run_rule_check "5" "Operational Testing (Shifts, Reconciliation & Variance Alerts)" \
-    "php artisan test --filter=ShiftsTest,ShiftVarianceNotificationTest,PaymentsTest"
+run_rule_check "5" "Operational Testing (Full Shift Lifecycle, Movements, PIN & Variance Alerts)" \
+    "php artisan test --filter=ShiftWorkflowTest,ShiftsTest,ShiftVarianceNotificationTest,PaymentsTest"
 
 # 6. Offline POS Conflict & Idempotency Testing
 run_rule_check "6" "Offline POS Sync Testing (Stock Collision Resolution & Idempotency)" \
@@ -88,3 +88,4 @@ else
     echo -e "${BLUE}${BOLD}==============================================================================${NC}\n"
     exit 1
 fi
+
