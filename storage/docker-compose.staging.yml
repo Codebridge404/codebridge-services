@@ -1,0 +1,49 @@
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: codebridge-staging-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-staging_codebridge_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-staging_codebridge_secret_key_2026}
+    volumes:
+      - staging-minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - minio
+          - s3
+          - staging-minio
+
+  minio-init:
+    image: alpine:latest
+    container_name: codebridge-staging-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - staging-minio-data:/data
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /data/codebridge-auth/avatars /data/codebridge-operations/products
+        chmod -R 777 /data
+        echo 'Staging MinIO buckets initialized successfully.'
+        exit 0
+    networks:
+      - codebridge-staging-network
+
+volumes:
+  staging-minio-data:
+
+networks:
+  codebridge-staging-network:
+    name: codebridge-staging-network

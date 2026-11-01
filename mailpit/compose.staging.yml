@@ -1,0 +1,22 @@
+services:
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: smartpos-staging-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:1026:1025"
+      - "127.0.0.1:8026:8025"
+    environment:
+      MP_MAX_MESSAGES: 5000
+      MP_DATABASE: ""
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - mailpit
+          - smartpos-mailpit-staging
+
+networks:
+  codebridge-staging-network:
+    name: codebridge-staging-network

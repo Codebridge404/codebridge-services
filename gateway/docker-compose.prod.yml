@@ -1,0 +1,44 @@
+services:
+  gateway-blue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-blue-gateway
+    restart: unless-stopped
+    expose:
+      - "80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services:/etc/nginx/services:ro
+      - ./docs.html:/usr/share/nginx/html/docs.html:ro
+    networks:
+      codebridge-prod-blue-net:
+        aliases:
+          - api-gateway
+          - codebridge-api-gateway
+          - codebridge-prod-blue-gateway
+
+  gateway-green:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-green-gateway
+    restart: unless-stopped
+    expose:
+      - "80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services:/etc/nginx/services:ro
+      - ./docs.html:/usr/share/nginx/html/docs.html:ro
+    networks:
+      codebridge-prod-green-net:
+        aliases:
+          - api-gateway
+          - codebridge-api-gateway
+          - codebridge-prod-green-gateway
+
+networks:
+  codebridge-prod-blue-net:
+    name: codebridge-prod-blue-net
+  codebridge-prod-green-net:
+    name: codebridge-prod-green-net

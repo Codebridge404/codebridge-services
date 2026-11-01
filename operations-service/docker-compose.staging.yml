@@ -1,0 +1,94 @@
+services:
+
+  # 1. Operations PHP-FPM Service (Staging)
+  operations-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-staging-operations-service
+    restart: unless-stopped
+    env_file:
+      - ../env/staging/operations.env
+    expose:
+      - "9000"
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+      operations-redis:
+        condition: service_healthy
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - operations-service
+          - codebridge-operations-service
+
+  # 2. Operations Horizon Queue Worker (Staging)
+  operations-horizon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-staging-operations-horizon
+    restart: unless-stopped
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+    env_file:
+      - ../env/staging/operations.env
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+      operations-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-staging-network
+
+  # 3. Isolated Staging Operations MySQL Database
+  operations-mysql:
+    image: mysql:8.4
+    container_name: codebridge-staging-operations-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: codebridge_operations_staging
+      MYSQL_USER: codebridge_ops_user
+      MYSQL_PASSWORD: ${OPERATIONS_DB_PASSWORD:-staging_ops_pass_change_me}
+      MYSQL_ROOT_PASSWORD: ${OPERATIONS_DB_ROOT_PASSWORD:-staging_ops_pass_change_me}
+    volumes:
+      - staging-operations-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - operations-mysql
+          - codebridge-operations-mysql
+          - codebridge-operations-mysql-staging
+
+  # 4. Isolated Staging Operations Redis
+  operations-redis:
+    image: redis:8-alpine
+    container_name: codebridge-staging-operations-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass "${OPERATIONS_REDIS_PASSWORD:-staging_ops_redis_secret_change_me}"
+    volumes:
+      - staging-operations-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${OPERATIONS_REDIS_PASSWORD:-staging_ops_redis_secret_change_me}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - operations-redis
+          - codebridge-operations-redis
+          - codebridge-operations-redis-staging
+
+volumes:
+  staging-operations-mysql-data:
+  staging-operations-redis-data:
+
+networks:
+  codebridge-staging-network:
+    name: codebridge-staging-network
