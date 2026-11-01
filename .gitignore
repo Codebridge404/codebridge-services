@@ -29,3 +29,9 @@ Desktop.ini
 **/storage/framework/views/*
 **/storage/framework/testing/*
 **/bootstrap/cache/*
+
+# Nginx Proxy Manager Data & SSL Certificates
+nginx-proxy-manager/data/
+nginx-proxy-manager/letsencrypt/
+**/data/
+**/letsencrypt/

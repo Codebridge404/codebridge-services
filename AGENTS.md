@@ -1,5 +1,12 @@
 # Service Architecture & Quality Assurance Rules
 
+## Strict Git Push Policy: NO AUTOMATIC PUSH TO GITHUB
+- **NEVER push code to GitHub automatically** (`git push`, publishing remote branches, or opening PRs).
+- All changes, implementations, and tests must remain **STRICTLY LOCAL** on the user's machine.
+- Pushing to GitHub is ONLY permitted when the user gives an explicit, direct command in their prompt (e.g., *"push to github now"*).
+
+---
+
 ## Allowed Services for Code Updates
 All services in `codebridge-services/` are **ALLOWED (Read & Write)** for code updates, features, tests, and configuration:
 - **`auth-service/`**: Authentication, JWT, Multi-Tenancy, RBAC, CRM, Outlets, Meetings, Store Credit.
