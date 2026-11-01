@@ -66,8 +66,8 @@ services:
     environment:
       MYSQL_DATABASE: codebridge_auth_staging
       MYSQL_USER: codebridge_auth_user
-      MYSQL_PASSWORD: ${AUTH_DB_PASSWORD:-staging_auth_pass_change_me}
-      MYSQL_ROOT_PASSWORD: ${AUTH_DB_ROOT_PASSWORD:-staging_auth_pass_change_me}
+      MYSQL_PASSWORD: ${AUTH_MYSQL_PASSWORD:-${AUTH_DB_PASSWORD:-staging_auth_pass_change_me}}
+      MYSQL_ROOT_PASSWORD: ${AUTH_MYSQL_ROOT_PASSWORD:-${AUTH_DB_ROOT_PASSWORD:-staging_auth_root_secret_change_me}}
     volumes:
       - staging-auth-mysql-data:/var/lib/mysql
     healthcheck:

@@ -48,8 +48,8 @@ services:
     environment:
       MYSQL_DATABASE: codebridge_operations_staging
       MYSQL_USER: codebridge_ops_user
-      MYSQL_PASSWORD: ${OPERATIONS_DB_PASSWORD:-staging_ops_pass_change_me}
-      MYSQL_ROOT_PASSWORD: ${OPERATIONS_DB_ROOT_PASSWORD:-staging_ops_pass_change_me}
+      MYSQL_PASSWORD: ${OPERATIONS_MYSQL_PASSWORD:-${OPERATIONS_DB_PASSWORD:-staging_ops_pass_change_me}}
+      MYSQL_ROOT_PASSWORD: ${OPERATIONS_MYSQL_ROOT_PASSWORD:-${OPERATIONS_DB_ROOT_PASSWORD:-staging_ops_root_secret_change_me}}
     volumes:
       - staging-operations-mysql-data:/var/lib/mysql
     healthcheck:

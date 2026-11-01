@@ -5,8 +5,8 @@ services:
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-staging_codebridge_admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-staging_codebridge_secret_key_2026}
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-codebridge_staging_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-staging_minio_secret_change_me}
     volumes:
       - staging-minio-data:/data
     healthcheck:
@@ -21,6 +21,8 @@ services:
           - minio
           - s3
           - staging-minio
+          - codebridge-minio-staging
+          - codebridge-minio
 
   minio-init:
     image: alpine:latest
@@ -34,7 +36,7 @@ services:
       - /bin/sh
       - -c
       - |
-        mkdir -p /data/codebridge-auth/avatars /data/codebridge-operations/products
+        mkdir -p /data/codebridge-auth-staging/avatars /data/codebridge-operations-staging/products /data/codebridge-auth/avatars /data/codebridge-operations/products
         chmod -R 777 /data
         echo 'Staging MinIO buckets initialized successfully.'
         exit 0
@@ -47,4 +49,3 @@ volumes:
 networks:
   codebridge-staging-network:
     name: codebridge-staging-network
-
