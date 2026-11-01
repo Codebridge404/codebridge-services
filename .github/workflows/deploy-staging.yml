@@ -153,6 +153,9 @@ jobs:
         run: |
           echo "Applying manifests via Kustomize to namespace [codebridge-staging]..."
           if [ -d "k8s/staging" ]; then
+            if [ -f "k8s/staging/secrets.example.yaml" ] && [ ! -f "k8s/staging/secrets.yaml" ]; then
+              cp k8s/staging/secrets.example.yaml k8s/staging/secrets.yaml
+            fi
             kubectl apply -k k8s/staging/
             kubectl rollout status deployment/gateway -n codebridge-staging --timeout=180s
             kubectl rollout status deployment/auth-service -n codebridge-staging --timeout=180s
