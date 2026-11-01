@@ -188,4 +188,15 @@ Platform testing policy suite [`test_all_policies.sh`](file:///Users/macbookpro/
 | **Operations Service** | 9 / 9 Rules | 40 Tests | 116 Assertions | 0 | 0 | **PASS** |
 | **Platform Total** | **19 / 19 Rules** | **221 Tests** | **966 Assertions** | **0** | **0** | **PASS** |
 
+---
+
+## 8. GitHub Actions CI/CD Pipeline Modernization
+
+Updated [`.github/workflows/deploy-staging.yml`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/.github/workflows/deploy-staging.yml) with robust operational controls:
+- **Fast-Forward Git Synchronization**: Configured `git pull --ff-only origin demo` to prevent accidental non-linear merge commits on the staging VPS host.
+- **Fail-Fast Environment Verification**: Added pre-deployment validation for required staging environment files (`compose.env`, `auth.env`, `operations.env`) before triggering container builds or schema migrations.
+- **Automated K8s Secret Fixture Provisioning for CI**: Added automatic copy of `k8s/staging/secrets.example.yaml` to `k8s/staging/secrets.yaml` during CI build validation so `kubectl kustomize` passes cleanly without committing actual secrets to Git.
+- **Explicit Execution Rights & Health Auditing**: Automatic permission elevation (`chmod +x deploy/staging/deploy.sh deploy/staging/status.sh`) and container health verification (`status.sh`) executed on every successful deployment.
+
+
 
