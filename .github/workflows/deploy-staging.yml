@@ -43,6 +43,11 @@ jobs:
 
       - name: Validate Kubernetes Manifests (Kustomize)
         run: |
+          if [ -d "k8s/staging" ]; then
+            echo "Validating k8s/staging manifests..."
+            kubectl kustomize k8s/staging > /dev/null
+            echo "✔ k8s/staging manifests valid."
+          fi
           if [ -d "auth-service/k8s" ]; then
             echo "Validating auth-service K8s manifests..."
             kubectl kustomize auth-service/k8s > /dev/null
@@ -121,7 +126,14 @@ jobs:
 
       - name: Apply Kubernetes Manifests to Cluster
         run: |
-          echo "Applying manifests via Kustomize to namespace [codebridge]..."
-          kubectl apply -k auth-service/k8s/
-          kubectl rollout status deployment/auth-service -n codebridge --timeout=180s
+          echo "Applying manifests via Kustomize to namespace [codebridge-staging]..."
+          if [ -d "k8s/staging" ]; then
+            kubectl apply -k k8s/staging/
+            kubectl rollout status deployment/gateway -n codebridge-staging --timeout=180s
+            kubectl rollout status deployment/auth-service -n codebridge-staging --timeout=180s
+            kubectl rollout status deployment/operations-service -n codebridge-staging --timeout=180s
+          else
+            kubectl apply -k auth-service/k8s/
+            kubectl rollout status deployment/auth-service -n codebridge --timeout=180s
+          fi
           echo "✔ Kubernetes rollout complete."

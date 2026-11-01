@@ -1,0 +1,106 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: auth-migration-job
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: auth-migration
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auth-migration
+        environment: staging
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-auth-mysql
+          image: busybox:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Checking reachability for auth-mysql:3306..."
+              until nc -z -v -w 3 auth-mysql 3306; do
+                echo "Waiting for auth-mysql database service..."
+                sleep 2
+              done
+              echo "auth-mysql is listening."
+      containers:
+        - name: artisan-migrate
+          image: codebridge-auth-service:staging
+          imagePullPolicy: IfNotPresent
+          command:
+            - php
+            - artisan
+            - migrate
+            - --force
+          envFrom:
+            - configMapRef:
+                name: auth-config
+            - secretRef:
+                name: auth-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: operations-migration-job
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: operations-migration
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: operations-migration
+        environment: staging
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-operations-mysql
+          image: busybox:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Checking reachability for operations-mysql:3306..."
+              until nc -z -v -w 3 operations-mysql 3306; do
+                echo "Waiting for operations-mysql database service..."
+                sleep 2
+              done
+              echo "operations-mysql is listening."
+      containers:
+        - name: artisan-migrate
+          image: codebridge-operations-service:staging
+          imagePullPolicy: IfNotPresent
+          command:
+            - php
+            - artisan
+            - migrate
+            - --force
+          envFrom:
+            - configMapRef:
+                name: operations-config
+            - secretRef:
+                name: operations-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+
