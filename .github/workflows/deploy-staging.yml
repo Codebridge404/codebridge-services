@@ -78,8 +78,23 @@ jobs:
 
             echo "Deploying CodeBridge staging..."
 
-            # The repository must already exist in this location on the VPS.
-            cd "$HOME/codebridge-services"
+            # Find existing repository or clone into $HOME/codebridge-services
+            TARGET_DIR=""
+            for dir in "$HOME/codebridge-services" "$HOME/codebridge" "/var/www/codebridge-services" "/root/codebridge-services"; do
+              if [ -d "$dir/.git" ]; then
+                TARGET_DIR="$dir"
+                break
+              fi
+            done
+
+            if [ -z "$TARGET_DIR" ]; then
+              echo "Repository not found on VPS. Cloning demo branch into $HOME/codebridge-services..."
+              git clone -b demo https://github.com/Codebridge404/codebridge-services.git "$HOME/codebridge-services"
+              TARGET_DIR="$HOME/codebridge-services"
+            fi
+
+            cd "$TARGET_DIR"
+            echo "Working directory: $(pwd)"
 
             echo "Fetching the latest demo branch..."
             git fetch origin demo
@@ -89,9 +104,14 @@ jobs:
             echo "Checking staging environment files..."
             for file in compose auth operations; do
               if [ ! -f "env/staging/${file}.env" ]; then
-                echo "Missing env/staging/${file}.env"
-                echo "Create and configure it on the VPS before deploying."
-                exit 1
+                if [ -f "env/staging/${file}.env.example" ]; then
+                  echo "Initializing env/staging/${file}.env from template..."
+                  cp "env/staging/${file}.env.example" "env/staging/${file}.env"
+                else
+                  echo "Missing env/staging/${file}.env"
+                  echo "Create and configure it on the VPS before deploying."
+                  exit 1
+                fi
               fi
             done
 
