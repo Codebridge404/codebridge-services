@@ -1,0 +1,43 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: codebridge-api-ingress
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: ingress
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - staging-codebridge-api.servicefixit.me
+        - staging-codebridge-cdn.servicefixit.me
+      secretName: codebridge-staging-tls
+  rules:
+    # 1. Main Unified Microservice Gateway (Auth + Operations + POS)
+    - host: staging-codebridge-api.servicefixit.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 80
+
+    # 2. MinIO S3 Object Storage CDN
+    - host: staging-codebridge-cdn.servicefixit.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: minio
+                port:
+                  number: 9000
+

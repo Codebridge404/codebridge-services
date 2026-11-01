@@ -1,0 +1,13 @@
+name: codebridge-staging
+
+networks:
+  codebridge-staging-network:
+    name: codebridge-staging-network
+
+include:
+  - path: ./infrastructure/nginx-proxy-manager/docker-compose.yml
+  - path: ./gateway/docker-compose.staging.yml
+  - path: ./auth-service/docker-compose.staging.yml
+  - path: ./operations-service/docker-compose.staging.yml
+  - path: ./storage/docker-compose.staging.yml
+  - path: ./mailpit/compose.staging.yml

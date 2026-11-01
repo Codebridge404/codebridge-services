@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+        environment: staging
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:1.27-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: nginx-config
+              mountPath: /etc/nginx/fastcgi_php.conf
+              subPath: fastcgi_php.conf
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 50m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: gateway-nginx-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+

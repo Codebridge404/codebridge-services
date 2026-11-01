@@ -1,0 +1,116 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operations-service
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: operations-service
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: operations-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: operations-service
+        environment: staging
+    spec:
+      containers:
+        - name: operations-service
+          image: codebridge-operations-service:staging
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: php-fpm
+              containerPort: 9000
+          envFrom:
+            - configMapRef:
+                name: operations-config
+            - secretRef:
+                name: operations-secrets
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: operations-service
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: operations-service
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: operations-service
+  ports:
+    - name: php-fpm
+      port: 9000
+      targetPort: php-fpm
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: operations-horizon
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: operations-horizon
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: operations-horizon
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: operations-horizon
+        environment: staging
+    spec:
+      containers:
+        - name: worker
+          image: codebridge-operations-service:staging
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+          envFrom:
+            - configMapRef:
+                name: operations-config
+            - secretRef:
+                name: operations-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+

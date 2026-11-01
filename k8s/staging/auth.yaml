@@ -1,0 +1,160 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-service
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: auth-service
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-service
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auth-service
+        environment: staging
+    spec:
+      containers:
+        - name: auth-service
+          image: codebridge-auth-service:staging
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: php-fpm
+              containerPort: 9000
+          envFrom:
+            - configMapRef:
+                name: auth-config
+            - secretRef:
+                name: auth-secrets
+          readinessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            tcpSocket:
+              port: 9000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth-service
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: auth-service
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: auth-service
+  ports:
+    - name: php-fpm
+      port: 9000
+      targetPort: php-fpm
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-horizon
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: auth-horizon
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-horizon
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auth-horizon
+        environment: staging
+    spec:
+      containers:
+        - name: worker
+          image: codebridge-auth-service:staging
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+          envFrom:
+            - configMapRef:
+                name: auth-config
+            - secretRef:
+                name: auth-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: auth-scheduler
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: auth-scheduler
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: auth-scheduler
+            environment: staging
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: scheduler
+              image: codebridge-auth-service:staging
+              imagePullPolicy: IfNotPresent
+              command:
+                - php
+                - artisan
+                - schedule:run
+              envFrom:
+                - configMapRef:
+                    name: auth-config
+                - secretRef:
+                    name: auth-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 128Mi

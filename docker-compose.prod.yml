@@ -1,0 +1,16 @@
+name: codebridge-prod
+
+networks:
+  codebridge-prod-blue-net:
+    name: codebridge-prod-blue-net
+  codebridge-prod-green-net:
+    name: codebridge-prod-green-net
+  codebridge-prod-data-net:
+    name: codebridge-prod-data-net
+
+include:
+  - path: ./infrastructure/nginx-proxy-manager/docker-compose.yml
+  - path: ./gateway/docker-compose.prod.yml
+  - path: ./auth-service/docker-compose.prod.yml
+  - path: ./operations-service/docker-compose.prod.yml
+  - path: ./storage/docker-compose.prod.yml

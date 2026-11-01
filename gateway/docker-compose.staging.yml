@@ -1,0 +1,23 @@
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-staging-gateway
+    restart: unless-stopped
+    expose:
+      - "80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./services:/etc/nginx/services:ro
+      - ./docs.html:/usr/share/nginx/html/docs.html:ro
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - api-gateway
+          - codebridge-api-gateway
+          - codebridge-staging-gateway
+
+networks:
+  codebridge-staging-network:
+    name: codebridge-staging-network

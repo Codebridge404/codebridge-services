@@ -1,0 +1,62 @@
+services:
+  minio:
+    image: minio/minio:latest
+    container_name: codebridge-prod-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-prod_codebridge_admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-prod_codebridge_secret_key_2026}
+    volumes:
+      - prod-minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      codebridge-prod-data-net:
+        aliases:
+          - minio
+          - s3
+          - prod-minio
+      codebridge-prod-blue-net:
+        aliases:
+          - minio
+          - s3
+      codebridge-prod-green-net:
+        aliases:
+          - minio
+          - s3
+
+  minio-init:
+    image: alpine:latest
+    container_name: codebridge-prod-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - prod-minio-data:/data
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /data/codebridge-auth/avatars /data/codebridge-operations/products
+        chmod -R 777 /data
+        echo 'Production MinIO buckets initialized successfully.'
+        exit 0
+    networks:
+      - codebridge-prod-data-net
+
+volumes:
+  prod-minio-data:
+
+networks:
+  codebridge-prod-data-net:
+    name: codebridge-prod-data-net
+  codebridge-prod-blue-net:
+    name: codebridge-prod-blue-net
+  codebridge-prod-green-net:
+    name: codebridge-prod-green-net
+

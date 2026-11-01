@@ -1,0 +1,139 @@
+name: Deploy Staging (Branch demo)
+
+on:
+  push:
+    branches:
+      - demo
+  workflow_dispatch:
+
+concurrency:
+  group: staging-deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 1. CI GATE: BUILD STAGING IMAGES & VALIDATE K8S MANIFESTS
+  # --------------------------------------------------------------------------
+  build-and-verify:
+    name: Build Staging Images & K8s Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Prepare Staging Env for Build Validation
+        run: |
+          cp env/staging/compose.env.example env/staging/compose.env
+          cp env/staging/auth.env.example env/staging/auth.env
+          cp env/staging/operations.env.example env/staging/operations.env
+
+      - name: Validate Staging Docker Compose Configuration
+        run: |
+          docker compose -p codebridge-staging --env-file env/staging/compose.env -f docker-compose.staging.yml config --quiet
+          echo "✔ docker-compose.staging.yml configuration is valid."
+
+      - name: Build Staging Docker Images
+        run: |
+          echo "Building all staging images..."
+          docker compose -p codebridge-staging --env-file env/staging/compose.env -f docker-compose.staging.yml build
+          echo "✔ All staging Docker images built successfully."
+
+      - name: Validate Kubernetes Manifests (Kustomize)
+        run: |
+          if [ -d "k8s/staging" ]; then
+            echo "Validating k8s/staging manifests..."
+            kubectl kustomize k8s/staging > /dev/null
+            echo "✔ k8s/staging manifests valid."
+          fi
+          if [ -d "auth-service/k8s" ]; then
+            echo "Validating auth-service K8s manifests..."
+            kubectl kustomize auth-service/k8s > /dev/null
+            echo "✔ auth-service K8s manifests valid."
+          fi
+
+  # --------------------------------------------------------------------------
+  # 2. DEPLOY STAGING DOCKER COMPOSE TO VPS
+  # --------------------------------------------------------------------------
+  deploy-to-vps:
+    name: Deploy to Staging VPS
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/demo' && github.event_name == 'push'
+    steps:
+      - name: Deploy Staging Stack via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          DEPLOY_PATH: ${{ secrets.STAGING_DEPLOY_PATH || '~/codebridge-services' }}
+        with:
+          host: ${{ secrets.STAGING_VPS_HOST }}
+          username: ${{ secrets.STAGING_VPS_USER }}
+          key: ${{ secrets.STAGING_VPS_SSH_KEY }}
+          port: ${{ secrets.STAGING_VPS_PORT || 22 }}
+          envs: DEPLOY_PATH
+          script: |
+            set -euo pipefail
+            echo "================================================================="
+            echo "▶ Deploying CodeBridges Staging on VPS..."
+            echo "================================================================="
+            
+            cd "$DEPLOY_PATH"
+            
+            echo "▶ Fetching latest demo branch..."
+            git fetch origin demo
+            git checkout demo
+            git pull origin demo
+            
+            # Ensure staging env files exist
+            if [ ! -f "env/staging/compose.env" ]; then
+              cp env/staging/compose.env.example env/staging/compose.env
+            fi
+            if [ ! -f "env/staging/auth.env" ]; then
+              cp env/staging/auth.env.example env/staging/auth.env
+            fi
+            if [ ! -f "env/staging/operations.env" ]; then
+              cp env/staging/operations.env.example env/staging/operations.env
+            fi
+            
+            echo "▶ Executing automated staging deployment engine..."
+            chmod +x deploy/staging/deploy.sh deploy/staging/status.sh
+            ./deploy/staging/deploy.sh
+            
+            echo "▶ Inspecting health and container status..."
+            ./deploy/staging/status.sh
+            echo "✔ Staging deployment complete!"
+
+  # --------------------------------------------------------------------------
+  # 3. KUBERNETES / K3S CLUSTER DEPLOYMENT (OPTIONAL)
+  # --------------------------------------------------------------------------
+  deploy-k8s:
+    name: Apply K3s/Kubernetes Manifests
+    needs: deploy-to-vps
+    runs-on: ubuntu-latest
+    # Runs when KUBECONFIG_STAGING secret is configured
+    if: github.ref == 'refs/heads/demo' && secrets.KUBECONFIG_STAGING != ''
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Apply Kubernetes Manifests to Cluster
+        run: |
+          echo "Applying manifests via Kustomize to namespace [codebridge-staging]..."
+          if [ -d "k8s/staging" ]; then
+            kubectl apply -k k8s/staging/
+            kubectl rollout status deployment/gateway -n codebridge-staging --timeout=180s
+            kubectl rollout status deployment/auth-service -n codebridge-staging --timeout=180s
+            kubectl rollout status deployment/operations-service -n codebridge-staging --timeout=180s
+          else
+            kubectl apply -k auth-service/k8s/
+            kubectl rollout status deployment/auth-service -n codebridge --timeout=180s
+          fi
+          echo "✔ Kubernetes rollout complete."

@@ -1,0 +1,161 @@
+services:
+
+  # ----------------------------------------------------------------------------
+  # BLUE SLOT (Slot A) - Production Auth Service & Horizon
+  # ----------------------------------------------------------------------------
+  auth-service-blue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-auth-blue
+    restart: unless-stopped
+    env_file:
+      - ../env/production/auth.env
+    expose:
+      - "9000"
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      codebridge-prod-blue-net:
+        aliases:
+          - auth-service
+          - codebridge-auth-service
+      codebridge-prod-data-net:
+
+  auth-horizon-blue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-auth-horizon-blue
+    restart: unless-stopped
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+    env_file:
+      - ../env/production/auth.env
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-prod-blue-net
+      - codebridge-prod-data-net
+
+  # ----------------------------------------------------------------------------
+  # GREEN SLOT (Slot B) - Production Auth Service & Horizon
+  # ----------------------------------------------------------------------------
+  auth-service-green:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-auth-green
+    restart: unless-stopped
+    env_file:
+      - ../env/production/auth.env
+    expose:
+      - "9000"
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      codebridge-prod-green-net:
+        aliases:
+          - auth-service
+          - codebridge-auth-service
+      codebridge-prod-data-net:
+
+  auth-horizon-green:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-auth-horizon-green
+    restart: unless-stopped
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+    env_file:
+      - ../env/production/auth.env
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-prod-green-net
+      - codebridge-prod-data-net
+
+  # ----------------------------------------------------------------------------
+  # SINGLETON INFRASTRUCTURE (Scheduler & Persistent Data Layer)
+  # ----------------------------------------------------------------------------
+  auth-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-auth-scheduler
+    restart: unless-stopped
+    command: ["php", "artisan", "schedule:work"]
+    env_file:
+      - ../env/production/auth.env
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-prod-data-net
+
+  auth-mysql:
+    image: mysql:8.4
+    container_name: codebridge-prod-auth-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: codebridge_auth_prod
+      MYSQL_USER: codebridge_auth_user
+      MYSQL_PASSWORD: ${AUTH_DB_PASSWORD:-prod_auth_strong_secret_change_me}
+      MYSQL_ROOT_PASSWORD: ${AUTH_DB_ROOT_PASSWORD:-prod_auth_strong_root_change_me}
+    volumes:
+      - prod-auth-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      codebridge-prod-data-net:
+        aliases:
+          - auth-mysql
+          - codebridge-auth-mysql
+
+  auth-redis:
+    image: redis:8-alpine
+    container_name: codebridge-prod-auth-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass "${AUTH_REDIS_PASSWORD:-prod_auth_redis_secret_change_me}"
+    volumes:
+      - prod-auth-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${AUTH_REDIS_PASSWORD:-prod_auth_redis_secret_change_me}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      codebridge-prod-data-net:
+        aliases:
+          - auth-redis
+          - codebridge-auth-redis
+
+volumes:
+  prod-auth-mysql-data:
+  prod-auth-redis-data:
+
+networks:
+  codebridge-prod-blue-net:
+    name: codebridge-prod-blue-net
+  codebridge-prod-green-net:
+    name: codebridge-prod-green-net
+  codebridge-prod-data-net:
+    name: codebridge-prod-data-net
+

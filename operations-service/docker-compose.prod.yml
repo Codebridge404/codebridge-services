@@ -1,0 +1,144 @@
+services:
+
+  # ----------------------------------------------------------------------------
+  # BLUE SLOT (Slot A) - Production Operations Service & Horizon
+  # ----------------------------------------------------------------------------
+  operations-service-blue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-operations-blue
+    restart: unless-stopped
+    env_file:
+      - ../env/production/operations.env
+    expose:
+      - "9000"
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+      operations-redis:
+        condition: service_healthy
+    networks:
+      codebridge-prod-blue-net:
+        aliases:
+          - operations-service
+          - codebridge-operations-service
+      codebridge-prod-data-net:
+
+  operations-horizon-blue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-operations-horizon-blue
+    restart: unless-stopped
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+    env_file:
+      - ../env/production/operations.env
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+      operations-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-prod-blue-net
+      - codebridge-prod-data-net
+
+  # ----------------------------------------------------------------------------
+  # GREEN SLOT (Slot B) - Production Operations Service & Horizon
+  # ----------------------------------------------------------------------------
+  operations-service-green:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-operations-green
+    restart: unless-stopped
+    env_file:
+      - ../env/production/operations.env
+    expose:
+      - "9000"
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+      operations-redis:
+        condition: service_healthy
+    networks:
+      codebridge-prod-green-net:
+        aliases:
+          - operations-service
+          - codebridge-operations-service
+      codebridge-prod-data-net:
+
+  operations-horizon-green:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-prod-operations-horizon-green
+    restart: unless-stopped
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+    env_file:
+      - ../env/production/operations.env
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+      operations-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-prod-green-net
+      - codebridge-prod-data-net
+
+  # ----------------------------------------------------------------------------
+  # PERSISTENT SHARED DATA LAYER (Operations MySQL & Redis)
+  # ----------------------------------------------------------------------------
+  operations-mysql:
+    image: mysql:8.4
+    container_name: codebridge-prod-operations-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: codebridge_operations_prod
+      MYSQL_USER: codebridge_ops_user
+      MYSQL_PASSWORD: ${OPERATIONS_DB_PASSWORD:-prod_ops_strong_secret_change_me}
+      MYSQL_ROOT_PASSWORD: ${OPERATIONS_DB_ROOT_PASSWORD:-prod_ops_strong_root_change_me}
+    volumes:
+      - prod-operations-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      codebridge-prod-data-net:
+        aliases:
+          - operations-mysql
+          - codebridge-operations-mysql
+
+  operations-redis:
+    image: redis:8-alpine
+    container_name: codebridge-prod-operations-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass "${OPERATIONS_REDIS_PASSWORD:-prod_ops_redis_secret_change_me}"
+    volumes:
+      - prod-operations-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${OPERATIONS_REDIS_PASSWORD:-prod_ops_redis_secret_change_me}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      codebridge-prod-data-net:
+        aliases:
+          - operations-redis
+          - codebridge-operations-redis
+
+volumes:
+  prod-operations-mysql-data:
+  prod-operations-redis-data:
+
+networks:
+  codebridge-prod-blue-net:
+    name: codebridge-prod-blue-net
+  codebridge-prod-green-net:
+    name: codebridge-prod-green-net
+  codebridge-prod-data-net:
+    name: codebridge-prod-data-net
+

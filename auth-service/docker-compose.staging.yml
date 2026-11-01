@@ -1,0 +1,113 @@
+services:
+
+  # 1. Auth & Identity PHP-FPM Service (Staging)
+  auth-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-staging-auth-service
+    restart: unless-stopped
+    env_file:
+      - ../env/staging/auth.env
+    expose:
+      - "9000"
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - auth-service
+          - codebridge-auth-service
+
+  # 2. Auth Horizon Queue Worker (Staging)
+  auth-horizon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-staging-auth-horizon
+    restart: unless-stopped
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+    env_file:
+      - ../env/staging/auth.env
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-staging-network
+
+  # 3. Auth Task Scheduler (Staging)
+  auth-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: codebridge-staging-auth-scheduler
+    restart: unless-stopped
+    command: ["php", "artisan", "schedule:work"]
+    env_file:
+      - ../env/staging/auth.env
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-staging-network
+
+  # 4. Isolated Staging Auth MySQL Database
+  auth-mysql:
+    image: mysql:8.4
+    container_name: codebridge-staging-auth-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: codebridge_auth_staging
+      MYSQL_USER: codebridge_auth_user
+      MYSQL_PASSWORD: ${AUTH_MYSQL_PASSWORD:-${AUTH_DB_PASSWORD:-staging_auth_pass_change_me}}
+      MYSQL_ROOT_PASSWORD: ${AUTH_MYSQL_ROOT_PASSWORD:-${AUTH_DB_ROOT_PASSWORD:-staging_auth_root_secret_change_me}}
+    volumes:
+      - staging-auth-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - auth-mysql
+          - codebridge-auth-mysql
+          - codebridge-auth-mysql-staging
+
+  # 5. Isolated Staging Auth Redis
+  auth-redis:
+    image: redis:8-alpine
+    container_name: codebridge-staging-auth-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass "${AUTH_REDIS_PASSWORD:-staging_auth_redis_secret_change_me}"
+    volumes:
+      - staging-auth-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$${AUTH_REDIS_PASSWORD:-staging_auth_redis_secret_change_me}\" ping | grep PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - auth-redis
+          - codebridge-auth-redis
+          - codebridge-auth-redis-staging
+
+volumes:
+  staging-auth-mysql-data:
+  staging-auth-redis-data:
+
+networks:
+  codebridge-staging-network:
+    name: codebridge-staging-network
+
