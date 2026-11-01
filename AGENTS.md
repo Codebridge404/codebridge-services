@@ -4,7 +4,7 @@
 All services in `codebridge-services/` are **ALLOWED (Read & Write)** for code updates, features, tests, and configuration:
 - **`auth-service/`**: Authentication, JWT, Multi-Tenancy, RBAC, CRM, Outlets, Meetings, Store Credit.
 - **`operations-service/`**: Core operations, inventory, POS transactions, order processing, reporting.
-- **`gateway/`**: API Gateway, Nginx reverse proxy, WAF protection, rate limiting, routing.
+- **`gateway/`**: API Gateway, Nginx Reverse Proxy, Nginx Proxy Manager (NPM), WAF protection, rate limiting, SSL & routing.
 - **`../codebridgesfront/`**: Frontend applications (admin dashboard, merchant portal, cashier POS client).
 - **`../pos-docs/`**: API documentation, architecture diagrams, and technical specifications.
 
