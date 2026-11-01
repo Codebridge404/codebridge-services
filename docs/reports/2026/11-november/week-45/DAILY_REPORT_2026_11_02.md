@@ -209,6 +209,15 @@ Resolved GitHub Actions CI run `#140` failure in [`laravel.yml`](file:///Users/m
   2. Added the standard JWT configuration template block to `operations-service/.env.example`.
   3. Added explicit test environment overrides (`DB_CONNECTION: sqlite`, `DB_DATABASE: database/database.sqlite`, `JWT_SECRET`, `JWT_ISSUER`, `JWT_ALGO`) to the matrix job in `.github/workflows/laravel.yml`.
 
+---
+
+## 10. GitHub Actions Workflow Syntax Resolution for deploy-staging.yml
+
+Resolved GitHub Actions workflow loading error (`0s` duration, "This workflow graph cannot be shown"):
+- **Root Cause**: Line 115 in [`.github/workflows/deploy-staging.yml`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/.github/workflows/deploy-staging.yml) used `if: github.ref == 'refs/heads/demo' && secrets.KUBECONFIG_STAGING != ''`. GitHub Actions strictly disallows referencing `secrets` in job-level `if:` conditions, which prevented GitHub from parsing the workflow graph.
+- **Remediation**: Moved the secret evaluation inside the job step (`env: KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_STAGING }}`) with a graceful fallback check (`if [ -z "${KUBECONFIG_DATA:-}" ]; then exit 0; fi`), allowing the workflow graph to be generated and executed correctly.
+
+
 
 
 
