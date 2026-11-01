@@ -111,16 +111,22 @@ jobs:
     name: Apply K3s/Kubernetes Manifests
     needs: deploy-to-vps
     runs-on: ubuntu-latest
-    # Runs when KUBECONFIG_STAGING secret is configured
-    if: github.ref == 'refs/heads/demo' && secrets.KUBECONFIG_STAGING != ''
+    if: github.ref == 'refs/heads/demo' && github.event_name == 'push'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup Kubeconfig
+      - name: Setup & Apply Kubernetes Manifests
+        env:
+          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_STAGING }}
         run: |
+          if [ -z "${KUBECONFIG_DATA:-}" ]; then
+            echo "KUBECONFIG_STAGING secret is not configured. Skipping Kubernetes rollout."
+            exit 0
+          fi
+
           mkdir -p ~/.kube
-          echo "${{ secrets.KUBECONFIG_STAGING }}" | base64 -d > ~/.kube/config
+          echo "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
 
       - name: Apply Kubernetes Manifests to Cluster
