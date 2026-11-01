@@ -29,6 +29,9 @@ jobs:
           cp env/staging/compose.env.example env/staging/compose.env
           cp env/staging/auth.env.example env/staging/auth.env
           cp env/staging/operations.env.example env/staging/operations.env
+          if [ -f "k8s/staging/secrets.example.yaml" ] && [ ! -f "k8s/staging/secrets.yaml" ]; then
+            cp k8s/staging/secrets.example.yaml k8s/staging/secrets.yaml
+          fi
 
       - name: Validate Staging Docker Compose Configuration
         run: |
@@ -65,45 +68,41 @@ jobs:
     steps:
       - name: Deploy Staging Stack via SSH
         uses: appleboy/ssh-action@v1.0.3
-        env:
-          DEPLOY_PATH: ${{ secrets.STAGING_DEPLOY_PATH || '~/codebridge-services' }}
         with:
           host: ${{ secrets.STAGING_VPS_HOST }}
           username: ${{ secrets.STAGING_VPS_USER }}
           key: ${{ secrets.STAGING_VPS_SSH_KEY }}
           port: ${{ secrets.STAGING_VPS_PORT || 22 }}
-          envs: DEPLOY_PATH
           script: |
-            set -euo pipefail
-            echo "================================================================="
-            echo "▶ Deploying CodeBridges Staging on VPS..."
-            echo "================================================================="
-            
-            cd "$DEPLOY_PATH"
-            
-            echo "▶ Fetching latest demo branch..."
+            set -eu
+
+            echo "Deploying CodeBridge staging..."
+
+            # The repository must already exist in this location on the VPS.
+            cd "$HOME/codebridge-services"
+
+            echo "Fetching the latest demo branch..."
             git fetch origin demo
             git checkout demo
-            git pull origin demo
-            
-            # Ensure staging env files exist
-            if [ ! -f "env/staging/compose.env" ]; then
-              cp env/staging/compose.env.example env/staging/compose.env
-            fi
-            if [ ! -f "env/staging/auth.env" ]; then
-              cp env/staging/auth.env.example env/staging/auth.env
-            fi
-            if [ ! -f "env/staging/operations.env" ]; then
-              cp env/staging/operations.env.example env/staging/operations.env
-            fi
-            
-            echo "▶ Executing automated staging deployment engine..."
+            git pull --ff-only origin demo
+
+            echo "Checking staging environment files..."
+            for file in compose auth operations; do
+              if [ ! -f "env/staging/${file}.env" ]; then
+                echo "Missing env/staging/${file}.env"
+                echo "Create and configure it on the VPS before deploying."
+                exit 1
+              fi
+            done
+
+            echo "Running staging deployment..."
             chmod +x deploy/staging/deploy.sh deploy/staging/status.sh
             ./deploy/staging/deploy.sh
-            
-            echo "▶ Inspecting health and container status..."
+
+            echo "Checking container status..."
             ./deploy/staging/status.sh
-            echo "✔ Staging deployment complete!"
+
+            echo "Staging deployment complete."
 
   # --------------------------------------------------------------------------
   # 3. KUBERNETES / K3S CLUSTER DEPLOYMENT (OPTIONAL)
