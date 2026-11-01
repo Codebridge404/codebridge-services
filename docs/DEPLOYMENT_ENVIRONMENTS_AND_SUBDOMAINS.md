@@ -51,9 +51,9 @@ This guide details the multi-environment Docker topology, Cloudflare DNS & SSL/T
 
 ```text
 codebridge-services/
-├── docker-compose.dev.yml            # Local development with dev ports exposed
+├── docker-compose.yml                # Local development stack (default compose file)
 ├── docker-compose.staging.yml        # Isolated staging environment with staging DBs/storage
-├── docker-compose.prod.yml           # Hardened production stack with zero exposed DB ports
+├── docker-compose.prod.yml           # Production Blue-Green stack with NPM traffic switching
 └── env/
     ├── dev/
     │   ├── auth.env                  # Local dev credentials
@@ -74,7 +74,7 @@ codebridge-services/
 
 ### 1. Development (Localhost)
 ```bash
-docker compose -p codebridge-dev -f docker-compose.dev.yml up -d --build
+docker compose up -d
 ```
 - Gateway: [http://localhost:8080](http://localhost:8080)
 - Nginx Proxy Manager: [http://localhost:81](http://localhost:81)
