@@ -198,5 +198,17 @@ Updated [`.github/workflows/deploy-staging.yml`](file:///Users/macbookpro/Projec
 - **Automated K8s Secret Fixture Provisioning for CI**: Added automatic copy of `k8s/staging/secrets.example.yaml` to `k8s/staging/secrets.yaml` during CI build validation so `kubectl kustomize` passes cleanly without committing actual secrets to Git.
 - **Explicit Execution Rights & Health Auditing**: Automatic permission elevation (`chmod +x deploy/staging/deploy.sh deploy/staging/status.sh`) and container health verification (`status.sh`) executed on every successful deployment.
 
+---
+
+## 9. CI Test Environment Hardening for Operations Service
+
+Resolved GitHub Actions CI run `#140` failure in [`laravel.yml`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/.github/workflows/laravel.yml):
+- **Root Cause**: `operations-service` lacked `JWT_SECRET` in [`phpunit.xml`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/operations-service/phpunit.xml) and [`.env.example`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/operations-service/.env.example). When `laravel.yml` copied `.env.example` to `.env` and executed `php artisan test --env=testing`, `JwtService` threw a `RuntimeException` (`JWT_SECRET must be configured and at least 32 characters in operations-service.`).
+- **Remediation**:
+  1. Injected `<env name="JWT_SECRET" ... />`, `<env name="JWT_ISSUER" ... />`, and `<env name="JWT_ALGO" ... />` into `operations-service/phpunit.xml`.
+  2. Added the standard JWT configuration template block to `operations-service/.env.example`.
+  3. Added explicit test environment overrides (`DB_CONNECTION: sqlite`, `DB_DATABASE: database/database.sqlite`, `JWT_SECRET`, `JWT_ISSUER`, `JWT_ALGO`) to the matrix job in `.github/workflows/laravel.yml`.
+
+
 
 
