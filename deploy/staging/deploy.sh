@@ -89,12 +89,22 @@ echo -e "${GREEN}✔ All database migrations completed.${NC}\n"
 
 # 6. Start API Gateway & Nginx Proxy Manager
 echo -e "${YELLOW}[Step 6/6] Starting Ingress API Gateway and Nginx Proxy Manager...${NC}"
-compose up -d gateway nginx-proxy-manager
+compose up -d gateway
+
+# If a shared NPM container (codebridge-nginx-proxy-manager) is already running, ensure network connectivity
+if docker ps --format '{{.Names}}' | grep -Eq 'nginx-proxy-manager'; then
+    NPM_RUNNING=$(docker ps --format '{{.Names}}' | grep -E 'nginx-proxy-manager' | head -n1)
+    echo -e "  Connecting existing NPM (${NPM_RUNNING}) to staging network..."
+    docker network connect codebridge-staging-network "${NPM_RUNNING}" 2>/dev/null || true
+else
+    compose up -d nginx-proxy-manager || echo "NPM already running or port 80 in use by host proxy."
+fi
 
 # Verify Gateway Response
 echo -e "  Verifying internal API Gateway routing..."
 for i in {1..15}; do
-    if docker exec codebridge-staging-gateway curl -s -f http://127.0.0.1/api/v1/health >/dev/null 2>&1; then
+    if docker exec codebridge-staging-gateway wget -q -O /dev/null http://127.0.0.1/api/v1/health >/dev/null 2>&1 || \
+       docker exec codebridge-staging-gateway curl -s -f http://127.0.0.1/api/v1/health >/dev/null 2>&1; then
         echo -e "${GREEN}  ✔ Gateway routed /api/v1/health successfully.${NC}"
         break
     fi

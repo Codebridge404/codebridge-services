@@ -48,7 +48,8 @@ else
 fi
 
 # Check Gateway Health route
-if docker exec codebridge-staging-gateway curl -s -f http://127.0.0.1/api/v1/health >/dev/null 2>&1; then
+if docker exec codebridge-staging-gateway wget -q -O /dev/null http://127.0.0.1/api/v1/health >/dev/null 2>&1 || \
+   docker exec codebridge-staging-gateway curl -s -f http://127.0.0.1/api/v1/health >/dev/null 2>&1; then
     echo -e "  API Gateway Route:             ${GREEN}✔ HEALTHY (/api/v1/health responded 200 OK)${NC}"
 else
     echo -e "  API Gateway Route:             ${RED}✘ UNHEALTHY${NC}"
