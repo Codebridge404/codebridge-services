@@ -109,3 +109,4 @@ docker compose -p codebridge-prod --env-file env/production/compose.env -f docke
    In both Staging and Production, MySQL, Redis, and MinIO ports are **not published to the host**. They communicate exclusively over the internal encrypted bridge networks.
 3. **Immutable SSL**:
    Cloudflare SSL/TLS should be set to **Full (strict)**. Nginx Proxy Manager terminates SSL certificates issued by Let's Encrypt and forwards plain HTTP internally over the Docker network.
+
