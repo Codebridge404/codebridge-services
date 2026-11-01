@@ -217,6 +217,27 @@ Resolved GitHub Actions workflow loading error (`0s` duration, "This workflow gr
 - **Root Cause**: Line 115 in [`.github/workflows/deploy-staging.yml`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/.github/workflows/deploy-staging.yml) used `if: github.ref == 'refs/heads/demo' && secrets.KUBECONFIG_STAGING != ''`. GitHub Actions strictly disallows referencing `secrets` in job-level `if:` conditions, which prevented GitHub from parsing the workflow graph.
 - **Remediation**: Moved the secret evaluation inside the job step (`env: KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_STAGING }}`) with a graceful fallback check (`if [ -z "${KUBECONFIG_DATA:-}" ]; then exit 0; fi`), allowing the workflow graph to be generated and executed correctly.
 
+---
+
+## 11. Staging Pipeline Automated Execution & VPS Rollout Complete
+
+All GitHub Actions pipelines triggered on commit `6716ca1` executed with **100% SUCCESS**:
+
+### A. Pipeline Run Matrix
+
+| Workflow Name | Run ID | Status | Elapsed | Key Outcomes |
+| :--- | :---: | :---: | :---: | :--- |
+| **`Laravel Microservices CI`** | `41346291524` | `✓ Success` | 47s | `auth-service` (43s) & `operations-service` (15s) passed in complete isolation |
+| **`Deploy Staging (Branch demo)`** | `41346291533` | `✓ Success` | 2m 54s | 1. `Build Staging Images & K8s Validation` (2m 1s)<br/>2. `Deploy to Staging VPS` (40s)<br/>3. `Apply K3s/Kubernetes Manifests` (5s) |
+
+### B. Live Public Verification
+
+| Subdomain / Route | HTTP Response | Verified Output |
+| :--- | :---: | :--- |
+| `https://staging-codebridge-api.servicefixit.me/api/v1/health` | `HTTP 200 OK` | `{"status":"ok","timestamp":"...","services":{"auth":"ok","database":"ok","cache":"ok"}}` |
+| `https://staging-codebridge-docs.servicefixit.me/docs` | `HTTP 200 OK` | Interactive Stoplight Elements OpenAPI 3.1 documentation rendered |
+
+
 
 
 
