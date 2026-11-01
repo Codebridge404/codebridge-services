@@ -136,7 +136,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Setup & Apply Kubernetes Manifests
+      - name: Apply Kubernetes Manifests to Cluster
         env:
           KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_STAGING }}
         run: |
@@ -149,8 +149,11 @@ jobs:
           echo "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
           chmod 600 ~/.kube/config
 
-      - name: Apply Kubernetes Manifests to Cluster
-        run: |
+          if ! kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
+            echo "Unable to reach Kubernetes cluster API. Skipping Kubernetes rollout."
+            exit 0
+          fi
+
           echo "Applying manifests via Kustomize to namespace [codebridge-staging]..."
           if [ -d "k8s/staging" ]; then
             if [ -f "k8s/staging/secrets.example.yaml" ] && [ ! -f "k8s/staging/secrets.yaml" ]; then
