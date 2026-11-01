@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: auth-service
-          image: codebridge-auth-service:staging
+          image: 127.0.0.1:5000/codebridge-auth-service:staging
           imagePullPolicy: IfNotPresent
           ports:
             - name: php-fpm
@@ -95,7 +95,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: codebridge-auth-service:staging
+          image: 127.0.0.1:5000/codebridge-auth-service:staging
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -140,7 +140,7 @@ spec:
           restartPolicy: OnFailure
           containers:
             - name: scheduler
-              image: codebridge-auth-service:staging
+              image: 127.0.0.1:5000/codebridge-auth-service:staging
               imagePullPolicy: IfNotPresent
               command:
                 - php

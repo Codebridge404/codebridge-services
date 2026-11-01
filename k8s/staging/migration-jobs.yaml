@@ -31,7 +31,7 @@ spec:
               echo "auth-mysql is listening."
       containers:
         - name: artisan-migrate
-          image: codebridge-auth-service:staging
+          image: 127.0.0.1:5000/codebridge-auth-service:staging
           imagePullPolicy: IfNotPresent
           command:
             - php
@@ -84,7 +84,7 @@ spec:
               echo "operations-mysql is listening."
       containers:
         - name: artisan-migrate
-          image: codebridge-operations-service:staging
+          image: 127.0.0.1:5000/codebridge-operations-service:staging
           imagePullPolicy: IfNotPresent
           command:
             - php

@@ -13,9 +13,14 @@ spec:
   ingressClassName: traefik
   tls:
     - hosts:
+        - staging-codebridge-docs.servicefixit.me
+      secretName: staging-docs-tls
+    - hosts:
         - staging-codebridge-api.servicefixit.me
+      secretName: staging-api-tls
+    - hosts:
         - staging-codebridge-cdn.servicefixit.me
-      secretName: codebridge-staging-tls
+      secretName: staging-cdn-tls
   rules:
     # 1. Main Unified Microservice Gateway (Auth + Operations + POS)
     - host: staging-codebridge-api.servicefixit.me
@@ -29,7 +34,19 @@ spec:
                 port:
                   number: 80
 
-    # 2. MinIO S3 Object Storage CDN
+    # 2. Interactive Documentation Hub
+    - host: staging-codebridge-docs.servicefixit.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: gateway
+                port:
+                  number: 80
+
+    # 3. MinIO S3 Object Storage CDN & Console
     - host: staging-codebridge-cdn.servicefixit.me
       http:
         paths:
@@ -39,5 +56,43 @@ spec:
               service:
                 name: minio
                 port:
-                  number: 9000
+                  number: 9001
+
+    # 4. Nginx Proxy Manager Dashboard (Port 81)
+    - host: npm.servicefixit.me
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: npm-dashboard
+                port:
+                  number: 81
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: npm-dashboard
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: npm-dashboard
+    environment: staging
+spec:
+  ports:
+    - name: http
+      port: 81
+      targetPort: 81
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: npm-dashboard
+  namespace: codebridge-staging
+subsets:
+  - addresses:
+      - ip: 217.216.110.153
+    ports:
+      - name: http
+        port: 81
 
