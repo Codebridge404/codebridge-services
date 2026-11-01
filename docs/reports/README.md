@@ -23,6 +23,9 @@ reports/
 ## 🗂️ Active Archives
 
 ### 📅 [2026 Reports Archive](2026/README.md)
+* **[11-november](2026/11-november/README.md)**
+  * **[Week 44 (Nov 1, 2026)](2026/11-november/week-44/README.md)**
+    * 📝 [Daily Report — November 1, 2026](2026/11-november/week-44/DAILY_REPORT_2026_11_01.md)
 * **[10-october](2026/10-october/README.md)**
   * **[Week 44 (Oct 25 – Oct 31, 2026)](2026/10-october/week-44/README.md)**
     * 📋 [Weekly Report — Week 44](2026/10-october/week-44/WEEKLY_REPORT_2026_W44.md)

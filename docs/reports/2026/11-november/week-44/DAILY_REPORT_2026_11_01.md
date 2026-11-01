@@ -176,3 +176,4 @@ All tests passed with zero failures and zero dependency vulnerabilities.
 2. **Local Sync**: Run `git pull origin demo` once PR #14 is merged.
 3. **VPS Staging Deployment**: Deploy staging stack on VPS using `docker compose -p codebridge-staging --env-file env/staging/compose.env -f docker-compose.staging.yml up -d`.
 4. **Cloudflare & NPM DNS Setup**: Add Cloudflare CNAME / A records for `staging-*.servicefixit.me` and configure proxy hosts in NPM dashboard.
+
