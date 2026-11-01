@@ -149,6 +149,12 @@ data:
             ~*(?i)(acunetix|nessus|openvas|qualys|netsparker|burpcollaborator) 1;
         }
 
+        # HTTPS scheme detection behind Traefik & Cloudflare reverse proxies
+        map $http_x_forwarded_proto $fastcgi_https {
+            default $https;
+            https   on;
+        }
+
         server {
             listen 80;
             server_name _;
@@ -224,37 +230,37 @@ data:
                 add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
                 add_header Access-Control-Allow-Headers "*" always;
                 if ($request_method = OPTIONS) { return 204; }
-                fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
+                fastcgi_pass auth_service;
             }
             location /docs/auth {
+                include /etc/nginx/fastcgi_php.conf;
                 fastcgi_param REQUEST_URI /docs/api;
                 fastcgi_pass auth_service;
-                include /etc/nginx/fastcgi_php.conf;
             }
-            location /docs/operations/api.json {
+            location = /docs/operations/api.json {
                 add_header Access-Control-Allow-Origin * always;
                 add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
                 add_header Access-Control-Allow-Headers "*" always;
                 if ($request_method = OPTIONS) { return 204; }
+                include /etc/nginx/fastcgi_php.conf;
                 fastcgi_param REQUEST_URI /docs/api.json;
                 fastcgi_pass operations_service;
-                include /etc/nginx/fastcgi_php.conf;
             }
             location /docs/operations {
+                include /etc/nginx/fastcgi_php.conf;
                 fastcgi_param REQUEST_URI /docs/api;
                 fastcgi_pass operations_service;
-                include /etc/nginx/fastcgi_php.conf;
             }
             location /docs/inventory {
+                include /etc/nginx/fastcgi_php.conf;
                 fastcgi_param REQUEST_URI /docs/api;
                 fastcgi_pass operations_service;
-                include /etc/nginx/fastcgi_php.conf;
             }
             location /docs/sales {
+                include /etc/nginx/fastcgi_php.conf;
                 fastcgi_param REQUEST_URI /docs/api;
                 fastcgi_pass operations_service;
-                include /etc/nginx/fastcgi_php.conf;
             }
 
             # Auth Service Routes
@@ -348,7 +354,7 @@ data:
     fastcgi_param SERVER_ADDR $server_addr;
     fastcgi_param SERVER_PORT $server_port;
     fastcgi_param SERVER_NAME $server_name;
-    fastcgi_param HTTPS $https if_not_empty;
+    fastcgi_param HTTPS $fastcgi_https if_not_empty;
     fastcgi_param HTTP_AUTHORIZATION $http_authorization;
     fastcgi_param HTTP_X_TENANT_ID $http_x_tenant_id;
     fastcgi_param HTTP_X_FORWARDED_FOR $http_x_forwarded_for;
@@ -480,25 +486,96 @@ data:
       </main>
     
       <script>
-        // Automatically upgrade any insecure http:// calls to current origin/https to prevent Mixed Content blocking
-        if (window.location.protocol === 'https:') {
-          const originalFetch = window.fetch;
-          window.fetch = function(resource, init) {
-            if (typeof resource === 'string' && resource.startsWith('http://' + window.location.host)) {
-              resource = resource.replace('http://', 'https://');
-            } else if (resource instanceof Request && resource.url.startsWith('http://' + window.location.host)) {
-              resource = new Request(resource.url.replace('http://', 'https://'), resource);
+        // Universal Fetch Interceptor for Interactive Documentation
+        // 1. Intercepts OpenAPI spec requests (/docs/api.json & /docs/operations/api.json) to prioritize live staging HTTPS/Current Origin servers
+        // 2. Intercepts "Try It" API calls to rewrite localhost:8080 to current origin when running remotely
+        // 3. Upgrades any insecure http:// calls to https:// to prevent Mixed Content blocking
+
+        const originalFetch = window.fetch;
+        window.fetch = async function(resource, init) {
+          let url = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : '');
+
+          // Sanitize API request targets
+          if (url) {
+            // Rewrite localhost:8080 to current origin if viewing from a remote domain
+            if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+              if (url.startsWith('http://localhost:8080') || url.startsWith('http://127.0.0.1:8080')) {
+                url = url.replace(/^http:\/\/(localhost|127\.0\.0\.1):8080/, window.location.origin);
+              }
             }
-            return originalFetch.call(this, resource, init);
-          };
-        }
-    
+
+            // Upgrade http:// to https:// when page is running over https
+            if (window.location.protocol === 'https:' && url.startsWith('http://')) {
+              url = url.replace(/^http:\/\//, 'https://');
+            }
+
+            if (url !== (typeof resource === 'string' ? resource : (resource ? resource.url : ''))) {
+              if (typeof resource === 'string') {
+                resource = url;
+              } else {
+                resource = new Request(url, resource);
+              }
+            }
+          }
+
+          const response = await originalFetch.call(this, resource, init);
+
+          // Dynamically enhance OpenAPI specifications so Stoplight Elements always defaults to a reachable HTTPS server
+          if (url && (url.endsWith('/api.json') || url.includes('/docs/api.json') || url.includes('/docs/operations/api.json'))) {
+            try {
+              const clone = response.clone();
+              const spec = await clone.json();
+              if (spec && spec.servers && Array.isArray(spec.servers)) {
+                const currentOriginApi = window.location.origin + '/api';
+                const stagingApi = 'https://staging-codebridge-api.servicefixit.me/api';
+                
+                const prioritized = [];
+                
+                // Prioritize Current Host (Same Origin - zero CORS issues)
+                prioritized.push({
+                  url: currentOriginApi,
+                  description: 'Current Host (' + window.location.host + ')'
+                });
+                
+                // Staging API Gateway
+                if (currentOriginApi !== stagingApi) {
+                  prioritized.push({
+                    url: stagingApi,
+                    description: 'Staging API Gateway'
+                  });
+                }
+
+                // Keep any other servers from spec (excluding duplicate current origin or staging)
+                for (const s of spec.servers) {
+                  const sUrl = (s.url || '').replace(/\/$/, '');
+                  if (sUrl !== currentOriginApi.replace(/\/$/, '') && sUrl !== stagingApi.replace(/\/$/, '')) {
+                    prioritized.push(s);
+                  }
+                }
+
+                spec.servers = prioritized;
+                return new Response(JSON.stringify(spec), {
+                  status: response.status,
+                  statusText: response.statusText,
+                  headers: {
+                    'content-type': 'application/json; charset=utf-8'
+                  }
+                });
+              }
+            } catch (e) {
+              console.warn('Could not rewrite OpenAPI spec servers:', e);
+            }
+          }
+
+          return response;
+        };
+
         function switchService(specUrl) {
           localStorage.setItem('codebridges_selected_doc_spec', specUrl);
           const wrapper = document.getElementById('docsWrapper');
           wrapper.innerHTML = '<elements-api id="elementsDoc" apiDescriptionUrl="' + specUrl + '" router="hash" layout="sidebar"></elements-api>';
         }
-    
+
         // Restore last selected service if saved
         window.addEventListener('DOMContentLoaded', () => {
           const saved = localStorage.getItem('codebridges_selected_doc_spec');
