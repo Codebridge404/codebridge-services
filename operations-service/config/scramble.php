@@ -5,9 +5,9 @@ return [
         'title' => 'CodeBridges Inventory & Catalog Service API',
     ],
     'servers' => [
-        'Local Gateway' => 'http://localhost:8080/api',
+        'Staging API' => rtrim(env('APP_URL', 'https://staging-codebridge-api.servicefixit.me'), '/') . '/api',
         'Current Host' => '/api',
-        'Cloud Production' => 'https://pos-services-ph15.onrender.com/api',
+        'Local Gateway' => 'http://localhost:8080/api',
     ],
     'path' => 'docs/api',
     'middleware' => [

@@ -28,6 +28,12 @@ if ! kubectl cluster-info > /dev/null 2>&1; then
 fi
 echo "✔ Connected to cluster: $(kubectl config current-context 2>/dev/null || echo 'active-cluster')"
 
+# Ensure local container image registry is active on 127.0.0.1:5000
+if ! docker ps --filter "name=registry" --format '{{.Names}}' | grep -q "^registry$"; then
+  echo "▶ Starting local image registry on 127.0.0.1:5000..."
+  docker start registry 2>/dev/null || docker run -d -p 5000:5000 --restart=always --name registry registry:2
+fi
+
 # 2. Namespace
 echo "▶ 2. Ensuring namespace [${NAMESPACE}] exists..."
 kubectl apply -f "${SCRIPT_DIR}/namespace.yaml"
@@ -41,6 +47,40 @@ if [ ! -f "${SCRIPT_DIR}/secrets.yaml" ]; then
 fi
 kubectl apply -f "${SCRIPT_DIR}/secrets.yaml"
 kubectl apply -f "${SCRIPT_DIR}/configmaps.yaml"
+
+# Ensure TLS secrets for Traefik Ingress exist
+NPM_LE_DIR="${SCRIPT_DIR}/../../infrastructure/nginx-proxy-manager/letsencrypt"
+if [ -d "${NPM_LE_DIR}/archive/npm-11" ] && [ -d "${NPM_LE_DIR}/archive/npm-7" ]; then
+  echo "▶ Provisioning Let's Encrypt TLS secrets for Traefik Ingress..."
+  docker run --rm -v "${NPM_LE_DIR}:/le" alpine sh -c "cat /le/archive/npm-11/fullchain1.pem" > /tmp/docs-cert.pem 2>/dev/null || true
+  docker run --rm -v "${NPM_LE_DIR}:/le" alpine sh -c "cat /le/archive/npm-11/privkey1.pem" > /tmp/docs-key.pem 2>/dev/null || true
+  docker run --rm -v "${NPM_LE_DIR}:/le" alpine sh -c "cat /le/archive/npm-7/fullchain1.pem" > /tmp/api-cert.pem 2>/dev/null || true
+  docker run --rm -v "${NPM_LE_DIR}:/le" alpine sh -c "cat /le/archive/npm-7/privkey1.pem" > /tmp/api-key.pem 2>/dev/null || true
+  docker run --rm -v "${NPM_LE_DIR}:/le" alpine sh -c "cat /le/archive/npm-8/fullchain1.pem" > /tmp/cdn-cert.pem 2>/dev/null || true
+  docker run --rm -v "${NPM_LE_DIR}:/le" alpine sh -c "cat /le/archive/npm-8/privkey1.pem" > /tmp/cdn-key.pem 2>/dev/null || true
+
+  if [ -s /tmp/docs-cert.pem ] && [ -s /tmp/docs-key.pem ]; then
+    kubectl create secret tls staging-docs-tls --cert=/tmp/docs-cert.pem --key=/tmp/docs-key.pem -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  fi
+  if [ -s /tmp/api-cert.pem ] && [ -s /tmp/api-key.pem ]; then
+    kubectl create secret tls staging-api-tls --cert=/tmp/api-cert.pem --key=/tmp/api-key.pem -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  fi
+  if [ -s /tmp/cdn-cert.pem ] && [ -s /tmp/cdn-key.pem ]; then
+    kubectl create secret tls staging-cdn-tls --cert=/tmp/cdn-cert.pem --key=/tmp/cdn-key.pem -n "${NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+  fi
+  rm -f /tmp/docs-cert.pem /tmp/docs-key.pem /tmp/api-cert.pem /tmp/api-key.pem /tmp/cdn-cert.pem /tmp/cdn-key.pem
+elif ! kubectl get secret staging-docs-tls -n "${NAMESPACE}" >/dev/null 2>&1; then
+  echo "▶ Provisioning staging wildcard TLS certificate for Traefik Ingress..."
+  mkdir -p /tmp/tls
+  openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+    -keyout /tmp/tls/tls.key -out /tmp/tls/tls.crt \
+    -subj "/CN=staging-codebridge-api.servicefixit.me" \
+    -addext "subjectAltName=DNS:staging-codebridge-api.servicefixit.me,DNS:staging-codebridge-cdn.servicefixit.me,DNS:staging-codebridge-docs.servicefixit.me,DNS:staging-codebridge-events.servicefixit.me,DNS:*.servicefixit.me" >/dev/null 2>&1
+  kubectl create secret tls staging-docs-tls --cert=/tmp/tls/tls.crt --key=/tmp/tls/tls.key -n "${NAMESPACE}"
+  kubectl create secret tls staging-api-tls --cert=/tmp/tls/tls.crt --key=/tmp/tls/tls.key -n "${NAMESPACE}"
+  kubectl create secret tls staging-cdn-tls --cert=/tmp/tls/tls.crt --key=/tmp/tls/tls.key -n "${NAMESPACE}"
+  rm -rf /tmp/tls
+fi
 
 # 4. Storage & Infrastructure (MySQL, Redis, MinIO)
 echo "▶ 4. Deploying Persistent Storage, MySQL, Redis, and MinIO..."

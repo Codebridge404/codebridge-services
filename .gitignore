@@ -13,6 +13,13 @@ Desktop.ini
 env/**/*.env
 !env/**/*.env.example
 
+# Kubernetes Secrets
+secrets.yaml
+**/secrets.yaml
+k8s/**/secrets.yaml
+!k8s/**/secrets.example.yaml
+!**/secrets.example.yaml
+
 # Composer & Node Dependencies
 **/vendor/
 **/node_modules/
@@ -37,3 +44,13 @@ nginx-proxy-manager/data/
 nginx-proxy-manager/letsencrypt/
 **/data/
 **/letsencrypt/
+
+# Database & System Backups
+backups/
+*.sql.gz
+*.tar.gz
+
+# Kubernetes Secrets & Credentials
+secrets.yaml
+**/secrets.yaml
+!**/secrets.example.yaml

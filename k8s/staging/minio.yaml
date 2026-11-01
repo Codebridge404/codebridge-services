@@ -56,7 +56,7 @@ spec:
     spec:
       containers:
         - name: minio
-          image: minio/minio:latest
+          image: 127.0.0.1:5000/minio/minio:latest
           imagePullPolicy: IfNotPresent
           command:
             - minio
@@ -129,7 +129,7 @@ spec:
       restartPolicy: OnFailure
       containers:
         - name: minio-mc
-          image: minio/mc:latest
+          image: 127.0.0.1:5000/minio/mc:latest
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh

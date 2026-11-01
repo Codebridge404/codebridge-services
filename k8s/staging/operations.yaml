@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: operations-service
-          image: codebridge-operations-service:staging
+          image: 127.0.0.1:5000/codebridge-operations-service:staging
           imagePullPolicy: IfNotPresent
           ports:
             - name: php-fpm
@@ -95,7 +95,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: codebridge-operations-service:staging
+          image: 127.0.0.1:5000/codebridge-operations-service:staging
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh

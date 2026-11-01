@@ -25,7 +25,7 @@ spec:
     spec:
       containers:
         - name: nginx
-          image: nginx:1.27-alpine
+          image: 127.0.0.1:5000/nginx:1.27-alpine
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -37,6 +37,9 @@ spec:
             - name: nginx-config
               mountPath: /etc/nginx/fastcgi_php.conf
               subPath: fastcgi_php.conf
+            - name: nginx-config
+              mountPath: /usr/share/nginx/html/docs.html
+              subPath: docs.html
           readinessProbe:
             httpGet:
               path: /api/v1/health

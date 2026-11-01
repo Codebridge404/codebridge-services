@@ -20,6 +20,7 @@ data:
   LOG_CHANNEL: "stack"
   LOG_LEVEL: "info"
   BCRYPT_ROUNDS: "12"
+  CORS_ALLOWED_ORIGINS: "https://staging-codebridge-docs.servicefixit.me,https://staging-codebridge-api.servicefixit.me,https://staging-codebridge.servicefixit.me,https://staging.codebridge.servicefixit.me,http://localhost:3000,http://localhost:5173,http://localhost:8080"
 
   # Database & Cache hostnames resolve via K8s Services
   DB_CONNECTION: "mysql"
@@ -73,6 +74,7 @@ data:
   LOG_CHANNEL: "stack"
   LOG_LEVEL: "info"
   BCRYPT_ROUNDS: "12"
+  CORS_ALLOWED_ORIGINS: "https://staging-codebridge-docs.servicefixit.me,https://staging-codebridge-api.servicefixit.me,https://staging-codebridge.servicefixit.me,https://staging.codebridge.servicefixit.me,http://localhost:3000,http://localhost:5173,http://localhost:8080"
 
   # Database & Cache hostnames resolve via K8s Services
   DB_CONNECTION: "mysql"
@@ -80,6 +82,12 @@ data:
   DB_PORT: "3306"
   DB_DATABASE: "codebridge_operations_staging"
   DB_USERNAME: "codebridge_ops_user"
+
+  # Cross-Service Auth Database Connection
+  AUTH_DB_HOST: "auth-mysql"
+  AUTH_DB_PORT: "3306"
+  AUTH_DB_DATABASE: "codebridge_auth_staging"
+  AUTH_DB_USERNAME: "codebridge_auth_user"
 
   REDIS_CLIENT: "phpredis"
   REDIS_HOST: "operations-redis"
@@ -133,18 +141,120 @@ data:
         real_ip_header X-Forwarded-For;
         real_ip_recursive on;
 
+        # WAF & Security Layer: Scanner & Exploit Tools Blocker
+        map $http_user_agent $bad_client {
+            default 0;
+            ~*(?i)(sqlmap|nikto|gobuster|dirbuster|ffuf|wpscan|masscan|zgrab|hydra|medusa) 1;
+            ~*(?i)(crackql|batchql|graphqlmap|clairvoyance|inql) 1;
+            ~*(?i)(acunetix|nessus|openvas|qualys|netsparker|burpcollaborator) 1;
+        }
+
         server {
             listen 80;
             server_name _;
 
-            # Health Check Endpoint
+            # Hardened Security Headers
+            add_header X-Frame-Options "SAMEORIGIN" always;
+            add_header X-Content-Type-Options "nosniff" always;
+            add_header X-XSS-Protection "1; mode=block" always;
+            add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+            # 1. Block Known Attacker Tools & Vulnerability Scanners
+            if ($bad_client = 1) {
+                return 403 '{"status":"error","code":"SECURITY_WAF_BLOCKED","message":"Access Denied: Malicious scanner or exploit tool signature detected."}\n';
+            }
+
+            # 2. Block GraphQL Probes & Mass ATO Batching Endpoints
+            location ~* ^/(graphql|graphiql|altair|playground|__graphql|api/graphql)(\/|$) {
+                default_type application/json;
+                return 403 '{"status":"error","code":"GRAPHQL_ATO_PROTECTED","message":"GraphQL introspection and batch query endpoints are strictly disabled to prevent Mass Account Takeover."}\n';
+            }
+
+            # 3. Block PHP2Shell (CVE-2026-109618 / CVE-2026-109619) Exploit Payloads
+            if ($query_string ~* "(PHP_SESSION_UPLOAD_PROGRESS|session\.upload_progress|upload_progress_)") {
+                return 403 '{"status":"error","code":"PHP2SHELL_EXPLOIT_BLOCKED","message":"Access Denied: PHP2Shell exploit signature detected and blocked."}\n';
+            }
+
+            # 4. Block Direct WebShell & Backup Script Probes
+            location ~* \.(php_bak|bak|old|orig|save|swp|sh|bash|env)$ {
+                deny all;
+                return 404;
+            }
+
+            # Redirect docs subdomains root to interactive documentation hub
+            if ($host ~* "^(staging-)?codebridge-docs\.servicefixit\.me$") {
+                rewrite ^/$ /docs permanent;
+            }
+
+            # Gateway Root Index
+            location = / {
+                add_header Access-Control-Allow-Origin * always;
+                default_type application/json;
+                return 200 '{"status":"healthy","gateway":"nginx","system":"CodeBridge Multi-Tenant Platform","environment":"staging","docs":"/docs","health":"/api/v1/health"}\n';
+            }
+
+            # Health Check Endpoints
+            location = /health {
+                add_header Access-Control-Allow-Origin * always;
+                default_type application/json;
+                return 200 '{"status":"healthy","gateway":"nginx","security":"waf_active","system":"CodeBridge@ Multi-Tenant Enterprise Platform"}\n';
+            }
+
             location = /api/v1/health {
+                add_header Access-Control-Allow-Origin * always;
+                default_type application/json;
+                return 200 '{"status":"healthy","gateway":"nginx","security":"waf_active","system":"CodeBridge@ Multi-Tenant Enterprise Platform"}\n';
+            }
+
+            # Central Interactive Documentation Hub
+            location = /docs {
+                alias /usr/share/nginx/html/docs.html;
+                default_type text/html;
+            }
+            location = /docs/ {
+                alias /usr/share/nginx/html/docs.html;
+                default_type text/html;
+            }
+            location /docs/api {
                 fastcgi_pass auth_service;
-                fastcgi_split_path_info ^(.+\.php)(/.+)$;
-                fastcgi_param SCRIPT_FILENAME /var/www/html/public/index.php;
-                fastcgi_param SCRIPT_NAME /index.php;
-                fastcgi_param REQUEST_URI $request_uri;
-                include fastcgi_params;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location = /docs/api.json {
+                add_header Access-Control-Allow-Origin * always;
+                add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "*" always;
+                if ($request_method = OPTIONS) { return 204; }
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /docs/auth {
+                fastcgi_param REQUEST_URI /docs/api;
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /docs/operations/api.json {
+                add_header Access-Control-Allow-Origin * always;
+                add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "*" always;
+                if ($request_method = OPTIONS) { return 204; }
+                fastcgi_param REQUEST_URI /docs/api.json;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /docs/operations {
+                fastcgi_param REQUEST_URI /docs/api;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /docs/inventory {
+                fastcgi_param REQUEST_URI /docs/api;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /docs/sales {
+                fastcgi_param REQUEST_URI /docs/api;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
             }
 
             # Auth Service Routes
@@ -251,3 +361,155 @@ data:
     fastcgi_connect_timeout 10s;
     include fastcgi_params;
 
+
+  docs.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <title>CodeBridge@ — Multi-Tenant Enterprise API Gateway</title>
+      <!-- Stoplight Elements (Same engine as Laravel Scramble) -->
+      <script src="https://unpkg.com/@stoplight/elements/web-components.min.js"></script>
+      <link rel="stylesheet" href="https://unpkg.com/@stoplight/elements/styles.min.css">
+      <link rel="preconnect" href="https://fonts.googleapis.com">
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet">
+      <style>
+        * { box-sizing: border-box; }
+        body, html {
+          margin: 0;
+          padding: 0;
+          height: 100%;
+          width: 100%;
+          font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+          display: flex;
+          flex-direction: column;
+          background: #0f172a;
+          overflow: hidden;
+        }
+        .gateway-nav {
+          height: 60px;
+          min-height: 60px;
+          background: #090d16;
+          border-bottom: 1px solid #1e293b;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0 24px;
+          z-index: 100;
+        }
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          color: #f8fafc;
+          font-size: 16px;
+          font-weight: 700;
+          letter-spacing: -0.02em;
+        }
+        .brand-badge {
+          background: linear-gradient(135deg, #3b82f6, #6366f1);
+          color: #ffffff;
+          font-size: 11px;
+          font-weight: 700;
+          padding: 3px 8px;
+          border-radius: 6px;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+        }
+        .selector-box {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+        }
+        .selector-label {
+          color: #94a3b8;
+          font-size: 13px;
+          font-weight: 600;
+        }
+        .service-select {
+          background: #1e293b;
+          color: #f1f5f9;
+          border: 1px solid #334155;
+          padding: 8px 16px;
+          border-radius: 8px;
+          font-size: 13px;
+          font-weight: 600;
+          font-family: inherit;
+          cursor: pointer;
+          outline: none;
+          transition: all 0.2s ease;
+          box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+        .service-select:hover, .service-select:focus {
+          border-color: #3b82f6;
+          background: #243248;
+        }
+        .docs-container {
+          flex: 1;
+          height: calc(100vh - 60px);
+          background: #ffffff;
+          overflow: hidden;
+          position: relative;
+        }
+        elements-api {
+          height: 100%;
+          width: 100%;
+          display: block;
+        }
+      </style>
+    </head>
+    <body>
+      <header class="gateway-nav">
+        <div class="brand">
+          <span>🌉 CodeBridge@ Multi-Tenant</span>
+          <span class="brand-badge">Enterprise Gateway</span>
+        </div>
+        <div class="selector-box">
+          <label class="selector-label" for="serviceSelect">Service Definition:</label>
+          <select id="serviceSelect" class="service-select" onchange="switchService(this.value)">
+            <option value="/docs/api.json">🔑 Auth, RBAC, CRM & MMS Meeting Service</option>
+            <option value="/docs/operations/api.json">📦 Operations, Inventory, Shifts & Commerce Engine</option>
+          </select>
+        </div>
+      </header>
+    
+      <main class="docs-container" id="docsWrapper">
+        <elements-api id="elementsDoc" apiDescriptionUrl="/docs/api.json" router="hash" layout="sidebar"></elements-api>
+      </main>
+    
+      <script>
+        // Automatically upgrade any insecure http:// calls to current origin/https to prevent Mixed Content blocking
+        if (window.location.protocol === 'https:') {
+          const originalFetch = window.fetch;
+          window.fetch = function(resource, init) {
+            if (typeof resource === 'string' && resource.startsWith('http://' + window.location.host)) {
+              resource = resource.replace('http://', 'https://');
+            } else if (resource instanceof Request && resource.url.startsWith('http://' + window.location.host)) {
+              resource = new Request(resource.url.replace('http://', 'https://'), resource);
+            }
+            return originalFetch.call(this, resource, init);
+          };
+        }
+    
+        function switchService(specUrl) {
+          localStorage.setItem('codebridges_selected_doc_spec', specUrl);
+          const wrapper = document.getElementById('docsWrapper');
+          wrapper.innerHTML = '<elements-api id="elementsDoc" apiDescriptionUrl="' + specUrl + '" router="hash" layout="sidebar"></elements-api>';
+        }
+    
+        // Restore last selected service if saved
+        window.addEventListener('DOMContentLoaded', () => {
+          const saved = localStorage.getItem('codebridges_selected_doc_spec');
+          if (saved) {
+            const select = document.getElementById('serviceSelect');
+            if (select && Array.from(select.options).some(opt => opt.value === saved)) {
+              select.value = saved;
+              switchService(saved);
+            }
+          }
+        });
+      </script>
+    </body>
+    </html>
