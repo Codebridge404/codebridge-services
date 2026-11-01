@@ -1,0 +1,312 @@
+name: codebridge-dev
+
+services:
+
+  # 1. API Gateway (Reverse Proxy & Docs Hub)
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    container_name: codebridge-dev-gateway
+    restart: unless-stopped
+    ports:
+      - "8080:80"   # Local developer entrypoint
+    volumes:
+      - ./gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./gateway/services:/etc/nginx/services:ro
+      - ./gateway/docs.html:/usr/share/nginx/html/docs.html:ro
+    depends_on:
+      - auth-service
+      - operations-service
+    networks:
+      codebridge-dev-network:
+        aliases:
+          - api-gateway
+          - codebridge-api-gateway
+
+  # 2. Nginx Proxy Manager (Optional Local SSL & Subdomain Testing)
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: codebridge-dev-npm
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "81:81"
+      - "443:443"
+    environment:
+      DISABLE_IPV6: 'true'
+    volumes:
+      - dev-npm-data:/data
+      - dev-npm-letsencrypt:/etc/letsencrypt
+    networks:
+      - codebridge-dev-network
+
+  # 3. Auth & Identity PHP 8.4-FPM Service
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: codebridge-dev-auth-service
+    restart: unless-stopped
+    env_file:
+      - ./env/dev/auth.env
+    expose:
+      - "9000"
+    volumes:
+      - ./auth-service:/var/www/html
+      - dev-auth-vendor:/var/www/html/vendor
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      codebridge-dev-network:
+        aliases:
+          - auth-service
+          - codebridge-auth-service
+
+  auth-horizon:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: codebridge-dev-auth-horizon
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+    restart: unless-stopped
+    env_file:
+      - ./env/dev/auth.env
+    volumes:
+      - ./auth-service:/var/www/html
+      - dev-auth-vendor:/var/www/html/vendor
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-dev-network
+
+  auth-scheduler:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: codebridge-dev-auth-scheduler
+    command: sh -c "while true; do php artisan schedule:run --verbose --no-interaction; sleep 60; done"
+    restart: unless-stopped
+    env_file:
+      - ./env/dev/auth.env
+    volumes:
+      - ./auth-service:/var/www/html
+      - dev-auth-vendor:/var/www/html/vendor
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-dev-network
+
+  auth-mysql:
+    image: mysql:8.4
+    container_name: codebridge-dev-auth-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: codebridge_auth
+    ports:
+      - "3307:3306"
+    volumes:
+      - dev-auth-mysql-data:/var/lib/mysql
+    networks:
+      codebridge-dev-network:
+        aliases:
+          - auth-mysql
+          - codebridge-auth-mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  auth-redis:
+    image: redis:8-alpine
+    container_name: codebridge-dev-auth-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - dev-auth-redis-data:/data
+    networks:
+      codebridge-dev-network:
+        aliases:
+          - auth-redis
+          - codebridge-auth-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 4. Operations PHP 8.4-FPM Service (Catalog, Inventory, POS, Orders)
+  operations-service:
+    build:
+      context: ./operations-service
+      dockerfile: Dockerfile
+    container_name: codebridge-dev-operations-service
+    restart: unless-stopped
+    env_file:
+      - ./env/dev/operations.env
+    expose:
+      - "9000"
+    volumes:
+      - ./operations-service:/var/www/html
+      - dev-operations-vendor:/var/www/html/vendor
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+      operations-redis:
+        condition: service_healthy
+    networks:
+      codebridge-dev-network:
+        aliases:
+          - operations-service
+          - codebridge-operations-service
+
+  operations-horizon:
+    build:
+      context: ./operations-service
+      dockerfile: Dockerfile
+    container_name: codebridge-dev-operations-horizon
+    command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+    restart: unless-stopped
+    env_file:
+      - ./env/dev/operations.env
+    volumes:
+      - ./operations-service:/var/www/html
+      - dev-operations-vendor:/var/www/html/vendor
+    depends_on:
+      operations-mysql:
+        condition: service_healthy
+      operations-redis:
+        condition: service_healthy
+    networks:
+      - codebridge-dev-network
+
+  operations-mysql:
+    image: mysql:8.4
+    container_name: codebridge-dev-operations-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: codebridge_operations
+    ports:
+      - "3308:3306"
+    volumes:
+      - dev-operations-mysql-data:/var/lib/mysql
+    networks:
+      codebridge-dev-network:
+        aliases:
+          - operations-mysql
+          - codebridge-operations-mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-proot_password"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  operations-redis:
+    image: redis:8-alpine
+    container_name: codebridge-dev-operations-redis
+    restart: unless-stopped
+    ports:
+      - "6380:6379"
+    volumes:
+      - dev-operations-redis-data:/data
+    networks:
+      codebridge-dev-network:
+        aliases:
+          - operations-redis
+          - codebridge-operations-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # 5. MinIO S3 Object Storage Service
+  minio:
+    image: minio/minio:latest
+    container_name: codebridge-dev-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - dev-minio-data:/data
+    networks:
+      codebridge-dev-network:
+        aliases:
+          - minio
+          - codebridge-minio
+          - s3
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  minio-init:
+    image: alpine:latest
+    container_name: codebridge-dev-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    volumes:
+      - dev-minio-data:/data
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        mkdir -p /data/codebridge-auth/avatars /data/codebridge-operations/products
+        chmod -R 777 /data
+        echo 'Dev MinIO buckets ready.'
+        exit 0
+    networks:
+      - codebridge-dev-network
+
+  # 6. Mailpit (Dev Webmail & SMTP Testing)
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: codebridge-dev-mailpit
+    restart: unless-stopped
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+    networks:
+      codebridge-dev-network:
+        aliases:
+          - smartpos-mailpit
+          - mailpit
+
+networks:
+  codebridge-dev-network:
+    name: codebridge-dev-network
+    driver: bridge
+
+volumes:
+  dev-npm-data:
+  dev-npm-letsencrypt:
+  dev-auth-vendor:
+  dev-auth-mysql-data:
+  dev-auth-redis-data:
+  dev-operations-vendor:
+  dev-operations-mysql-data:
+  dev-operations-redis-data:
+  dev-minio-data:
