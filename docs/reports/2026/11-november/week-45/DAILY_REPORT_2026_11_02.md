@@ -237,6 +237,51 @@ All GitHub Actions pipelines triggered on commit `6716ca1` executed with **100% 
 | `https://staging-codebridge-api.servicefixit.me/api/v1/health` | `HTTP 200 OK` | `{"status":"ok","timestamp":"...","services":{"auth":"ok","database":"ok","cache":"ok"}}` |
 | `https://staging-codebridge-docs.servicefixit.me/docs` | `HTTP 200 OK` | Interactive Stoplight Elements OpenAPI 3.1 documentation rendered |
 
+---
+
+## 12. GitHub Releases & GitHub Packages (GHCR) Publishing Pipelines
+
+Architected and implemented enterprise container packaging and release automation workflows to enable versioned, immutable deployments across staging, production, and Kubernetes clusters:
+
+### A. Publish Docker Packages to GitHub Container Registry (`.github/workflows/publish-ghcr.yml`)
+- **Automated Matrix Builds**: Concurrently builds and tags all 3 core platform microservices:
+  1. `ghcr.io/codebridge404/codebridge-auth-service`
+  2. `ghcr.io/codebridge404/codebridge-operations-service`
+  3. `ghcr.io/codebridge404/codebridge-gateway`
+- **Docker Buildx & GitHub Actions Cache**: Leverages Docker Buildx with GitHub Actions caching (`type=gha`, `mode=max`) for accelerated builds.
+- **Semantic Versioning & Immutable Tagging**: Automatically generates SemVer tags (`vX.Y.Z`, `vX.Y`, `vX`), commit short SHA (`sha-...`), and conditionally updates `:latest` on version tag pushes or `workflow_dispatch`.
+- **Step Summary Generation**: Publishes clear pull commands and image tags into the GitHub Actions run summary.
+
+### B. Automated GitHub Release Management (`.github/workflows/release.yml`)
+- **Trigger**: Activates on push of version tags matching `v*.*.*` or manual `workflow_dispatch`.
+- **Automated Release Notes & Changelog**: Formats release details, links to published GHCR packages, embeds zero-downtime deployment instructions (Docker Compose Blue-Green & Kubernetes), and compiles git changelogs.
+- **Pre-Release & Draft Controls**: Automatically detects alpha, beta, and release candidates (`-rc`, `-beta`, `-alpha`) to flag pre-releases appropriately.
+
+### C. Recommended Release Flow
+```
+Developer
+   │
+   ▼
+demo branch (staging deployment & verification)
+   │
+   ▼
+master branch (production ready)
+   │
+   ├──▶ Git Tag: v0.1.0
+   │
+   ├──▶ GitHub Release: v0.1.0 (release.yml)
+   │
+   └──▶ Build & Publish Docker Packages (publish-ghcr.yml)
+             │
+             ├──▶ ghcr.io/codebridge404/codebridge-auth-service:v0.1.0
+             ├──▶ ghcr.io/codebridge404/codebridge-operations-service:v0.1.0
+             └──▶ ghcr.io/codebridge404/codebridge-gateway:v0.1.0
+                         │
+                         ▼
+             Production Blue-Green / Kubernetes (K3s) Rollout
+```
+
+
 
 
 
