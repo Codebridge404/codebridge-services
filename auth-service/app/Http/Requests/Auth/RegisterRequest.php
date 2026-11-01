@@ -23,8 +23,8 @@ class RegisterRequest extends FormRequest
     {
         return [
             'name' => ['required', 'string', 'max:255'],
-            'email' => ['nullable', 'string'],
-            'phone' => ['nullable', 'string', 'max:30'],
+            'email' => ['nullable', 'string', 'email:rfc', 'max:255'],
+            'phone' => ['nullable', 'string', 'regex:/^\+?[0-9\s\-()]{7,25}$/', 'max:30'],
             'password' => ['required', 'string', 'min:8', $this->has('password_confirmation') ? 'confirmed' : 'nullable'],
         ];
     }

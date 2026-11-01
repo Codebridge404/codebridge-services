@@ -7,6 +7,7 @@ use App\Services\JwtService;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -24,9 +25,9 @@ use Symfony\Component\HttpFoundation\Response;
  * Process Capabilities:
  * Step 1 (Bearer Token Parsing): Extracts Authorization Bearer token header from incoming microservice request.
  * Step 2 (Cryptographic Signature Verification): Validates token signature locally using shared HMAC-SHA256 secret.
- * Step 3 (Expiration & Claims Check): Verifies token expiration timestamp (exp) and issuer claims.
- * Step 4 (Tenant Scoping Injection): Injects user_id, tenant_id, and outlet_id into request attributes.
- * Step 5 (Security Guard Fallback): Blocks unauthenticated requests with HTTP 401 Unauthorized.
+ * Step 3 (Token Purpose Enforcement): Rejects refresh tokens or non-access tokens from authenticating endpoints.
+ * Step 4 (Revocation & Expiration Check): Verifies token JTI blacklist and user session revocation.
+ * Step 5 (Tenant Scoping Injection): Injects user_id, tenant_id, and outlet_id into request attributes.
  */
 class AuthenticateJwt
 {
@@ -45,6 +46,50 @@ class AuthenticateJwt
             $payload = $this->jwtService->verify($token);
 
             if ($payload && !empty($payload['sub'])) {
+                // 1. Enforce Token Purpose: Reject refresh tokens used to authenticate API endpoints
+                $tokenUse = $payload['token_use'] ?? null;
+                if ($tokenUse && $tokenUse !== 'access') {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'INVALID_TOKEN_PURPOSE',
+                        'message' => 'Invalid token purpose: refresh tokens cannot be used to authenticate API endpoints.',
+                    ], 401);
+                }
+
+                // 2. Enforce Token Revocation via Cache (Blacklist JTI)
+                $jti = $payload['jti'] ?? null;
+                if ($jti && Cache::get("revoked_jwt:{$jti}")) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'TOKEN_REVOKED',
+                        'message' => 'Token has been revoked. Please sign in again.',
+                    ], 401);
+                }
+
+                // 3. Enforce User Global Session Revocation
+                $userId = $payload['sub'];
+                $tokenIat = (int) ($payload['iat'] ?? 0);
+                $revokedAt = Cache::get("revoked_user_sessions:{$userId}");
+                if ($revokedAt !== null && $tokenIat <= (int) $revokedAt) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'SESSION_REVOKED',
+                        'message' => 'User session has been revoked. Please sign in again.',
+                    ], 401);
+                }
+
+                // Check session version if present in token claims
+                if (isset($payload['session_version'])) {
+                    $currentVersion = (int) Cache::get("session_version:{$userId}", 0);
+                    if ((int) $payload['session_version'] < $currentVersion) {
+                        return response()->json([
+                            'status' => 'error',
+                            'code' => 'SESSION_SUPERSEDED',
+                            'message' => 'Session has expired or was revoked by a newer login.',
+                        ], 401);
+                    }
+                }
+
                 // Construct stateless authenticated user from verified cryptographic JWT claims
                 $user = new User([
                     'name' => $payload['name'] ?? 'Authorized User',

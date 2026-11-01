@@ -123,4 +123,121 @@ class OperationsAuthenticationTest extends TestCase
                 'status' => 'success',
             ]);
     }
+
+    /**
+     * Test refresh token purpose is strictly rejected from authenticating access endpoints.
+     */
+    public function test_refresh_token_cannot_authenticate_access_endpoints(): void
+    {
+        $payload = [
+            'iss' => 'codebridge-auth-service',
+            'sub' => '101',
+            'name' => 'Cashier Chenda',
+            'email' => 'chenda@codebridges.io',
+            'role' => 'cashier',
+            'tenant_id' => '1',
+            'iat' => time(),
+            'exp' => time() + 3600,
+            'token_use' => 'refresh', // Explicit refresh token
+        ];
+        $refreshToken = JWT::encode($payload, $this->secret, 'HS256');
+
+        $response = $this->withHeaders([
+            'Authorization' => "Bearer {$refreshToken}",
+        ])->getJson('/api/v1/shifts/active');
+
+        $response->assertStatus(401)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'INVALID_TOKEN_PURPOSE',
+            ]);
+    }
+
+    /**
+     * Test untrusted JWT issuer is rejected.
+     */
+    public function test_untrusted_issuer_is_rejected(): void
+    {
+        $payload = [
+            'iss' => 'untrusted-fake-auth-issuer',
+            'sub' => '102',
+            'name' => 'Malicious Actor',
+            'role' => 'cashier',
+            'tenant_id' => '1',
+            'iat' => time(),
+            'exp' => time() + 3600,
+            'token_use' => 'access',
+        ];
+        $token = JWT::encode($payload, $this->secret, 'HS256');
+
+        $response = $this->withHeaders([
+            'Authorization' => "Bearer {$token}",
+        ])->getJson('/api/v1/shifts/active');
+
+        $response->assertStatus(401);
+    }
+
+    /**
+     * Test revoked JWT JTI is rejected.
+     */
+    public function test_revoked_jwt_jti_is_rejected(): void
+    {
+        $jti = 'revoked-test-jti-uuid-12345';
+        \Illuminate\Support\Facades\Cache::put("revoked_jwt:{$jti}", true, 3600);
+
+        $payload = [
+            'iss' => 'codebridge-auth-service',
+            'sub' => '103',
+            'name' => 'Logged Out Cashier',
+            'role' => 'cashier',
+            'tenant_id' => '1',
+            'iat' => time(),
+            'exp' => time() + 3600,
+            'token_use' => 'access',
+            'jti' => $jti,
+        ];
+        $token = JWT::encode($payload, $this->secret, 'HS256');
+
+        $response = $this->withHeaders([
+            'Authorization' => "Bearer {$token}",
+        ])->getJson('/api/v1/shifts/active');
+
+        $response->assertStatus(401)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'TOKEN_REVOKED',
+            ]);
+    }
+
+    /**
+     * Test revoked user session invalidates previously issued tokens.
+     */
+    public function test_revoked_user_session_is_rejected(): void
+    {
+        $userId = '104';
+        // User logged out or had sessions revoked at current timestamp
+        \Illuminate\Support\Facades\Cache::put("revoked_user_sessions:{$userId}", time(), 3600);
+
+        $payload = [
+            'iss' => 'codebridge-auth-service',
+            'sub' => $userId,
+            'name' => 'Deactivated Cashier',
+            'role' => 'cashier',
+            'tenant_id' => '1',
+            'iat' => time() - 60, // Issued 60 seconds before revocation
+            'exp' => time() + 3600,
+            'token_use' => 'access',
+        ];
+        $token = JWT::encode($payload, $this->secret, 'HS256');
+
+        $response = $this->withHeaders([
+            'Authorization' => "Bearer {$token}",
+        ])->getJson('/api/v1/shifts/active');
+
+        $response->assertStatus(401)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'SESSION_REVOKED',
+            ]);
+    }
 }

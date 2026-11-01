@@ -132,3 +132,60 @@ Referrer-Policy: strict-origin-when-cross-origin
 > **Action Required in Hostinger DNS:**
 > An old `AAAA` (IPv6) record exists for `npm.servicefixit.me` pointing to `2a02:4780:6:1509:0:23f1:7bf2:2` (Hostinger's default shared hosting). Delete this `AAAA` record in Hostinger hPanel so browser traffic routes exclusively to the VPS `A` record (`217.216.110.153`).
 
+---
+
+## 6. Security Review Remediation & Vulnerability Hardening
+
+Following a comprehensive static code security review of commit `2afb565`, all five identified vulnerabilities and high-priority risks were systematically remediated, validated, and hardened:
+
+### 1. Critical: Multi-Tenant Boundary Enforcement & X-Tenant-Id Spoofing Mitigation
+- **Vulnerability**: Client-supplied `X-Tenant-Id` previously took precedence over `$request->user()->tenant_id` in `ProductController`, allowing cross-tenant product updates and deletes. The update query also allowed `orWhereNull('tenant_id')`.
+- **Remediation**:
+  - Implemented [`App\Traits\ResolvesTenantContext`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/operations-service/app/Traits/ResolvesTenantContext.php) across all Operations controllers (`ProductController`, `CategoryController`, `InventoryController`, `TransferController`, `PurchaseController`, `FinanceController`, `ExchangeRateController`, `ReconciliationController`).
+  - Strict Server-Side Identity: Client-supplied `X-Tenant-Id` or `?tenant_id=` is rejected with **HTTP 403 Forbidden** if it does not match the authenticated user's assigned `tenant_id` (only `super_admin` retains cross-tenant management scopes).
+  - Exact Ownership Validation: Every mutation (`update`, `destroy`, `uploadImage`) executes `authorizeTenantResource()`, verifying that the resource's `tenant_id` matches the current tenant. Modification of global template records (`tenant_id = null`) by non-superadmins is strictly blocked.
+
+### 2. High: Catalog Route Protection & Product Export Lockdown
+- **Vulnerability**: `/api/v1/products/export` was unauthenticated and skipped tenant scoping when `tenant_id` was absent or set to `all`, leaking business product costs across organizations.
+- **Remediation**:
+  - Moved `/api/v1/products/export` into the protected `auth:sanctum` middleware group in [`routes/api/catalog.php`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/operations-service/routes/api/catalog.php).
+  - Reordered routes: Declared `/products/export` before wildcard parameter route `/products/{id}` with `whereNumber('id')`, preventing route shadowing.
+  - Enforced strict tenant condition on `ProductExportController::export` (only `super_admin` can export cross-tenant).
+  - Data Minimization on Public Catalog: When unauthenticated visitors access public storefront products, internal accounting columns (`cost_price`) are automatically stripped.
+
+### 3. High: Operations Distributed JWT Token Purpose & Revocation Enforcement
+- **Vulnerability**: `AuthenticateJwt` accepted any signed token without checking `token_use` (allowing refresh tokens as access tokens), session revocation, or configured issuer.
+- **Remediation**:
+  - Token Purpose Gate: Enforced `token_use === 'access'` in [`AuthenticateJwt`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/operations-service/app/Http/Middleware/AuthenticateJwt.php). Explicitly rejects refresh tokens with `HTTP 401 INVALID_TOKEN_PURPOSE`.
+  - Issuer Validation: Validates `iss === config('jwt.issuer')` in [`JwtService::decode()`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/operations-service/app/Services/JwtService.php). Rejects untrusted issuers with HTTP 401.
+  - Revocation & Session Blacklist: Integrates cache checks for `revoked_jwt:{jti}`, `revoked_user_sessions:{userId}`, and `session_version:{userId}` to instantly invalidate logged-out or deactivated accounts.
+
+### 4. High: Elimination of Hardcoded Fallback JWT Secret
+- **Vulnerability**: `operations-service/config/jwt.php` contained a public fallback secret string `'codebridge_enterprise_stateless_jwt_secret_key_2026_secured'`.
+- **Remediation**:
+  - Removed fallback secret in [`config/jwt.php`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/operations-service/config/jwt.php) (`'secret' => env('JWT_SECRET')`).
+  - Added startup guard in `JwtService::__construct`: Throws a `RuntimeException` if `JWT_SECRET` is missing or fewer than 32 characters, preventing insecure execution.
+
+### 5. Medium: Registration Validation & Account Enumeration Mitigation
+- **Vulnerability**: `RegisterRequest` lacked email format and length rules. Different error messages were returned for existing emails vs. phone numbers.
+- **Remediation**:
+  - Added strict email format (`email:rfc`), max length (`max:255`), and phone regex validation in [`RegisterRequest.php`](file:///Users/macbookpro/Projects/codebridge/codebridge-services/auth-service/app/Http/Requests/Auth/RegisterRequest.php).
+  - Normalized email addresses (`strtolower(trim($email))`).
+  - Unified rejection response: Replaced distinct error messages with a single message: `"The provided email address or phone number is already registered."`, mitigating account enumeration attacks.
+
+### 6. Additional Query Parameter Fix: Unified Search
+- Supported both `?q=` and `?search=` query parameters across catalog endpoints with trimmed PDO parameter binding in `ProductController::index`.
+
+---
+
+## 7. Quality Assurance & Regression Verification
+
+Platform testing policy suite [`test_all_policies.sh`](file:///Users/macbookpro/Projects/codebridge/test_all_policies.sh) executed with 100% success:
+
+| Microservice | Enforced Quality Rules | Tests Executed | Assertions | Failures | Composer CVEs | Result |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Auth Service** | 10 / 10 Rules | 181 Tests | 850 Assertions | 0 | 0 | **PASS** |
+| **Operations Service** | 9 / 9 Rules | 40 Tests | 116 Assertions | 0 | 0 | **PASS** |
+| **Platform Total** | **19 / 19 Rules** | **221 Tests** | **966 Assertions** | **0** | **0** | **PASS** |
+
+

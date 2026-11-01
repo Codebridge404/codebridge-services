@@ -32,13 +32,7 @@ use Illuminate\Support\Facades\Schema;
  */
 class PurchaseController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
+    use \App\Traits\ResolvesTenantContext;
 
     public function purchases(Request $request)
     {

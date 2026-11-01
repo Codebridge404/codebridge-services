@@ -26,19 +26,11 @@ use Illuminate\Http\Request;
 #[Group('Multi-Currency')]
 class ExchangeRateController extends Controller
 {
+    use \App\Traits\ResolvesTenantContext;
+
     public function __construct(
         protected ExchangeRateService $exchangeRateService
     ) {}
-
-    protected function getTenantId(Request $request): ?string
-    {
-        $val = $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
-            ?? $request->query('tenant_id')
-            ?? null;
-
-        return (!empty($val) && trim((string)$val) !== '') ? (string) $val : null;
-    }
 
     /**
      * Get the active NBC USD-KHR exchange rate and quick conversion presets.

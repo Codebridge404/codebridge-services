@@ -23,16 +23,7 @@ use Illuminate\Support\Facades\DB;
  */
 class ReconciliationController extends Controller
 {
-    protected function getTenantId(Request $request): ?int
-    {
-        $tid = $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
-            ?? $request->query('tenant_id')
-            ?? $request->input('tenant_id')
-            ?? null;
-
-        return (!empty($tid) && is_numeric($tid)) ? (int) $tid : null;
-    }
+    use \App\Traits\ResolvesTenantContext;
 
     /**
      * Run batch reconciliation audit comparing internal payments vs gateway settlements

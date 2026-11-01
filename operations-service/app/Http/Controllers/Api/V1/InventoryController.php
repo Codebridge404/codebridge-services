@@ -23,13 +23,7 @@ use Illuminate\Support\Facades\DB;
  */
 class InventoryController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
+    use \App\Traits\ResolvesTenantContext;
 
     public function balances(Request $request)
     {

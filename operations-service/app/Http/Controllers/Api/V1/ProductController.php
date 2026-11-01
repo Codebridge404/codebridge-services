@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -21,21 +22,15 @@ use Illuminate\Support\Facades\DB;
  * 1. SKU generation, EAN-13 barcode lookups, and category tagging.
  * 2. Multi-tier retail pricing and cost accounting.
  * 3. Atomic bulk product ingestion.
- * 4. Multi-tenant catalog scoping via X-Tenant-Id.
+ * 4. Multi-tenant catalog scoping via ResolvesTenantContext.
  */
 class ProductController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
+    use ResolvesTenantContext;
 
     public function bulkStore(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
         $validated = $request->validate([
             'items' => 'required|array|min:1',
             'items.*.name' => 'required|string|max:255',
@@ -55,10 +50,7 @@ class ProductController extends Controller
 
         DB::transaction(function () use ($validated, $tenantId, &$createdCount, &$errors) {
             foreach ($validated['items'] as $index => $item) {
-                $skuQuery = DB::table('products')->where('sku', $item['sku']);
-                if ($tenantId) {
-                    $skuQuery->where('tenant_id', $tenantId);
-                }
+                $skuQuery = DB::table('products')->where('sku', $item['sku'])->where('tenant_id', $tenantId);
                 $existing = $skuQuery->first();
                 if ($existing) {
                     $errors[] = "Row #" . ($index + 1) . ": SKU '{$item['sku']}' already exists.";
@@ -67,12 +59,12 @@ class ProductController extends Controller
 
                 $categoryId = $item['category_id'] ?? null;
                 if (!$categoryId && !empty($item['category_name'])) {
-                    $catQuery = DB::table('categories')->where('name', $item['category_name']);
-                    if ($tenantId) {
-                        $catQuery->where(function ($q) use ($tenantId) {
+                    $catQuery = DB::table('categories')
+                        ->where('name', $item['category_name'])
+                        ->where(function ($q) use ($tenantId) {
                             $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
                         });
-                    }
+
                     $cat = $catQuery->first();
                     if ($cat) {
                         $categoryId = $cat->id;
@@ -128,10 +120,11 @@ class ProductController extends Controller
 
     public function index(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, false);
         $outletId = $request->query('outlet_id', 1);
         $categoryId = $request->query('category_id');
-        $search = $request->query('q');
+        // Support both ?q= and ?search=
+        $search = $request->query('q') ?? $request->query('search');
         $stockStatus = $request->query('stock_status');
         $sortBy = $request->query('sort_by', 'created_at');
         $sortOrder = strtolower($request->query('sort_order', 'desc')) === 'asc' ? 'asc' : 'desc';
@@ -161,6 +154,9 @@ class ProductController extends Controller
                       ->orWhereNull('p.tenant_id');
                 });
             }
+        } elseif (empty($tenantId) && !$request->user()) {
+            // Unauthenticated visitor with no tenant specified only sees global shared templates
+            $query->whereNull('p.tenant_id');
         }
 
         if (!empty($categoryId)) {
@@ -168,10 +164,11 @@ class ProductController extends Controller
         }
 
         if (!empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('p.name', 'like', "%{$search}%")
-                  ->orWhere('p.sku', 'like', "%{$search}%")
-                  ->orWhere('p.barcode', 'like', "%{$search}%");
+            $searchTerm = trim((string) $search);
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('p.name', 'like', "%{$searchTerm}%")
+                  ->orWhere('p.sku', 'like', "%{$searchTerm}%")
+                  ->orWhere('p.barcode', 'like', "%{$searchTerm}%");
             });
         }
 
@@ -196,28 +193,33 @@ class ProductController extends Controller
             $query->orderBy('p.created_at', $sortOrder)->orderBy('p.id', $sortOrder);
         }
 
-        $products = $query->select(
-                'p.id',
-                'p.tenant_id',
-                'p.name',
-                'p.sku',
-                'p.barcode',
-                'p.description',
-                'p.selling_price',
-                'p.selling_price as price',
-                'p.cost_price',
-                'p.image_url',
-                'p.min_reorder_point',
-                'p.category_id',
-                'c.name as category',
-                'c.name as category_name',
-                'p.brand_id',
-                'b.name as brand_name',
-                'p.expiry_date',
-                'p.is_active',
-                DB::raw('COALESCE(ib.on_hand, 0) as stock_on_hand')
-            )
-            ->get();
+        $selectColumns = [
+            'p.id',
+            'p.tenant_id',
+            'p.name',
+            'p.sku',
+            'p.barcode',
+            'p.description',
+            'p.selling_price',
+            'p.selling_price as price',
+            'p.image_url',
+            'p.min_reorder_point',
+            'p.category_id',
+            'c.name as category',
+            'c.name as category_name',
+            'p.brand_id',
+            'b.name as brand_name',
+            'p.expiry_date',
+            'p.is_active',
+            DB::raw('COALESCE(ib.on_hand, 0) as stock_on_hand')
+        ];
+
+        // Cost price is an internal accounting metric: only reveal to authenticated staff
+        if ($request->user()) {
+            $selectColumns[] = 'p.cost_price';
+        }
+
+        $products = $query->select($selectColumns)->get();
 
         return response()->json([
             'status' => 'success',
@@ -225,7 +227,7 @@ class ProductController extends Controller
         ]);
     }
 
-    public function show($id)
+    public function show(Request $request, $id)
     {
         $product = DB::table('products as p')
             ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
@@ -237,29 +239,61 @@ class ProductController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
         }
 
+        $tenantId = $this->getTenantId($request, false);
+        if ($tenantId && $tenantId !== 'all' && $product->tenant_id !== null) {
+            if ((string) $product->tenant_id !== (string) $tenantId && $request->user()?->role !== 'super_admin') {
+                return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
+            }
+        }
+
+        // Prevent leaking internal costs to unauthenticated visitors
+        if (!$request->user()) {
+            unset($product->cost_price);
+        }
+
         return response()->json([
             'status' => 'success',
             'data' => $product,
         ]);
     }
 
-    public function showByBarcode($code)
+    public function showByBarcode(Request $request, $code)
     {
-        $product = DB::table('barcodes as b')
+        $tenantId = $this->getTenantId($request, false);
+
+        $barcodeQuery = DB::table('barcodes as b')
             ->join('products as p', 'b.product_id', '=', 'p.id')
             ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
             ->where('b.barcode', $code)
-            ->where('p.is_active', true)
-            ->select('p.id', 'p.name', 'p.sku', 'p.selling_price as price', 'c.name as category', 'b.barcode', 'p.image_url')
+            ->where('p.is_active', true);
+
+        if (!empty($tenantId) && $tenantId !== 'all') {
+            $barcodeQuery->where(function ($q) use ($tenantId) {
+                $q->where('p.tenant_id', $tenantId)->orWhereNull('p.tenant_id');
+            });
+        } elseif (empty($tenantId) && !$request->user()) {
+            $barcodeQuery->whereNull('p.tenant_id');
+        }
+
+        $product = $barcodeQuery->select('p.id', 'p.tenant_id', 'p.name', 'p.sku', 'p.selling_price as price', 'c.name as category', 'b.barcode', 'p.image_url')
             ->first();
 
         if (!$product) {
             // Fallback: Check if code matches product SKU
-            $product = DB::table('products as p')
+            $skuQuery = DB::table('products as p')
                 ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
                 ->where('p.sku', $code)
-                ->where('p.is_active', true)
-                ->select('p.id', 'p.name', 'p.sku', 'p.selling_price as price', 'c.name as category', 'p.image_url')
+                ->where('p.is_active', true);
+
+            if (!empty($tenantId) && $tenantId !== 'all') {
+                $skuQuery->where(function ($q) use ($tenantId) {
+                    $q->where('p.tenant_id', $tenantId)->orWhereNull('p.tenant_id');
+                });
+            } elseif (empty($tenantId) && !$request->user()) {
+                $skuQuery->whereNull('p.tenant_id');
+            }
+
+            $product = $skuQuery->select('p.id', 'p.tenant_id', 'p.name', 'p.sku', 'p.selling_price as price', 'c.name as category', 'p.image_url')
                 ->first();
         }
 
@@ -275,7 +309,7 @@ class ProductController extends Controller
 
     public function store(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'sku' => 'required|string|max:100',
@@ -292,11 +326,11 @@ class ProductController extends Controller
             'image' => 'nullable|file|image|max:10240',
         ]);
 
-        // Check if SKU exists for this tenant
-        $skuCheck = DB::table('products')->where('sku', $validated['sku']);
-        if ($tenantId) {
-            $skuCheck->where('tenant_id', $tenantId);
-        }
+        // Check if SKU exists for this specific tenant
+        $skuCheck = DB::table('products')
+            ->where('sku', $validated['sku'])
+            ->where('tenant_id', $tenantId);
+
         if ($skuCheck->exists()) {
             return response()->json([
                 'status' => 'error',
@@ -368,7 +402,15 @@ class ProductController extends Controller
 
     public function update(Request $request, $id)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
+
+        $product = DB::table('products')->where('id', $id)->first();
+        if (!$product) {
+            return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
+        }
+
+        $this->authorizeTenantResource($product->tenant_id, $request, 'Product');
+
         $validated = $request->validate([
             'name' => 'sometimes|string|max:255',
             'sku' => 'sometimes|string|max:100',
@@ -399,15 +441,11 @@ class ProductController extends Controller
             }
         }
 
-        $query = DB::table('products')->where('id', $id);
-        if ($tenantId) {
-            $query->where(function ($q) use ($tenantId) {
-                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-            });
-        }
-
         $validated['updated_at'] = now();
-        $query->update($validated);
+        DB::table('products')
+            ->where('id', $id)
+            ->where('tenant_id', $product->tenant_id)
+            ->update($validated);
 
         return response()->json([
             'status' => 'success',
@@ -418,22 +456,18 @@ class ProductController extends Controller
 
     public function uploadImage(Request $request, $id)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
         $request->validate([
             'image' => 'required_without:image_url|file|image|max:10240',
             'image_url' => 'required_without:image|string',
         ]);
 
-        $query = DB::table('products')->where('id', $id);
-        if ($tenantId) {
-            $query->where(function ($q) use ($tenantId) {
-                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-            });
-        }
-
-        if (!$query->exists()) {
+        $product = DB::table('products')->where('id', $id)->first();
+        if (!$product) {
             return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
         }
+
+        $this->authorizeTenantResource($product->tenant_id, $request, 'Product');
 
         $imageUrl = null;
         $cloudinary = new \App\Services\CloudinaryService();
@@ -447,10 +481,13 @@ class ProductController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Image upload failed'], 500);
         }
 
-        $query->update([
-            'image_url' => $imageUrl,
-            'updated_at' => now(),
-        ]);
+        DB::table('products')
+            ->where('id', $id)
+            ->where('tenant_id', $product->tenant_id)
+            ->update([
+                'image_url' => $imageUrl,
+                'updated_at' => now(),
+            ]);
 
         return response()->json([
             'status' => 'success',
@@ -464,13 +501,19 @@ class ProductController extends Controller
 
     public function destroy(Request $request, $id)
     {
-        $tenantId = $this->getTenantId($request);
-        $query = DB::table('products')->where('id', $id);
-        if ($tenantId) {
-            $query->where('tenant_id', $tenantId);
+        $tenantId = $this->getTenantId($request, true);
+
+        $product = DB::table('products')->where('id', $id)->first();
+        if (!$product) {
+            return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
         }
 
-        $query->update(['is_active' => false, 'updated_at' => now()]);
+        $this->authorizeTenantResource($product->tenant_id, $request, 'Product');
+
+        DB::table('products')
+            ->where('id', $id)
+            ->where('tenant_id', $product->tenant_id)
+            ->update(['is_active' => false, 'updated_at' => now()]);
 
         return response()->json([
             'status' => 'success',

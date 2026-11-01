@@ -1247,8 +1247,10 @@ class AuthController extends Controller
     #[OpenApiResponse(status: 201, description: 'User account registered successfully', type: 'array{status: string, message: string, access_token: string, token: string, refresh_token: string, sanctum_token?: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
     public function register(RegisterRequest $request)
     {
-        $email = $request->email;
-        $phone = $request->phone;
+        $rawEmail = $request->email;
+        $rawPhone = $request->phone;
+        $email = $rawEmail ? strtolower(trim((string) $rawEmail)) : null;
+        $phone = $rawPhone ? trim((string) $rawPhone) : null;
 
         if (!$email && !$phone) {
             return $this->errorResponse(
@@ -1257,16 +1259,18 @@ class AuthController extends Controller
             );
         }
 
+        // Prevent account enumeration by using consistent rejection message for existing records
+        $accountExists = false;
         if ($email && User::where('email', $email)->exists()) {
-            return $this->errorResponse(
-                'This email address is already registered.',
-                HttpStatus::UNPROCESSABLE_ENTITY
-            );
+            $accountExists = true;
+        }
+        if ($phone && User::where('phone', $phone)->exists()) {
+            $accountExists = true;
         }
 
-        if ($phone && User::where('phone', $phone)->exists()) {
+        if ($accountExists) {
             return $this->errorResponse(
-                'This phone number is already registered.',
+                'The provided email address or phone number is already registered.',
                 HttpStatus::UNPROCESSABLE_ENTITY
             );
         }
