@@ -1328,6 +1328,7 @@ class AuthController extends Controller
         return $this->createdResponse(
             message: 'User account registered successfully.',
             extra: [
+                'token' => $jwtToken,
                 'access_token' => $jwtToken,
                 'refresh_token' => $refreshToken,
                 'sanctum_token' => $plainToken,
