@@ -43,7 +43,12 @@ class DatabaseSeeder extends Seeder
         }
 
         // 2. Resolve Admin User from auth_db
-        $adminUser = User::where('email', 'vibolsen2002@gmail.com')->first() ?? User::first();
+        try {
+            $adminUser = User::where('email', 'vibolsen2002@gmail.com')->first() ?? User::first();
+            $adminUserId = $adminUser ? $adminUser->id : 1;
+        } catch (\Throwable $e) {
+            $adminUserId = 1;
+        }
 
         // 3. Categories
         $existingBev = DB::table('categories')->where('slug', 'beverages')->first();
@@ -124,7 +129,7 @@ class DatabaseSeeder extends Seeder
                     'product_id' => $productId,
                     'quantity_change' => 100,
                     'movement_type' => 'receive',
-                    'created_by' => $adminUser ? $adminUser->id : 1,
+                    'created_by' => $adminUserId,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
