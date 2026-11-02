@@ -15,6 +15,10 @@ class MeetingSeeder extends Seeder
     {
         $now = Carbon::now('Asia/Phnom_Penh');
 
+        if (!\Illuminate\Support\Facades\Schema::hasTable('meeting_rooms')) {
+            return;
+        }
+
         // 1. Seed Default Conference Rooms
         $rooms = [
             [
@@ -76,61 +80,64 @@ class MeetingSeeder extends Seeder
         $organizerId = $organizer ? $organizer->id : 1;
 
         if ($roomA) {
-            $m1Start = $now->copy()->setTime(9, 30);
-            $m1End = $now->copy()->setTime(11, 0);
+            $existingM1 = DB::table('meetings')->where('title', 'Executive Strategic Roadmap & Q4 Targets')->first();
+            if (!$existingM1) {
+                $m1Start = $now->copy()->setTime(9, 30);
+                $m1End = $now->copy()->setTime(11, 0);
 
-            $m1Id = DB::table('meetings')->insertGetId([
-                'room_id' => $roomA->id,
-                'organizer_id' => $organizerId,
-                'title' => 'Executive Strategic Roadmap & Q4 Targets',
-                'description' => 'Review quarterly corporate OKRs, cross-department resource allocations, and international expansion milestones.',
-                'start_time' => $m1Start,
-                'end_time' => $m1End,
-                'status' => 'scheduled',
-                'meeting_type' => 'review',
-                'meeting_link' => 'https://meet.codebridges.io/exec-q4-roadmap',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            DB::table('meeting_attendees')->insert([
-                [
-                    'meeting_id' => $m1Id,
-                    'user_id' => $organizerId,
-                    'name' => $organizer ? $organizer->name : 'Platform Admin',
-                    'email' => $organizer ? $organizer->email : 'admin@codebridges.io',
-                    'role' => 'organizer',
-                    'rsvp_status' => 'accepted',
+                $m1Id = DB::table('meetings')->insertGetId([
+                    'room_id' => $roomA->id,
+                    'organizer_id' => $organizerId,
+                    'title' => 'Executive Strategic Roadmap & Q4 Targets',
+                    'description' => 'Review quarterly corporate OKRs, cross-department resource allocations, and international expansion milestones.',
+                    'start_time' => $m1Start,
+                    'end_time' => $m1End,
+                    'status' => 'scheduled',
+                    'meeting_type' => 'review',
+                    'meeting_link' => 'https://meet.codebridges.io/exec-q4-roadmap',
                     'created_at' => $now,
                     'updated_at' => $now,
-                ],
-                [
+                ]);
+
+                DB::table('meeting_attendees')->insert([
+                    [
+                        'meeting_id' => $m1Id,
+                        'user_id' => $organizerId,
+                        'name' => $organizer ? $organizer->name : 'Platform Admin',
+                        'email' => $organizer ? $organizer->email : 'admin@codebridges.io',
+                        'role' => 'organizer',
+                        'rsvp_status' => 'accepted',
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ],
+                    [
+                        'meeting_id' => $m1Id,
+                        'user_id' => null,
+                        'name' => 'Sarah Connor (COO)',
+                        'email' => 'sarah@codebridges.io',
+                        'role' => 'attendee',
+                        'rsvp_status' => 'accepted',
+                        'created_at' => $now,
+                        'updated_at' => $now,
+                    ],
+                ]);
+
+                DB::table('meeting_minutes')->insert([
                     'meeting_id' => $m1Id,
-                    'user_id' => null,
-                    'name' => 'Sarah Connor (COO)',
-                    'email' => 'sarah@codebridges.io',
-                    'role' => 'attendee',
-                    'rsvp_status' => 'accepted',
+                    'recorded_by' => $organizerId,
+                    'content' => "## Executive Meeting Objectives\n\n1. Confirm Q4 budget and department quotas.\n2. Finalize deployment timeline for Meeting Management System.\n3. Align marketing launch across Southeast Asia.",
+                    'action_items' => json_encode([
+                        ['task' => 'Deliver cloud infra cost projection by Friday', 'assignee' => 'DevOps Lead', 'status' => 'in_progress'],
+                        ['task' => 'Review tenant onboarding legal disclaimer', 'assignee' => 'Legal Team', 'status' => 'pending'],
+                    ]),
+                    'status' => 'published',
                     'created_at' => $now,
                     'updated_at' => $now,
-                ],
-            ]);
-
-            DB::table('meeting_minutes')->insert([
-                'meeting_id' => $m1Id,
-                'recorded_by' => $organizerId,
-                'content' => "## Executive Meeting Objectives\n\n1. Confirm Q4 budget and department quotas.\n2. Finalize deployment timeline for Meeting Management System.\n3. Align marketing launch across Southeast Asia.",
-                'action_items' => json_encode([
-                    ['task' => 'Deliver cloud infra cost projection by Friday', 'assignee' => 'DevOps Lead', 'status' => 'in_progress'],
-                    ['task' => 'Review tenant onboarding legal disclaimer', 'assignee' => 'Legal Team', 'status' => 'pending'],
-                ]),
-                'status' => 'published',
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
+                ]);
+            }
         }
 
-        if ($roomB) {
+        if ($roomB && !DB::table('meetings')->where('title', 'Design System 2.0 & Component Token Review')->exists()) {
             $m2Start = $now->copy()->setTime(14, 0);
             $m2End = $now->copy()->setTime(15, 30);
 
@@ -149,7 +156,7 @@ class MeetingSeeder extends Seeder
             ]);
         }
 
-        if ($roomC) {
+        if ($roomC && !DB::table('meetings')->where('title', 'Daily Engineering Standup')->exists()) {
             $m3Start = $now->copy()->setTime(16, 0);
             $m3End = $now->copy()->setTime(16, 30);
 

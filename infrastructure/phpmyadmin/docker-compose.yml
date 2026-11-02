@@ -1,0 +1,24 @@
+services:
+  phpmyadmin:
+    image: phpmyadmin:5
+    container_name: ${PMA_CONTAINER_NAME:-codebridge-staging-phpmyadmin}
+    restart: unless-stopped
+    ports:
+      - "${PMA_PORT:-8085}:80"
+    environment:
+      PMA_ARBITRARY: "1"
+      PMA_HOSTS: "auth-mysql,operations-mysql"
+      PMA_VERBOSES: "Auth Service Database,Operations Service Database"
+      UPLOAD_LIMIT: 128M
+      MEMORY_LIMIT: 256M
+    networks:
+      codebridge-staging-network:
+        aliases:
+          - phpmyadmin
+          - codebridge-phpmyadmin
+          - codebridge-staging-phpmyadmin
+
+networks:
+  codebridge-staging-network:
+    name: codebridge-staging-network
+

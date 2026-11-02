@@ -6,6 +6,7 @@ networks:
 
 include:
   - path: ./infrastructure/nginx-proxy-manager/docker-compose.yml
+  - path: ./infrastructure/phpmyadmin/docker-compose.yml
   - path: ./gateway/docker-compose.staging.yml
   - path: ./auth-service/docker-compose.staging.yml
   - path: ./operations-service/docker-compose.staging.yml

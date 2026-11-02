@@ -20,3 +20,4 @@ resources:
   - operations.yaml
   - gateway.yaml
   - ingress.yaml
+  - phpmyadmin.yaml

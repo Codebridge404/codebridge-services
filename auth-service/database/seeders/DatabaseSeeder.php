@@ -126,6 +126,9 @@ class DatabaseSeeder extends Seeder
         // Seed Tenants & Memberships
         $this->call(TenantSeeder::class);
 
+        // Seed Meeting Management System (Rooms, Displays, Schedules)
+        $this->call(MeetingSeeder::class);
+
         // 3. Optional Retail Seeding (Only if legacy retail tables exist)
         if (\Illuminate\Support\Facades\Schema::hasTable('categories') && \Illuminate\Support\Facades\Schema::hasTable('products')) {
             $existingBev = DB::table('categories')->where('slug', 'beverages')->first();
