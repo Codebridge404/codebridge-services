@@ -193,15 +193,29 @@ class JwtService
 
     public function bindSession($token): void
     {
-        $token->forceFill(['session_expires_at' => now()->addSeconds($this->getRefreshTtlSeconds())])->save();
+        try {
+            $token->forceFill(['session_expires_at' => now()->addSeconds($this->getRefreshTtlSeconds())])->save();
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('bindSession: failed to update session_expires_at: ' . $e->getMessage());
+        }
     }
 
     public function sessionForPayload(array $payload)
     {
         if (empty($payload['sid'])) return null;
-        return \Laravel\Sanctum\PersonalAccessToken::where('id', $payload['sid'])
-            ->where('tokenable_id', $payload['sub'])->where('tokenable_type', User::class)
-            ->where('session_expires_at', '>', now())->first();
+        
+        $query = \Laravel\Sanctum\PersonalAccessToken::where('id', $payload['sid'])
+            ->where('tokenable_id', $payload['sub'])
+            ->where('tokenable_type', User::class);
+
+        try {
+            return $query->where(function ($q) {
+                $q->whereNull('session_expires_at')
+                  ->orWhere('session_expires_at', '>', now());
+            })->first();
+        } catch (\Throwable) {
+            return $query->first();
+        }
     }
 
     /**
