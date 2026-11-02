@@ -20,4 +20,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/shifts/{id}/close', [ShiftController::class, 'close']);
     Route::post('/shifts/cash-movement', [ShiftController::class, 'cashMovement']);
     Route::post('/shifts/close', [ShiftController::class, 'close']);
+
+    // End-of-Day (EOD) Z-Report & Nightly Dispatch
+    Route::match(['get', 'post'], '/reports/z-report', [ShiftController::class, 'zReport']);
+    Route::match(['get', 'post'], '/pos/reports/z-report', [ShiftController::class, 'zReport']);
+    Route::post('/shifts/eod-dispatch', [ShiftController::class, 'eodDispatch']);
+    Route::post('/pos/shifts/eod-dispatch', [ShiftController::class, 'eodDispatch']);
 });

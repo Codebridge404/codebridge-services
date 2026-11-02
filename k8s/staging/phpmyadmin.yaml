@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: phpmyadmin
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: phpmyadmin
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: phpmyadmin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: phpmyadmin
+        app.kubernetes.io/part-of: codebridge
+        environment: staging
+    spec:
+      containers:
+        - name: phpmyadmin
+          image: phpmyadmin:5
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              name: http
+          env:
+            - name: PMA_ARBITRARY
+              value: "1"
+            - name: PMA_HOSTS
+              value: "auth-mysql,operations-mysql"
+            - name: PMA_VERBOSES
+              value: "Auth Service Database,Operations Service Database"
+            - name: UPLOAD_LIMIT
+              value: "128M"
+            - name: MEMORY_LIMIT
+              value: "256M"
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: phpmyadmin
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: phpmyadmin
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+  selector:
+    app.kubernetes.io/name: phpmyadmin
+

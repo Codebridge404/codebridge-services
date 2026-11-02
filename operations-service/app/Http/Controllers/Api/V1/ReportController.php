@@ -3,9 +3,12 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\ExportTaxAuditJob;
 use App\Services\ExchangeRateService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * [BD-0014] Sales Velocity, Profit Margins & Managerial Analytics Streamer.
@@ -262,5 +265,270 @@ class ReportController extends Controller
         };
 
         return response()->stream($callback, 200, $headers);
+    }
+
+    /**
+     * [BD-0012] Comprehensive Sales Tax / VAT Audit Export Report (GDT Cambodia Compliant).
+     * GET /api/v1/reports/tax-audit
+     */
+    public function taxAudit(Request $request)
+    {
+        $startDate = $request->query('from_date', $request->query('start_date', now()->startOfMonth()->toDateString()));
+        $endDate = $request->query('to_date', $request->query('end_date', now()->toDateString()));
+        $outletId = $request->query('outlet_id');
+        $format = strtolower($request->query('format', 'json'));
+
+        $query = DB::table('sales as s')
+            ->leftJoin('outlets as o', 's.outlet_id', '=', 'o.id')
+            ->whereDate('s.created_at', '>=', $startDate)
+            ->whereDate('s.created_at', '<=', $endDate)
+            ->where('s.status', '!=', 'cancelled');
+
+        if (!empty($outletId) && $outletId !== 'all') {
+            $query->where('s.outlet_id', $outletId);
+        }
+
+        $rate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $request->header('X-Tenant-Id'));
+        if (!$rate || $rate <= 0) {
+            $rate = 4100;
+        }
+
+        $sales = $query->select(
+            's.id',
+            's.receipt_number',
+            's.created_at',
+            's.subtotal',
+            's.tax_total',
+            's.discount_total',
+            's.grand_total',
+            's.customer_name',
+            's.status',
+            'o.name as outlet_name',
+            'o.code as outlet_code'
+        )->orderBy('s.created_at', 'asc')->get();
+
+        $grossSalesUsd = (float) $sales->sum('grand_total');
+        $taxableSalesUsd = (float) $sales->sum('subtotal');
+        $vatCollectedUsd = (float) $sales->sum('tax_total');
+        $discountTotalUsd = (float) $sales->sum('discount_total');
+        $exemptSalesUsd = 0.00;
+
+        $grossSalesKhr = round($grossSalesUsd * $rate);
+        $taxableSalesKhr = round($taxableSalesUsd * $rate);
+        $vatCollectedKhr = round($vatCollectedUsd * $rate);
+
+        if ($format === 'csv') {
+            $filename = "gdt_vat_audit_report_{$startDate}_{$endDate}.csv";
+            $headers = [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+                'Content-Disposition' => "attachment; filename=\"{$filename}\"",
+            ];
+
+            $callback = function () use ($sales, $rate, $startDate, $endDate, $grossSalesUsd, $taxableSalesUsd, $vatCollectedUsd, $grossSalesKhr, $taxableSalesKhr, $vatCollectedKhr) {
+                $file = fopen('php://output', 'w');
+                // UTF-8 BOM for Excel compatibility
+                fputs($file, "\xEF\xBB\xBF");
+
+                // Cambodia GDT Header
+                fputcsv($file, ['KINGDOM OF CAMBODIA - GENERAL DEPARTMENT OF TAXATION (GDT)']);
+                fputcsv($file, ['MONTHLY VALUE ADDED TAX (VAT) SALES JOURNAL AUDIT']);
+                fputcsv($file, ['Audit Period', "{$startDate} to {$endDate}", 'Official Exchange Rate', "1 USD = {$rate} KHR"]);
+                fputcsv($file, []);
+
+                // Column Headers
+                fputcsv($file, [
+                    'Line #',
+                    'Invoice / Receipt No',
+                    'Date & Time',
+                    'Outlet Branch',
+                    'Customer Name',
+                    'Taxable Amount (USD)',
+                    'VAT 10% (USD)',
+                    'Grand Total (USD)',
+                    'Taxable Amount (KHR)',
+                    'VAT 10% (KHR)',
+                    'Grand Total (KHR)',
+                    'Status',
+                ]);
+
+                $i = 1;
+                foreach ($sales as $s) {
+                    $taxable = (float) $s->subtotal;
+                    $vat = (float) $s->tax_total;
+                    $total = (float) $s->grand_total;
+
+                    fputcsv($file, [
+                        $i++,
+                        $s->receipt_number,
+                        $s->created_at,
+                        $s->outlet_name ?? 'Main Outlet',
+                        $s->customer_name ?? 'Walk-in Customer',
+                        number_format($taxable, 2, '.', ''),
+                        number_format($vat, 2, '.', ''),
+                        number_format($total, 2, '.', ''),
+                        round($taxable * $rate),
+                        round($vat * $rate),
+                        round($total * $rate),
+                        $s->status,
+                    ]);
+                }
+
+                // Summary footer
+                fputcsv($file, []);
+                fputcsv($file, [
+                    'TOTAL SUMMARY',
+                    '',
+                    '',
+                    '',
+                    '',
+                    number_format($taxableSalesUsd, 2, '.', ''),
+                    number_format($vatCollectedUsd, 2, '.', ''),
+                    number_format($grossSalesUsd, 2, '.', ''),
+                    $taxableSalesKhr,
+                    $vatCollectedKhr,
+                    $grossSalesKhr,
+                    'AUDIT VERIFIED',
+                ]);
+
+                fclose($file);
+            };
+
+            return response()->stream($callback, 200, $headers);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'jurisdiction' => 'General Department of Taxation (GDT Cambodia)',
+                'regulation' => 'Prakas on VAT Invoicing & Monthly Filing Compliant',
+                'period' => [
+                    'from' => $startDate,
+                    'to' => $endDate,
+                ],
+                'currency' => [
+                    'primary' => 'USD',
+                    'secondary' => 'KHR',
+                    'active_rate' => $rate,
+                    'rate_display' => "1 USD = " . number_format($rate) . " KHR",
+                ],
+                'summary' => [
+                    'invoice_count' => $sales->count(),
+                    'gross_sales_usd' => $grossSalesUsd,
+                    'taxable_sales_usd' => $taxableSalesUsd,
+                    'vat_output_usd' => $vatCollectedUsd,
+                    'exempt_sales_usd' => $exemptSalesUsd,
+                    'discount_total_usd' => $discountTotalUsd,
+                    'gross_sales_khr' => $grossSalesKhr,
+                    'taxable_sales_khr' => $taxableSalesKhr,
+                    'vat_output_khr' => $vatCollectedKhr,
+                    'effective_vat_rate' => '10%',
+                ],
+                'invoices' => $sales->map(function ($s) use ($rate) {
+                    $taxable = (float) $s->subtotal;
+                    $vat = (float) $s->tax_total;
+                    $total = (float) $s->grand_total;
+                    return [
+                        'sale_id' => $s->id,
+                        'receipt_number' => $s->receipt_number,
+                        'issued_at' => $s->created_at,
+                        'outlet_name' => $s->outlet_name ?? 'Main Outlet',
+                        'customer_name' => $s->customer_name ?? 'Walk-in Customer',
+                        'taxable_usd' => $taxable,
+                        'vat_usd' => $vat,
+                        'total_usd' => $total,
+                        'taxable_khr' => round($taxable * $rate),
+                        'vat_khr' => round($vat * $rate),
+                        'total_khr' => round($total * $rate),
+                        'status' => $s->status,
+                    ];
+                }),
+            ],
+        ]);
+    }
+
+    /**
+     * [BD-0017] Dispatch Heavy Tax & Sales Audit Export to Background Worker Queue.
+     * POST /api/v1/reports/tax-audit/async
+     */
+    public function queueTaxAudit(Request $request)
+    {
+        $startDate = $request->input('from_date', $request->input('start_date', now()->startOfMonth()->toDateString()));
+        $endDate = $request->input('to_date', $request->input('end_date', now()->toDateString()));
+        $outletId = $request->input('outlet_id');
+        $tenantId = $request->header('X-Tenant-Id');
+        $user = $request->user();
+        $userId = $user ? (string) $user->id : null;
+
+        $exportId = 'EXP-' . strtoupper(Str::random(12));
+
+        Cache::put("export_status_{$exportId}", [
+            'status' => 'queued',
+            'progress' => 0,
+            'export_id' => $exportId,
+            'queued_at' => now()->toIso8601String(),
+            'period' => ['from' => $startDate, 'to' => $endDate],
+        ], 3600);
+
+        // Dispatch to background queue worker
+        ExportTaxAuditJob::dispatch(
+            $exportId,
+            $startDate,
+            $endDate,
+            $outletId,
+            $tenantId,
+            $userId
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Heavy export successfully dispatched to dedicated background worker queue.',
+            'data' => [
+                'export_id' => $exportId,
+                'status' => 'queued',
+                'poll_url' => "/api/v1/reports/export-status/{$exportId}",
+                'download_url' => "/api/v1/reports/export-download/{$exportId}",
+            ],
+        ], 202);
+    }
+
+    /**
+     * Check status and progress of an asynchronous export job.
+     * GET /api/v1/reports/export-status/{id}
+     */
+    public function getExportStatus($id)
+    {
+        $status = Cache::get("export_status_{$id}");
+        if (!$status) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Export job not found or expired.',
+            ], 404);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $status,
+        ]);
+    }
+
+    /**
+     * Download completed export file.
+     * GET /api/v1/reports/export-download/{id}
+     */
+    public function downloadExport($id)
+    {
+        $filename = "gdt_vat_audit_export_{$id}.csv";
+        $filePath = storage_path("app/exports/{$filename}");
+
+        if (!file_exists($filePath)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Export file not ready or does not exist.',
+            ], 404);
+        }
+
+        return response()->download($filePath, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
     }
 }

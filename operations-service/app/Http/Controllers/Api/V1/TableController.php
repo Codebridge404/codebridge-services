@@ -36,8 +36,6 @@ class TableController extends Controller
      */
     public function index(Request $request)
     {
-        $this->ensureDefaultTablesSeeded();
-
         $tables = DB::table('restaurant_tables')->orderBy('name', 'asc')->get();
 
         return response()->json([
@@ -94,30 +92,5 @@ class TableController extends Controller
             'status' => 'success',
             'data' => $table,
         ], 201);
-    }
-
-    protected function ensureDefaultTablesSeeded()
-    {
-        if (DB::table('restaurant_tables')->count() === 0) {
-            $defaultTables = [
-                ['name' => 'Table #01', 'zone' => 'Main Dining', 'capacity' => 2, 'status' => 'vacant'],
-                ['name' => 'Table #02', 'zone' => 'Main Dining', 'capacity' => 4, 'status' => 'occupied'],
-                ['name' => 'Table #03', 'zone' => 'Main Dining', 'capacity' => 4, 'status' => 'bill_requested'],
-                ['name' => 'Patio #01', 'zone' => 'Outdoor Patio', 'capacity' => 4, 'status' => 'reserved'],
-                ['name' => 'Patio #02', 'zone' => 'Outdoor Patio', 'capacity' => 6, 'status' => 'vacant'],
-                ['name' => 'VIP Suite 1', 'zone' => 'VIP Lounge', 'capacity' => 8, 'status' => 'vacant'],
-            ];
-
-            foreach ($defaultTables as $t) {
-                DB::table('restaurant_tables')->insert([
-                    'name' => $t['name'],
-                    'zone' => $t['zone'],
-                    'capacity' => $t['capacity'],
-                    'status' => $t['status'],
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ]);
-            }
-        }
     }
 }

@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Employee\StoreEmployeeRequest;
+use App\Http\Requests\Employee\UpdateEmployeeRequest;
+use App\Http\Resources\Employee\EmployeeResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -34,8 +37,13 @@ class EmployeeController extends Controller
 {
     protected function getTenantId(Request $request): ?string
     {
+        $user = $request->user();
+        if ($user && $user->role !== 'super_admin') {
+            return $user->tenant_id ? (string) $user->tenant_id : null;
+        }
+
         return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
+            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
             ?? $request->query('tenant_id')
             ?? null;
     }
@@ -43,6 +51,7 @@ class EmployeeController extends Controller
     public function index(Request $request)
     {
         $tenantId = $this->getTenantId($request);
+        $user = $request->user();
         $search = $request->query('q');
         $departmentId = $request->query('department_id');
 
@@ -50,7 +59,9 @@ class EmployeeController extends Controller
             ->leftJoin('departments as d', 'e.department_id', '=', 'd.id')
             ->leftJoin('outlets as o', 'e.outlet_id', '=', 'o.id');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('e.tenant_id', $tenantId);
+        } elseif (!empty($tenantId) && $tenantId !== 'all') {
             $query->where('e.tenant_id', $tenantId);
         }
 
@@ -91,29 +102,19 @@ class EmployeeController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $employees,
+            'data' => EmployeeResource::collection($employees),
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreEmployeeRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'phone' => 'nullable|string|max:50',
-            'department_id' => 'nullable',
-            'outlet_id' => 'nullable',
-            'designation' => 'required|string|max:255',
-            'employment_type' => 'required|string|in:Full-time,Part-time,Contract',
-            'hire_date' => 'nullable|date',
-            'salary' => 'nullable|numeric|min:0',
-        ]);
+        $validated = $request->validated();
 
         $code = 'EMP-' . strtoupper(substr(uniqid(), -4));
 
         $id = DB::table('employees')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'employee_code' => $code,
             'first_name' => $validated['first_name'],
@@ -122,10 +123,12 @@ class EmployeeController extends Controller
             'phone' => $validated['phone'] ?? null,
             'department_id' => !empty($validated['department_id']) ? $validated['department_id'] : null,
             'outlet_id' => !empty($validated['outlet_id']) ? $validated['outlet_id'] : null,
+            'position' => $validated['designation'] ?? null,
             'designation' => $validated['designation'],
             'employment_type' => $validated['employment_type'],
             'hire_date' => $validated['hire_date'] ?? now()->toDateString(),
             'salary' => $validated['salary'] ?? 0,
+            'status' => 'active',
             'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
@@ -138,28 +141,22 @@ class EmployeeController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateEmployeeRequest $request, $id)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'first_name' => 'required|string|max:255',
-            'last_name' => 'required|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'phone' => 'nullable|string|max:50',
-            'department_id' => 'nullable',
-            'outlet_id' => 'nullable',
-            'designation' => 'required|string|max:255',
-            'employment_type' => 'required|string|in:Full-time,Part-time,Contract',
-            'hire_date' => 'nullable|date',
-            'salary' => 'nullable|numeric|min:0',
-        ]);
+        $user = $request->user();
+        $validated = $request->validated();
 
         $query = DB::table('employees')->where('id', $id);
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenant = DB::table('employees')->where('id', $id)->where('tenant_id', $tenantId)->exists();
-            if ($hasTenant) {
-                $query->where('tenant_id', $tenantId);
-            }
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('tenant_id', $tenantId);
+        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+            $query->where('tenant_id', $tenantId);
+        }
+
+        $employee = $query->first();
+        if (!$employee) {
+            return response()->json(['status' => 'error', 'message' => 'Employee record not found or unauthorized.'], 404);
         }
 
         $query->update([
@@ -185,13 +182,18 @@ class EmployeeController extends Controller
     public function destroy(Request $request, $id)
     {
         $tenantId = $this->getTenantId($request);
+        $user = $request->user();
         $query = DB::table('employees')->where('id', $id);
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenant = DB::table('employees')->where('id', $id)->where('tenant_id', $tenantId)->exists();
-            if ($hasTenant) {
-                $query->where('tenant_id', $tenantId);
-            }
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('tenant_id', $tenantId);
+        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+            $query->where('tenant_id', $tenantId);
+        }
+
+        $employee = $query->first();
+        if (!$employee) {
+            return response()->json(['status' => 'error', 'message' => 'Employee record not found or unauthorized.'], 404);
         }
 
         $query->update([

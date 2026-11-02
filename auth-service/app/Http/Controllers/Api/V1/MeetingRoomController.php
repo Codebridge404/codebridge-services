@@ -3,8 +3,12 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Meeting\StoreMeetingRoomRequest;
+use App\Http\Requests\Meeting\UpdateMeetingRoomRequest;
+use App\Http\Resources\Meeting\MeetingRoomResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * [BD-0072] Conference Room Scheduling & Conflict Resolution Controller
@@ -78,34 +82,31 @@ class MeetingRoomController extends Controller
             ] : null;
         }
 
-        return response()->json(['status' => 'success', 'data' => $rooms]);
+        return response()->json(['status' => 'success', 'data' => MeetingRoomResource::collection($rooms)]);
     }
 
     /**
      * Create a new meeting room facility.
      */
-    public function store(Request $request)
+    public function store(StoreMeetingRoomRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:150',
-            'code' => 'nullable|string|max:50',
-            'floor' => 'nullable|string|max:50',
-            'capacity' => 'required|integer|min:1',
-            'amenities' => 'nullable|string',
-            'status' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $currentUser = $request->user();
         $tenantId = $currentUser?->tenant_id;
 
+        $code = !empty($validated['code']) ? $validated['code'] : ('ROOM-' . strtoupper(Str::random(6)));
+
         $id = DB::table('meeting_rooms')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
-            'code' => $validated['code'] ?? null,
+            'code' => $code,
             'floor' => $validated['floor'] ?? null,
             'capacity' => $validated['capacity'],
             'amenities' => $validated['amenities'] ?? null,
             'status' => $validated['status'] ?? 'active',
+            'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -120,16 +121,9 @@ class MeetingRoomController extends Controller
     /**
      * Update room details.
      */
-    public function update(Request $request, $id)
+    public function update(UpdateMeetingRoomRequest $request, $id)
     {
-        $validated = $request->validate([
-            'name' => 'sometimes|string|max:150',
-            'code' => 'sometimes|nullable|string|max:50',
-            'floor' => 'sometimes|nullable|string|max:50',
-            'capacity' => 'sometimes|integer|min:1',
-            'amenities' => 'sometimes|nullable|string',
-            'status' => 'sometimes|string',
-        ]);
+        $validated = $request->validated();
 
         DB::table('meeting_rooms')->where('id', $id)->update(array_merge($validated, ['updated_at' => now()]));
         return response()->json(['status' => 'success', 'message' => 'Meeting room updated successfully.']);

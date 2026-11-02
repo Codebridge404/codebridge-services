@@ -57,6 +57,7 @@ class StoreCreditService
             $outletId,
             $tenantId
         ) {
+            $customer = Customer::whereKey($customer->id)->lockForUpdate()->firstOrFail();
             $totalCredit = $amountPaid + $bonusCredit;
             $expiresAt = $validityDays ? Carbon::now()->addDays($validityDays) : null;
             $invoiceNumber = 'INV-CR-' . date('Ymd') . '-' . strtoupper(Str::random(6));
@@ -83,6 +84,7 @@ class StoreCreditService
             // Update customer balance
             $customer->update([
                 'store_credit' => $balanceAfter,
+                'store_credit_balance' => $balanceAfter,
             ]);
 
             // Append double-entry ledger record
@@ -158,7 +160,7 @@ class StoreCreditService
         ?User $actor = null
     ): array {
         return DB::transaction(function () use ($voucherCode, $customer, $actor) {
-            $voucher = DigitalVoucher::where('voucher_code', trim($voucherCode))->lockForUpdate()->first();
+            $voucher = DigitalVoucher::where('voucher_code', trim($voucherCode))->where('tenant_id', $customer->tenant_id)->lockForUpdate()->first();
 
             if (!$voucher) {
                 throw new Exception('Digital voucher not found or invalid code.');
@@ -181,6 +183,7 @@ class StoreCreditService
                 throw new Exception('This digital voucher was issued to a different registered customer.');
             }
 
+            $customer = Customer::whereKey($customer->id)->lockForUpdate()->firstOrFail();
             $voucherValue = (float) $voucher->value;
             $balanceBefore = (float) ($customer->store_credit ?? 0);
             $balanceAfter = $balanceBefore + $voucherValue;
@@ -195,6 +198,7 @@ class StoreCreditService
             // Credit customer balance
             $customer->update([
                 'store_credit' => $balanceAfter,
+                'store_credit_balance' => $balanceAfter,
             ]);
 
             // Append double-entry ledger
@@ -254,19 +258,22 @@ class StoreCreditService
             $totalExpiredCredit = 0.0;
             $affectedCustomers = 0;
 
-            foreach ($expiredLedgers as $ledger) {
+            foreach ($expiredLedgers->sortBy('customer_id') as $ledger) {
                 $customer = Customer::lockForUpdate()->find($ledger->customer_id);
                 if (!$customer) {
                     continue;
                 }
 
+                // Recheck under the customer lock: another sweep may have handled this row.
+                if (DB::table('customer_credit_ledgers')->where('id', $ledger->id)->lockForUpdate()->value('is_expired')) continue;
+                $remaining = $this->remainingCredits($customer->id, true);
                 $currentCredit = (float) $customer->store_credit;
-                $creditToExpire = min($currentCredit, (float) $ledger->credit_amount);
+                $creditToExpire = min($currentCredit, $remaining[$ledger->id] ?? 0);
 
                 if ($creditToExpire > 0) {
                     $balanceAfter = max(0, $currentCredit - $creditToExpire);
 
-                    $customer->update(['store_credit' => $balanceAfter]);
+                    $customer->update(['store_credit' => $balanceAfter, 'store_credit_balance' => $balanceAfter]);
 
                     DB::table('customer_credit_ledgers')->insert([
                         'tenant_id' => $customer->tenant_id,
@@ -310,6 +317,51 @@ class StoreCreditService
     /**
      * Get Customer Credit Balance Statement with running balances.
      */
+    /**
+     * Replay the ledger in posting order. Spending consumes the oldest credit first;
+     * an expiration consumes only its referenced tranche, never a newer top-up.
+     * Opening credit predating the ledger is a non-expiring first tranche.
+     */
+    public function remainingCredits(int $customerId, bool $lock = false): array
+    {
+        $query = DB::table('customer_credit_ledgers')->where('customer_id', $customerId)->orderBy('id');
+        if ($lock) $query->lockForUpdate();
+        $rows = $query->get();
+        $remaining = [];
+        $references = [];
+        if ($rows->isNotEmpty() && (float) $rows->first()->balance_before > 0) {
+            $remaining[0] = (float) $rows->first()->balance_before;
+        }
+        foreach ($rows as $row) {
+            $change = (float) $row->amount_change;
+            if ($change == 0) $change = (float) $row->credit_amount - (float) $row->debit_amount;
+            if ($change > 0) {
+                $remaining[$row->id] = $change;
+                $references[$row->id] = $row->reference_id;
+                continue;
+            }
+            $debit = -$change;
+            if ($row->entry_type === 'expired_credit') {
+                foreach ($references as $id => $reference) {
+                    if ($reference !== null && $reference === $row->reference_id) {
+                        $used = min($debit, $remaining[$id]);
+                        $remaining[$id] -= $used;
+                        $debit -= $used;
+                    }
+                }
+                // Do not apply an old expiration to unrelated credits.
+                continue;
+            }
+            foreach ($remaining as $id => $amount) {
+                $used = min($debit, $amount);
+                $remaining[$id] -= $used;
+                $debit -= $used;
+                if ($debit <= 0) break;
+            }
+        }
+        return $remaining;
+    }
+
     public function getCustomerStatement(int $customerId, ?string $startDate = null, ?string $endDate = null): ?array
     {
         $customer = Customer::find($customerId);
@@ -337,13 +389,14 @@ class StoreCreditService
             ->sum('debit_amount');
 
         // Upcoming expiring credit
+        $remaining = $this->remainingCredits($customerId);
         $upcomingExpiring = DB::table('customer_credit_ledgers')
             ->where('customer_id', $customerId)
             ->where('is_expired', false)
             ->whereNotNull('expires_at')
             ->where('expires_at', '>', now())
             ->where('expires_at', '<=', now()->addDays(30))
-            ->sum('credit_amount');
+            ->get()->sum(fn ($row) => $remaining[$row->id] ?? 0);
 
         return [
             'customer' => [

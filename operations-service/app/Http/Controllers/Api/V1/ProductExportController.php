@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -13,11 +14,9 @@ use Illuminate\Support\Facades\DB;
  * @component operations-service
  * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/ProductExportController.php
  * @related-model App\Models\Product, App\Models\Category
- * @entry-point ProductExportController::exportCsv(), exportExcel(), exportBarcodes()
+ * @entry-point ProductExportController::export()
  * @routes
- *  - GET /api/v1/products/export/csv
- *  - GET /api/v1/products/export/excel
- *  - GET /api/v1/products/export/barcodes
+ *  - GET /api/v1/products/export
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -29,24 +28,19 @@ use Illuminate\Support\Facades\DB;
  */
 class ProductExportController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
+    use ResolvesTenantContext;
 
     /**
      * Stream CSV export of products catalog with live inventory balances.
+     * Strictly requires authentication and scopes to requesting tenant.
      */
     public function export(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
         $outletId = $request->query('outlet_id', 1);
         $categoryId = $request->query('category_id');
         $brandId = $request->query('brand_id');
-        $search = $request->query('q');
+        $search = $request->query('q') ?? $request->query('search');
         $stockStatus = $request->query('stock_status');
 
         $query = DB::table('products as p')
@@ -58,15 +52,9 @@ class ProductExportController extends Controller
             })
             ->where('p.is_active', true);
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenantProducts = DB::table('products')->where('tenant_id', $tenantId)->exists();
-            if ($hasTenantProducts) {
-                $query->where('p.tenant_id', $tenantId);
-            } else {
-                $query->where(function ($q) use ($tenantId) {
-                    $q->where('p.tenant_id', $tenantId)->orWhereNull('p.tenant_id');
-                });
-            }
+        // Strict Tenant Scoping: non-superadmins are strictly locked to their own tenant
+        if ($tenantId !== 'all' || $request->user()?->role !== 'super_admin') {
+            $query->where('p.tenant_id', $tenantId);
         }
 
         if (!empty($categoryId) && $categoryId !== 'all') {
@@ -78,10 +66,11 @@ class ProductExportController extends Controller
         }
 
         if (!empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('p.name', 'like', "%{$search}%")
-                  ->orWhere('p.sku', 'like', "%{$search}%")
-                  ->orWhere('p.barcode', 'like', "%{$search}%");
+            $searchTerm = trim((string) $search);
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('p.name', 'like', "%{$searchTerm}%")
+                  ->orWhere('p.sku', 'like', "%{$searchTerm}%")
+                  ->orWhere('p.barcode', 'like', "%{$searchTerm}%");
             });
         }
 
@@ -102,61 +91,63 @@ class ProductExportController extends Controller
             'Expires' => '0',
         ];
 
-        $columns = [
-            'Name',
-            'SKU',
-            'Barcode',
-            'Category',
-            'Brand',
-            'Selling Price',
-            'Cost Price',
-            'Stock On Hand',
-            'Min Buffer',
-            'Expiry Date',
-            'Status',
-            'Description',
-        ];
+        return response()->stream(function () use ($query) {
+            $output = fopen('php://output', 'w');
 
-        return response()->stream(function () use ($query, $columns) {
-            $handle = fopen('php://output', 'w');
-            fprintf($handle, chr(0xEF) . chr(0xBB) . chr(0xBF));
-            fputcsv($handle, $columns);
+            // UTF-8 BOM for Excel compatibility
+            fputs($output, "\xEF\xBB\xBF");
+
+            // CSV Header Row
+            fputcsv($output, [
+                'ID',
+                'Name',
+                'SKU',
+                'Barcode',
+                'Category',
+                'Brand',
+                'Cost Price (USD)',
+                'Selling Price (USD)',
+                'Min Reorder Point',
+                'Stock On Hand',
+                'Expiry Date',
+                'Status'
+            ]);
 
             $query->select(
+                'p.id',
                 'p.name',
                 'p.sku',
                 'p.barcode',
                 'c.name as category_name',
                 'b.name as brand_name',
-                'p.selling_price',
                 'p.cost_price',
-                DB::raw('COALESCE(ib.on_hand, 0) as stock_on_hand'),
+                'p.selling_price',
                 'p.min_reorder_point',
+                DB::raw('COALESCE(ib.on_hand, 0) as stock_on_hand'),
                 'p.expiry_date',
-                'p.is_active',
-                'p.description'
-            )
-            ->orderBy('p.name', 'asc')
-            ->chunk(500, function ($rows) use ($handle) {
-                foreach ($rows as $p) {
-                    fputcsv($handle, [
-                        $p->name ?? '',
-                        $p->sku ?? '',
-                        $p->barcode ?? '',
-                        $p->category_name ?? 'General',
-                        $p->brand_name ?? '',
-                        number_format((float)($p->selling_price ?? 0), 2, '.', ''),
-                        number_format((float)($p->cost_price ?? 0), 2, '.', ''),
-                        (int)($p->stock_on_hand ?? 0),
-                        (int)($p->min_reorder_point ?? 0),
-                        $p->expiry_date ? explode(' ', (string)$p->expiry_date)[0] : '',
+                'p.is_active'
+            )->orderBy('p.id', 'asc')
+            ->chunk(500, function ($products) use ($output) {
+                foreach ($products as $p) {
+                    fputcsv($output, [
+                        $p->id,
+                        $p->name,
+                        $p->sku,
+                        $p->barcode ?? 'N/A',
+                        $p->category_name ?? 'Uncategorized',
+                        $p->brand_name ?? 'General',
+                        number_format((float)$p->cost_price, 2, '.', ''),
+                        number_format((float)$p->selling_price, 2, '.', ''),
+                        $p->min_reorder_point ?? 0,
+                        $p->stock_on_hand,
+                        $p->expiry_date ?? 'N/A',
                         $p->is_active ? 'Active' : 'Inactive',
-                        $p->description ?? '',
                     ]);
                 }
+                flush();
             });
 
-            fclose($handle);
+            fclose($output);
         }, 200, $headers);
     }
 }

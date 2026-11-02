@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Customer\AdjustLoyaltyPointsRequest;
+use App\Http\Requests\Customer\AdjustStoreCreditRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Exception;
@@ -34,22 +36,24 @@ class CustomerLoyaltyController extends Controller
     /**
      * Adjust Customer Store Credit (Add Deposit, Refund Credit, or Use Balance)
      */
-    public function adjustStoreCredit(Request $request, $id)
+    public function adjustStoreCredit(AdjustStoreCreditRequest $request, $id)
     {
-        $validated = $request->validate([
-            'amount_change' => 'required|numeric',
-            'entry_type' => 'required|string|in:deposit,refund_credit,checkout_use,points_conversion,adjustment',
-            'reference_id' => 'nullable|string',
-            'notes' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
+        $user = $request->user();
 
-        return DB::transaction(function () use ($id, $validated) {
-            $customer = DB::table('customers')->where('id', $id)->first();
+        return DB::transaction(function () use ($id, $validated, $user) {
+            $customer = DB::table('customers')->where('id', $id)->lockForUpdate()->first();
             if (!$customer) {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Customer record not found.',
                 ], 404);
+            }
+
+            if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+                if ($customer->tenant_id != $user->tenant_id) {
+                    return response()->json(['status' => 'error', 'message' => 'Unauthorized access to customer in another organization.'], 403);
+                }
             }
 
             $currentCredit = (float) ($customer->store_credit ?? 0);
@@ -66,14 +70,20 @@ class CustomerLoyaltyController extends Controller
             // Update customer balance
             DB::table('customers')->where('id', $id)->update([
                 'store_credit' => $newCredit,
+                'store_credit_balance' => $newCredit,
                 'updated_at' => now(),
             ]);
 
             // Append ledger entry
             $ledgerId = DB::table('customer_credit_ledgers')->insertGetId([
+                'tenant_id' => $customer->tenant_id,
                 'customer_id' => $id,
+                'amount' => abs($amountChange),
                 'amount_change' => $amountChange,
+                'balance_before' => $currentCredit,
+                'balance_after' => $newCredit,
                 'entry_type' => $validated['entry_type'],
+                'transaction_type' => $validated['entry_type'],
                 'reference_id' => $validated['reference_id'] ?? null,
                 'notes' => $validated['notes'] ?? 'Store credit adjustment',
                 'created_at' => now(),
@@ -97,19 +107,24 @@ class CustomerLoyaltyController extends Controller
     /**
      * Accrue or Redeem Customer Loyalty Points
      */
-    public function adjustLoyaltyPoints(Request $request, $id)
+    public function adjustLoyaltyPoints(AdjustLoyaltyPointsRequest $request, $id)
     {
-        $validated = $request->validate([
-            'points_change' => 'required|integer',
-            'reason' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
+        $user = $request->user();
 
-        $customer = DB::table('customers')->where('id', $id)->first();
+        return DB::transaction(function () use ($id, $validated, $user) {
+        $customer = DB::table('customers')->where('id', $id)->lockForUpdate()->first();
         if (!$customer) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Customer not found.',
             ], 404);
+        }
+
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            if ($customer->tenant_id != $user->tenant_id) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to customer in another organization.'], 403);
+            }
         }
 
         $currentPoints = (int) ($customer->loyalty_points ?? 0);
@@ -131,6 +146,7 @@ class CustomerLoyaltyController extends Controller
                 'points_change' => $pointsChange,
             ],
         ]);
+        });
     }
 
     /**
@@ -138,13 +154,21 @@ class CustomerLoyaltyController extends Controller
      */
     public function convertPointsToCredit(Request $request, $id)
     {
-        return DB::transaction(function () use ($id) {
-            $customer = DB::table('customers')->where('id', $id)->first();
+        $user = $request->user();
+
+        return DB::transaction(function () use ($id, $user) {
+            $customer = DB::table('customers')->where('id', $id)->lockForUpdate()->first();
             if (!$customer) {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Customer not found.',
                 ], 404);
+            }
+
+            if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+                if ($customer->tenant_id != $user->tenant_id) {
+                    return response()->json(['status' => 'error', 'message' => 'Unauthorized access to customer in another organization.'], 403);
+                }
             }
 
             $currentPoints = (int) ($customer->loyalty_points ?? 0);
@@ -165,13 +189,19 @@ class CustomerLoyaltyController extends Controller
             DB::table('customers')->where('id', $id)->update([
                 'loyalty_points' => $newPoints,
                 'store_credit' => $newCredit,
+                'store_credit_balance' => $newCredit,
                 'updated_at' => now(),
             ]);
 
             DB::table('customer_credit_ledgers')->insert([
+                'tenant_id' => $customer->tenant_id,
                 'customer_id' => $id,
+                'amount' => $creditToAdd,
                 'amount_change' => $creditToAdd,
+                'balance_before' => (float) ($customer->store_credit ?? 0),
+                'balance_after' => $newCredit,
                 'entry_type' => 'points_conversion',
+                'transaction_type' => 'points_conversion',
                 'reference_id' => null,
                 'notes' => "Converted {$pointsToDeduct} loyalty points into \${$creditToAdd} store credit",
                 'created_at' => now(),
@@ -194,7 +224,8 @@ class CustomerLoyaltyController extends Controller
      */
     public function getHistory(Request $request, $id)
     {
-        $customer = DB::table('customers')->where('id', $id)->first();
+        \App\Services\TenantAccess::record('customers', $id, $request);
+        $customer = DB::table('customers')->where('id', $id)->lockForUpdate()->first();
         if (!$customer) {
             return response()->json([
                 'status' => 'error',

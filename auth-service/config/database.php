@@ -50,6 +50,19 @@ return [
             ]) : [],
         ],
 
+        'operations' => [
+            'driver' => 'mysql',
+            'host' => env('OPERATIONS_DB_HOST', 'operations-mysql'),
+            'port' => env('OPERATIONS_DB_PORT', '3306'),
+            'database' => env('OPERATIONS_DB_DATABASE', 'codebridge_operations'),
+            'username' => env('OPERATIONS_DB_USERNAME', 'codebridge_operations'),
+            'password' => env('OPERATIONS_DB_PASSWORD', 'root_password'),
+            'charset' => 'utf8mb4',
+            'collation' => 'utf8mb4_unicode_ci',
+            'prefix' => '',
+            'strict' => true,
+        ],
+
     ],
 
     /*

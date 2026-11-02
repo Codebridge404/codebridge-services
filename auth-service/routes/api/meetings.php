@@ -40,7 +40,8 @@ Route::whereNumber('id')->group(function () {
     Route::get('/meetings/{id}/minutes', [MeetingMinutesController::class, 'show']);
     Route::post('/meetings/{id}/minutes', [MeetingMinutesController::class, 'storeOrUpdate']);
 
-    Route::get('/meetings/{id}/actions', [MeetingActionItemController::class, 'byMeeting']);
+    Route::get('/meetings/{id}/actions', [MeetingActionItemController::class, 'meetingActions']);
+    Route::post('/meetings/{id}/actions', [MeetingActionItemController::class, 'store']);
 });
 
 // Meeting Rooms
@@ -50,6 +51,7 @@ Route::put('/meeting-rooms/{id}', [MeetingRoomController::class, 'update']);
 Route::delete('/meeting-rooms/{id}', [MeetingRoomController::class, 'destroy']);
 
 Route::post('/meetings/recurring/preview', [MeetingController::class, 'previewRecurring']);
+Route::get('/meetings/actions/my', [MeetingActionItemController::class, 'myActions']);
 Route::patch('/meetings/actions/{id}/status', [MeetingActionItemController::class, 'updateStatus']);
 Route::delete('/meetings/actions/{id}', [MeetingActionItemController::class, 'destroy']);
 
@@ -68,6 +70,7 @@ Route::delete('/meetings/staff/{id}', [MeetingLogisticsController::class, 'delet
 // Room Defect & Facility Issues
 Route::get('/meetings/issues', [MeetingIssueController::class, 'index']);
 Route::post('/meeting-rooms/{roomId}/issues', [MeetingIssueController::class, 'report']);
+Route::post('/meetings/rooms/{roomId}/issues', [MeetingIssueController::class, 'report']);
 Route::patch('/meetings/issues/{id}/status', [MeetingIssueController::class, 'updateStatus']);
 
 // In-App Notifications
@@ -77,8 +80,8 @@ Route::post('/meetings/notifications/mark-all-read', [MeetingNotificationControl
 
 // Runtime Governance & Dynamic System Settings
 Route::get('/meetings/system-settings', [MeetingSettingController::class, 'index']);
-Route::put('/meetings/system-settings/batch', [MeetingSettingController::class, 'updateBatch']);
-Route::post('/meetings/system-settings/reset', [MeetingSettingController::class, 'resetDefaults']);
+Route::put('/meetings/system-settings/batch', [MeetingSettingController::class, 'batchUpdate']);
+Route::post('/meetings/system-settings/reset', [MeetingSettingController::class, 'reset']);
 
 // Telegram Bot Alerts Gateway & Dynamic Templates Engine
 Route::get('/meetings/telegram/status', [MeetingTelegramController::class, 'status']);

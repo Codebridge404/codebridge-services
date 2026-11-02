@@ -49,12 +49,26 @@ class EnsureRole
             return $next($request);
         }
 
-        // Normalize role aliases (organization <=> admin)
-        $userRole = $user->role;
-        $effectiveRoles = [$userRole];
-        if (in_array($userRole, ['organization', 'admin', 'administrator', 'owner'])) {
-            $effectiveRoles = array_unique(array_merge($effectiveRoles, ['organization', 'admin', 'administrator', 'owner']));
+        // Check primary role and any assigned roles from user_roles pivot
+        $userRoles = array_filter([$user->role]);
+        if (method_exists($user, 'roles')) {
+            try {
+                $assignedSlugs = $user->activeRoles()->pluck('slug')->toArray();
+                $userRoles = array_merge($userRoles, $assignedSlugs);
+            } catch (\Throwable $e) {
+                // Database or relation fallback
+            }
         }
+
+        // Normalize direct linguistic synonyms (administrator <=> admin) without merging distinct privilege tiers (owner, organization, admin)
+        $effectiveRoles = array_unique($userRoles);
+        if (in_array('administrator', $effectiveRoles, true)) {
+            $effectiveRoles[] = 'admin';
+        }
+        if (in_array('admin', $effectiveRoles, true)) {
+            $effectiveRoles[] = 'administrator';
+        }
+        $effectiveRoles = array_unique($effectiveRoles);
 
         if (empty(array_intersect($effectiveRoles, $roles))) {
             return response()->json([

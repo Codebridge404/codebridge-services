@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Supplier\StoreSupplierRequest;
+use App\Http\Requests\Supplier\UpdateSupplierRequest;
+use App\Http\Resources\Supplier\SupplierResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -34,8 +37,13 @@ class SupplierController extends Controller
 {
     protected function getTenantId(Request $request): ?string
     {
+        $user = $request->user();
+        if ($user && $user->role !== 'super_admin') {
+            return $user->tenant_id ? (string) $user->tenant_id : null;
+        }
+
         return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
+            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
             ?? $request->query('tenant_id')
             ?? null;
     }
@@ -62,10 +70,10 @@ class SupplierController extends Controller
         if (!empty($search)) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('contact_name', 'like', "%{$search}%")
+                  ->orWhere('company_name', 'like', "%{$search}%")
                   ->orWhere('phone', 'like', "%{$search}%")
                   ->orWhere('email', 'like', "%{$search}%")
-                  ->orWhere('code', 'like', "%{$search}%");
+                  ->orWhere('address', 'like', "%{$search}%");
             });
         }
 
@@ -73,32 +81,25 @@ class SupplierController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $suppliers,
+            'data' => SupplierResource::collection($suppliers),
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreSupplierRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'contact_name' => 'nullable|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'phone' => 'nullable|string|max:50',
-            'address' => 'nullable|string|max:500',
-        ]);
+        $validated = $request->validated();
 
-        $code = 'SUP-' . strtoupper(substr(uniqid(), -6));
+        $companyName = $validated['company_name'] ?? $validated['contact_name'] ?? null;
 
         $id = DB::table('suppliers')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
-            'code' => $code,
-            'contact_name' => $validated['contact_name'] ?? null,
+            'company_name' => $companyName,
             'email' => $validated['email'] ?? null,
             'phone' => $validated['phone'] ?? null,
             'address' => $validated['address'] ?? null,
-            'is_active' => true,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -110,19 +111,27 @@ class SupplierController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateSupplierRequest $request, $id)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'contact_name' => 'nullable|string|max:255',
-            'email' => 'nullable|email|max:255',
-            'phone' => 'nullable|string|max:50',
-            'address' => 'nullable|string|max:500',
-        ]);
+        $tenantId = $this->getTenantId($request);
+        $user = $request->user();
+        $validated = $request->validated();
 
-        DB::table('suppliers')->where('id', $id)->update([
+        $query = DB::table('suppliers')->where('id', $id);
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('tenant_id', $tenantId);
+        }
+
+        $supplier = $query->first();
+        if (!$supplier) {
+            return response()->json(['status' => 'error', 'message' => 'Supplier not found or unauthorized.'], 404);
+        }
+
+        $companyName = $validated['company_name'] ?? $validated['contact_name'] ?? $supplier->company_name;
+
+        $query->update([
             'name' => $validated['name'],
-            'contact_name' => $validated['contact_name'] ?? null,
+            'company_name' => $companyName,
             'email' => $validated['email'] ?? null,
             'phone' => $validated['phone'] ?? null,
             'address' => $validated['address'] ?? null,
@@ -135,9 +144,20 @@ class SupplierController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
-        DB::table('suppliers')->where('id', $id)->delete();
+        $tenantId = $this->getTenantId($request);
+        $user = $request->user();
+        $query = DB::table('suppliers')->where('id', $id);
+
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('tenant_id', $tenantId);
+        }
+
+        $deleted = $query->delete();
+        if (!$deleted) {
+            return response()->json(['status' => 'error', 'message' => 'Supplier not found or unauthorized.'], 404);
+        }
 
         return response()->json([
             'status' => 'success',

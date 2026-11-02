@@ -3,48 +3,42 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\DB;
 
 /**
- * [BD-0092] Multi-Level Product Category & Tax Group Taxonomy Controller
+ * [BD-0012] Dynamic Multi-Tier Product Category & Taxonomy Hierarchy Controller
  *
- * @ticket BD-0092
+ * @ticket BD-0012
  * @component operations-service
  * @file codebridge-services/operations-service/app/Http/Controllers/Api/V1/CategoryController.php
  * @related-model App\Models\Category, App\Models\Product
- * @entry-point CategoryController::index(), store(), show(), update(), destroy()
+ * @entry-point GET /api/v1/categories, POST /api/v1/categories, PUT /api/v1/categories/{id}
  * @routes
- *  - GET    /api/v1/categories
- *  - POST   /api/v1/categories
- *  - GET    /api/v1/categories/{id}
- *  - PUT    /api/v1/categories/{id}
+ *  - GET /api/v1/categories
+ *  - POST /api/v1/categories
+ *  - PUT /api/v1/categories/{id}
  *  - DELETE /api/v1/categories/{id}
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
- * Step 1 (Tenant Scoping): Restricts category tree to authenticated tenant organization.
- * Step 2 (Hierarchical Category Tree): Retrieves nested parent-child categories for POS menu navigation.
- * Step 3 (Category Creation): Validates category name, color code, icon, and parent category ID.
+ * Step 1 (Hierarchy Resolution): Builds nested parent-child category tree for storefront navigation.
+ * Step 2 (Tenant Partitioning): Scopes categories to requesting tenant organization with shared defaults.
+ * Step 3 (Slug Auto-Generation): Generates URL-friendly slugs with collision avoidance.
  * Step 4 (Tax Group Association): Links default sales tax rates to categories for automated tax calculation.
  * Step 5 (Menu Sorting & Display Order): Updates display sort ordering for POS touch-screen grids.
  */
 class CategoryController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
+    use ResolvesTenantContext;
 
     public function index(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, false);
         $type = $request->query('type'); // 'main', 'sub'
-        $search = $request->query('q');
+        $search = $request->query('q') ?? $request->query('search');
 
         $query = DB::table('categories as c')
             ->leftJoin('categories as parent', 'c.parent_id', '=', 'parent.id');
@@ -60,6 +54,8 @@ class CategoryController extends Controller
                       ->orWhereNull('c.tenant_id');
                 });
             }
+        } elseif (empty($tenantId) && !$request->user()) {
+            $query->whereNull('c.tenant_id');
         }
 
         if ($type === 'main') {
@@ -69,7 +65,8 @@ class CategoryController extends Controller
         }
 
         if (!empty($search)) {
-            $query->where('c.name', 'like', "%{$search}%");
+            $searchTerm = trim((string) $search);
+            $query->where('c.name', 'like', "%{$searchTerm}%");
         }
 
         $categories = $query->select(
@@ -93,7 +90,7 @@ class CategoryController extends Controller
 
     public function store(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'parent_id' => 'nullable|integer|exists:categories,id',
@@ -119,16 +116,28 @@ class CategoryController extends Controller
 
     public function update(Request $request, $id)
     {
+        $tenantId = $this->getTenantId($request, true);
+
+        $category = DB::table('categories')->where('id', $id)->first();
+        if (!$category) {
+            return response()->json(['status' => 'error', 'message' => 'Category not found'], 404);
+        }
+
+        $this->authorizeTenantResource($category->tenant_id, $request, 'Category');
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'parent_id' => 'nullable|integer|exists:categories,id',
         ]);
 
-        DB::table('categories')->where('id', $id)->update([
-            'name' => $validated['name'],
-            'parent_id' => $validated['parent_id'] ?? null,
-            'updated_at' => now(),
-        ]);
+        DB::table('categories')
+            ->where('id', $id)
+            ->where('tenant_id', $category->tenant_id)
+            ->update([
+                'name' => $validated['name'],
+                'parent_id' => $validated['parent_id'] ?? null,
+                'updated_at' => now(),
+            ]);
 
         return response()->json([
             'status' => 'success',
@@ -136,9 +145,21 @@ class CategoryController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
-        DB::table('categories')->where('id', $id)->delete();
+        $tenantId = $this->getTenantId($request, true);
+
+        $category = DB::table('categories')->where('id', $id)->first();
+        if (!$category) {
+            return response()->json(['status' => 'error', 'message' => 'Category not found'], 404);
+        }
+
+        $this->authorizeTenantResource($category->tenant_id, $request, 'Category');
+
+        DB::table('categories')
+            ->where('id', $id)
+            ->where('tenant_id', $category->tenant_id)
+            ->delete();
 
         return response()->json([
             'status' => 'success',

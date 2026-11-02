@@ -50,6 +50,9 @@ class UserRelationshipsTest extends TestCase
         $this->assertInstanceOf(HasMany::class, $tenant->invitations());
         $this->assertInstanceOf(HasMany::class, $tenant->employees());
         $this->assertInstanceOf(HasMany::class, $tenant->departments());
+        $this->assertInstanceOf(BelongsTo::class, $tenant->owner());
+        $this->assertInstanceOf(HasMany::class, $tenant->tenantUsers());
+        $this->assertInstanceOf(HasMany::class, $tenant->tenantModules());
     }
 
     public function test_role_relationships_are_properly_configured(): void

@@ -26,7 +26,7 @@ class CrmTest extends TestCase
      */
     public function test_authenticated_user_can_view_crm_and_attendance(): void
     {
-        $user = User::factory()->create();
+        $user = User::factory()->inWorkspace()->create();
 
         Sanctum::actingAs($user, ['*']);
 

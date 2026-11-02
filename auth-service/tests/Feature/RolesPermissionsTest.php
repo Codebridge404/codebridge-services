@@ -25,7 +25,7 @@ class RolesPermissionsTest extends TestCase
      */
     public function test_admin_can_view_roles_and_permissions(): void
     {
-        $admin = User::factory()->create([
+        $admin = User::factory()->inWorkspace()->create([
             'role' => 'admin',
         ]);
 

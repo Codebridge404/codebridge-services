@@ -5,6 +5,8 @@ include:
   - ./auth-service/docker-compose.yml
   - ./operations-service/docker-compose.yml
   - ./storage/docker-compose.yml
+  - ./mailpit/compose.yml
+  - ./infrastructure/nginx-proxy-manager/docker-compose.yml
 
 networks:
   codebridge-network:

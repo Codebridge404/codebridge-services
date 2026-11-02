@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\ApiKey\StoreApiKeyRequest;
+use App\Http\Resources\ApiKey\ApiKeyResource;
 use App\Models\ApiKey;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -61,7 +63,7 @@ class ApiKeyController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $keys,
+            'data' => ApiKeyResource::collection($keys),
         ]);
     }
 
@@ -69,20 +71,15 @@ class ApiKeyController extends Controller
      * Generate a new Merchant API Key.
      * POST /api/v1/api-keys
      */
-    public function store(Request $request)
+    public function store(StoreApiKeyRequest $request)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'permissions' => 'nullable|array',
-            'expires_in_days' => 'nullable|integer|min:1|max:365',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
 
         // Generate full secret key (e.g. cb_live_a1b2c3d4e5...)
-        $randomSecret = Str::random(36);
-        $rawKey = 'cb_live_' . $randomSecret;
-        $prefix = substr($rawKey, 0, 16) . '...';
+        $rawKey = 'cb_live_' . Str::random(32);
+        $prefix = substr($rawKey, 0, 12);
         $hashedSecret = hash('sha256', $rawKey);
 
         $expiresAt = isset($validated['expires_in_days'])
@@ -92,11 +89,13 @@ class ApiKeyController extends Controller
         $permissions = $validated['permissions'] ?? ['*'];
 
         $id = DB::table('api_keys')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $user->tenant_id,
             'user_id' => $user->id,
             'name' => $validated['name'],
+            'key' => $hashedSecret,
             'key_prefix' => $prefix,
-            'secret_hash' => $hashedSecret,
+            'secret' => $hashedSecret,
             'permissions' => json_encode($permissions),
             'expires_at' => $expiresAt,
             'is_active' => true,

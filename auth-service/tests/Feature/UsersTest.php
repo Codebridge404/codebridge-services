@@ -25,7 +25,7 @@ class UsersTest extends TestCase
      */
     public function test_admin_can_access_users_list_and_lookup(): void
     {
-        $admin = User::factory()->create([
+        $admin = User::factory()->inWorkspace()->create([
             'role' => 'admin',
         ]);
 

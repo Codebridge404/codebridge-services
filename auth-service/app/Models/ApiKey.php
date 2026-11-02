@@ -16,7 +16,8 @@ class ApiKey extends Model
         'user_id',
         'name',
         'key_prefix',
-        'secret_hash',
+        'key',
+        'secret',
         'permissions',
         'last_used_at',
         'expires_at',
@@ -24,7 +25,8 @@ class ApiKey extends Model
     ];
 
     protected $hidden = [
-        'secret_hash',
+        'key',
+        'secret',
     ];
 
     protected function casts(): array

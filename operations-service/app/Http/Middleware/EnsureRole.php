@@ -49,7 +49,14 @@ class EnsureRole
             return $next($request);
         }
 
-        if (!in_array($user->role, $roles)) {
+        // Normalize role aliases (organization <=> admin <=> owner)
+        $userRole = $user->role;
+        $effectiveRoles = [$userRole];
+        if (in_array($userRole, ['organization', 'admin', 'administrator', 'owner', 'organization_owner'])) {
+            $effectiveRoles = array_unique(array_merge($effectiveRoles, ['organization', 'admin', 'administrator', 'owner', 'organization_owner']));
+        }
+
+        if (empty(array_intersect($effectiveRoles, $roles))) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Forbidden. Your role [' . $user->role . '] does not have access to this resource.',

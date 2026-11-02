@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: auth-migration-job
+  namespace: codebridge
+  labels:
+    app.kubernetes.io/name: auth-migration
+    app.kubernetes.io/part-of: codebridge
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auth-migration
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-mysql
+          image: busybox:latest
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for auth-mysql:3306..."
+              until nc -z -v -w3 auth-mysql 3306; do
+                echo "Waiting for MySQL..."
+                sleep 3
+              done
+              echo "MySQL is reachable!"
+      containers:
+        - name: artisan-migrate
+          image: codebridge-auth-service:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - php
+            - artisan
+            - migrate
+            - --force
+          envFrom:
+            - configMapRef:
+                name: auth-configmap
+            - secretRef:
+                name: auth-secret
+

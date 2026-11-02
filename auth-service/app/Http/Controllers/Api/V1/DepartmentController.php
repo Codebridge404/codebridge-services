@@ -3,8 +3,12 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Department\StoreDepartmentRequest;
+use App\Http\Requests\Department\UpdateDepartmentRequest;
+use App\Http\Resources\Department\DepartmentResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * [BD-0064] Organizational Structure & Departmental Hierarchy Controller
@@ -32,8 +36,13 @@ class DepartmentController extends Controller
 {
     protected function getTenantId(Request $request): ?string
     {
+        $user = $request->user();
+        if ($user && $user->role !== 'super_admin') {
+            return $user->tenant_id ? (string) $user->tenant_id : null;
+        }
+
         return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
+            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
             ?? $request->query('tenant_id')
             ?? null;
     }
@@ -41,11 +50,14 @@ class DepartmentController extends Controller
     public function index(Request $request)
     {
         $tenantId = $this->getTenantId($request);
+        $user = $request->user();
         $search = $request->query('q');
 
         $query = DB::table('departments as d');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('d.tenant_id', $tenantId);
+        } elseif (!empty($tenantId) && $tenantId !== 'all') {
             $query->where('d.tenant_id', $tenantId);
         }
 
@@ -69,18 +81,14 @@ class DepartmentController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $departments,
+            'data' => DepartmentResource::collection($departments),
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreDepartmentRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'code' => 'required|string|max:50',
-            'description' => 'nullable|string|max:500',
-        ]);
+        $validated = $request->validated();
 
         $code = strtoupper(trim($validated['code']));
 
@@ -97,6 +105,7 @@ class DepartmentController extends Controller
         }
 
         $id = DB::table('departments')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
             'code' => $code,
@@ -112,20 +121,22 @@ class DepartmentController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateDepartmentRequest $request, $id)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'description' => 'nullable|string|max:500',
-        ]);
+        $user = $request->user();
+        $validated = $request->validated();
 
         $query = DB::table('departments')->where('id', $id);
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenant = DB::table('departments')->where('id', $id)->where('tenant_id', $tenantId)->exists();
-            if ($hasTenant) {
-                $query->where('tenant_id', $tenantId);
-            }
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('tenant_id', $tenantId);
+        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+            $query->where('tenant_id', $tenantId);
+        }
+
+        $department = $query->first();
+        if (!$department) {
+            return response()->json(['status' => 'error', 'message' => 'Department not found or unauthorized.'], 404);
         }
 
         $query->update([
@@ -143,16 +154,19 @@ class DepartmentController extends Controller
     public function destroy(Request $request, $id)
     {
         $tenantId = $this->getTenantId($request);
+        $user = $request->user();
         $query = DB::table('departments')->where('id', $id);
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenant = DB::table('departments')->where('id', $id)->where('tenant_id', $tenantId)->exists();
-            if ($hasTenant) {
-                $query->where('tenant_id', $tenantId);
-            }
+        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+            $query->where('tenant_id', $tenantId);
+        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+            $query->where('tenant_id', $tenantId);
         }
 
-        $query->delete();
+        $deleted = $query->delete();
+        if (!$deleted) {
+            return response()->json(['status' => 'error', 'message' => 'Department not found or unauthorized.'], 404);
+        }
 
         return response()->json([
             'status' => 'success',

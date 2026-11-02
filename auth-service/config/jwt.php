@@ -1,8 +1,9 @@
 <?php
 
 return [
-    'secret' => env('JWT_SECRET', 'codebridge_enterprise_stateless_jwt_secret_key_2026_secured'),
+    'secret' => env('JWT_SECRET'), // no default secret
     'algo' => env('JWT_ALGO', 'HS256'),
-    'ttl' => (int) env('JWT_TTL', 1440), // 24 hours in minutes
+    'ttl' => (int) env('JWT_ACCESS_TTL', 43200), // 30 days in minutes
+    'refresh_ttl' => (int) env('JWT_REFRESH_TTL', 43200), // 30 days in minutes
     'issuer' => env('JWT_ISSUER', 'codebridge-auth-service'),
 ];

@@ -40,6 +40,7 @@ Route::middleware('role:organization,admin,super_admin,outlet_manager')->group(f
     Route::patch('/outlets/{id}/terminal-settings', [OutletController::class, 'updateTerminalSettings']);
     Route::get('/outlets/{id}/business-profile', [OutletController::class, 'getBusinessProfile']);
     Route::patch('/outlets/{id}/business-profile', [OutletController::class, 'updateBusinessProfile']);
+    Route::post('/outlets/{id}/receipt-branding', [OutletController::class, 'updateReceiptBranding']);
 
     // Departments CRUD
     Route::post('/departments', [DepartmentController::class, 'store']);

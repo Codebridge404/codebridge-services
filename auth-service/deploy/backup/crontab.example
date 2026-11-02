@@ -1,0 +1,18 @@
+# ==============================================================================
+# CodeBridges Automated Backup Schedule (Crontab Example)
+# Place these lines into your host or VPS crontab: crontab -e
+# Make sure to replace /path/to/codebridge with your absolute project root path.
+# ==============================================================================
+
+# Daily Backup (runs every night at 02:00 AM) - Retained for 7 days
+0 2 * * * /var/www/codebridge/codebridge-services/auth-service/deploy/backup/backup.sh daily >> /var/log/codebridge-backup-daily.log 2>&1
+
+# Weekly Backup (runs every Sunday at 03:00 AM) - Retained for 4 weeks (28 days)
+0 3 * * 0 /var/www/codebridge/codebridge-services/auth-service/deploy/backup/backup.sh weekly >> /var/log/codebridge-backup-weekly.log 2>&1
+
+# Monthly Backup (runs on the 1st of every month at 04:00 AM) - Retained for 12 months (365 days)
+0 4 1 * * /var/www/codebridge/codebridge-services/auth-service/deploy/backup/backup.sh monthly >> /var/log/codebridge-backup-monthly.log 2>&1
+
+# Optional: Run daily backup status & integrity check report at 06:00 AM
+0 6 * * * /var/www/codebridge/codebridge-services/auth-service/deploy/backup/status.sh >> /var/log/codebridge-backup-status.log 2>&1
+

@@ -3,6 +3,11 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\StoreCredit\IssueVoucherRequest;
+use App\Http\Requests\StoreCredit\RedeemVoucherRequest;
+use App\Http\Requests\StoreCredit\TopUpStoreCreditRequest;
+use App\Http\Resources\StoreCredit\DigitalVoucherResource;
+use App\Http\Resources\StoreCredit\StoreCreditInvoiceResource;
 use App\Models\Customer;
 use App\Models\DigitalVoucher;
 use App\Models\StoreCreditInvoice;
@@ -38,8 +43,13 @@ class StoreCreditInvoiceController extends Controller
 
     protected function getTenantId(Request $request): ?string
     {
+        $user = $request->user();
+        if ($user && $user->role !== 'super_admin') {
+            return $user->tenant_id ? (string) $user->tenant_id : null;
+        }
+
         return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
+            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
             ?? $request->query('tenant_id')
             ?? null;
     }
@@ -48,19 +58,11 @@ class StoreCreditInvoiceController extends Controller
      * Issue Customer Store Credit Top-Up Invoice.
      * POST /api/v1/customers/{id}/credit/topup-invoice
      */
-    public function topUp(Request $request, $id)
+    public function topUp(TopUpStoreCreditRequest $request, $id)
     {
-        $validated = $request->validate([
-            'amount_paid' => 'required|numeric|min:0.01',
-            'bonus_credit' => 'nullable|numeric|min:0',
-            'payment_method' => 'nullable|string|in:cash,card,khqr,transfer',
-            'payment_reference' => 'nullable|string|max:100',
-            'validity_days' => 'nullable|integer|min:1|max:1825', // up to 5 years
-            'notes' => 'nullable|string|max:255',
-            'outlet_id' => 'nullable|integer',
-        ]);
+        $validated = $request->validated();
 
-        $customer = Customer::find($id);
+        $customer = Customer::find(\App\Services\TenantAccess::record('customers', $id, $request)->id);
         if (!$customer) {
             return response()->json([
                 'status' => 'error',
@@ -69,6 +71,7 @@ class StoreCreditInvoiceController extends Controller
         }
 
         $tenantId = $this->getTenantId($request);
+        if (!empty($validated['outlet_id'])) \App\Services\TenantAccess::record('outlets', $validated['outlet_id'], $request);
 
         $result = $this->storeCreditService->createTopUpInvoice(
             customer: $customer,
@@ -96,7 +99,7 @@ class StoreCreditInvoiceController extends Controller
      */
     public function customerInvoices(Request $request, $id)
     {
-        $customer = Customer::find($id);
+        $customer = Customer::find(\App\Services\TenantAccess::record('customers', $id, $request)->id);
         if (!$customer) {
             return response()->json(['status' => 'error', 'message' => 'Customer not found.'], 404);
         }
@@ -109,7 +112,7 @@ class StoreCreditInvoiceController extends Controller
             'status' => 'success',
             'data' => [
                 'customer_id' => $customer->id,
-                'invoices' => $invoices,
+                'invoices' => StoreCreditInvoiceResource::collection($invoices),
             ],
         ]);
     }
@@ -120,10 +123,9 @@ class StoreCreditInvoiceController extends Controller
      */
     public function showInvoice(Request $request, $invoiceId)
     {
-        $invoice = StoreCreditInvoice::with(['customer', 'cashier'])
-            ->where('id', $invoiceId)
-            ->orWhere('invoice_number', $invoiceId)
-            ->first();
+        $query = StoreCreditInvoice::with(['customer', 'cashier'])->where(fn ($q) => $q->where('id', $invoiceId)->orWhere('invoice_number', $invoiceId));
+        if ($request->user()->role !== 'super_admin') $query->where('tenant_id', $request->user()->tenant_id);
+        $invoice = $query->first();
 
         if (!$invoice) {
             return response()->json(['status' => 'error', 'message' => 'Store credit invoice not found.'], 404);
@@ -131,7 +133,7 @@ class StoreCreditInvoiceController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $invoice,
+            'data' => new StoreCreditInvoiceResource($invoice),
         ]);
     }
 
@@ -139,18 +141,13 @@ class StoreCreditInvoiceController extends Controller
      * Issue a new digital gift voucher.
      * POST /api/v1/vouchers/issue
      */
-    public function issueVoucher(Request $request)
+    public function issueVoucher(IssueVoucherRequest $request)
     {
-        $validated = $request->validate([
-            'value' => 'required|numeric|min:0.01',
-            'title' => 'nullable|string|max:100',
-            'validity_days' => 'nullable|integer|min:1|max:730',
-            'customer_id' => 'nullable|integer|exists:customers,id',
-            'notes' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         $tenantId = $this->getTenantId($request);
 
+        if (!empty($validated['customer_id'])) \App\Services\TenantAccess::record('customers', $validated['customer_id'], $request);
         $voucher = $this->storeCreditService->issueDigitalVoucher(
             value: (float) $validated['value'],
             title: $validated['title'] ?? 'Customer Gift Voucher',
@@ -172,14 +169,11 @@ class StoreCreditInvoiceController extends Controller
      * Redeem a digital voucher.
      * POST /api/v1/vouchers/redeem
      */
-    public function redeemVoucher(Request $request)
+    public function redeemVoucher(RedeemVoucherRequest $request)
     {
-        $validated = $request->validate([
-            'voucher_code' => 'required|string',
-            'customer_id' => 'required|integer|exists:customers,id',
-        ]);
+        $validated = $request->validated();
 
-        $customer = Customer::find($validated['customer_id']);
+        $customer = Customer::find(\App\Services\TenantAccess::record('customers', $validated['customer_id'], $request)->id);
 
         try {
             $result = $this->storeCreditService->redeemDigitalVoucher(
@@ -230,7 +224,7 @@ class StoreCreditInvoiceController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'data' => $vouchers,
+            'data' => DigitalVoucherResource::collection($vouchers),
         ]);
     }
 
@@ -256,6 +250,7 @@ class StoreCreditInvoiceController extends Controller
      */
     public function statement(Request $request, $id)
     {
+        \App\Services\TenantAccess::record('customers', $id, $request);
         $startDate = $request->query('start_date');
         $endDate = $request->query('end_date');
 

@@ -73,22 +73,19 @@ class TenantQuotaMiddleware
         };
 
         if ($resourceType === 'users') {
-            $currentUsersCount = DB::table('users as u')
+            $currentUsersCount = DB::table('tenant_users as tu')
+                ->join('users as u', 'tu.user_id', '=', 'u.id')
                 ->leftJoin('user_roles as ur', function ($j) {
                     $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
                 })
                 ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                ->where(function ($q) use ($tenant) {
-                    $q->where('u.tenant_id', $tenant->id)
-                      ->orWhereNull('u.tenant_id');
-                })
+                ->where('tu.tenant_id', $tenant->id)
+                ->where('tu.status', 'active')
                 ->where(function ($q) {
                     $q->whereNull('r.slug')->orWhere('r.slug', '!=', 'super_admin');
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
-                        $q->orWhere('u.role', '!=', 'super_admin');
-                    }
                 })
-                ->count();
+                ->distinct()
+                ->count('u.id');
 
             if ($currentUsersCount >= $maxUsers) {
                 return response()->json([
@@ -104,7 +101,9 @@ class TenantQuotaMiddleware
                 ], 403);
             }
         } elseif ($resourceType === 'outlets') {
-            $currentOutletsCount = DB::table('outlets')->count();
+            $currentOutletsCount = DB::table('outlets')
+                ->where('tenant_id', $tenant->id)
+                ->count();
 
             if ($currentOutletsCount >= $maxOutlets) {
                 return response()->json([
@@ -120,7 +119,12 @@ class TenantQuotaMiddleware
                 ], 403);
             }
         } elseif ($resourceType === 'registers') {
-            $currentRegistersCount = DB::table('registers')->count();
+            $currentRegistersCount = \Illuminate\Support\Facades\Schema::hasTable('registers')
+                ? DB::table('registers')
+                    ->join('outlets', 'registers.outlet_id', '=', 'outlets.id')
+                    ->where('outlets.tenant_id', $tenant->id)
+                    ->count()
+                : 0;
 
             if ($currentRegistersCount >= $maxRegisters) {
                 return response()->json([

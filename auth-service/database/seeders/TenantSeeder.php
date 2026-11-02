@@ -4,15 +4,28 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
 
 class TenantSeeder extends Seeder
 {
     public function run(): void
     {
-        // Seed the default "Platform Owner" tenant for CodeBridges internal use
+        // Find super admin user
+        $superAdmin = DB::table('users')->where('email', 'codebridge2026@gmail.com')->first()
+            ?? DB::table('users')
+                ->join('user_roles', 'users.id', '=', 'user_roles.user_id')
+                ->join('roles', 'user_roles.role_id', '=', 'roles.id')
+                ->where('roles.slug', 'super_admin')
+                ->select('users.*')
+                ->first();
+
+        // 1. Seed the default "Platform Owner" tenant for CodeBridges internal use
         $existing = DB::table('tenants')->where('slug', 'codebridge-platform')->first();
         if (!$existing) {
             $platformTenantId = DB::table('tenants')->insertGetId([
+                'uuid'          => (string) Str::uuid(),
+                'owner_user_id' => $superAdmin?->id,
                 'name'          => 'CodeBridges Platform',
                 'slug'          => 'codebridge-platform',
                 'company_code'  => 'CB-0001',
@@ -46,46 +59,37 @@ class TenantSeeder extends Seeder
             ]);
         } else {
             $platformTenantId = $existing->id;
+            if (empty($existing->uuid) || (empty($existing->owner_user_id) && $superAdmin)) {
+                DB::table('tenants')->where('id', $platformTenantId)->update(array_filter([
+                    'uuid' => $existing->uuid ?: (string) Str::uuid(),
+                    'owner_user_id' => $existing->owner_user_id ?: $superAdmin?->id,
+                ]));
+            }
         }
 
-        // Assign all super_admin users to the platform tenant
-        DB::table('users')->where('role', 'super_admin')->update(['tenant_id' => $platformTenantId]);
+        // Link super_admin to platform tenant in tenant_users (ERD Rule: Owner must be an active tenant member)
+        if ($superAdmin && Schema::hasTable('tenant_users')) {
+            DB::table('tenant_users')->updateOrInsert(
+                ['tenant_id' => $platformTenantId, 'user_id' => $superAdmin->id],
+                ['status' => 'active', 'joined_at' => now(), 'created_at' => now(), 'updated_at' => now()]
+            );
+        }
 
-        // Seed a demo Business Runner tenant
-        $existingBiz = DB::table('tenants')->where('slug', 'sunny-cafe-pp')->first();
-        if (!$existingBiz) {
-            $bizTenantId = DB::table('tenants')->insertGetId([
-                'name'          => 'Sunny Cafe Phnom Penh',
-                'slug'          => 'sunny-cafe-pp',
-                'company_code'  => 'CB-0002',
-                'client_tier'   => 'business_runner',
-                'status'        => 'active',
-                'email'         => 'admin@sunnycafe.kh',
-                'phone'         => '+855 23 999 888',
-                'address'       => 'Toul Kork, Phnom Penh',
-                'country'       => 'KH',
-                'currency'      => 'USD',
-                'max_outlets'   => 3,
-                'max_registers' => 6,
-                'max_users'     => 20,
-                'trial_ends_at' => now()->addDays(30),
-                'created_at'    => now(),
-                'updated_at'    => now(),
-            ]);
-
-            DB::table('tenant_subscriptions')->insert([
-                'tenant_id'     => $bizTenantId,
-                'plan_name'     => 'Business Runner Pro',
-                'billing_cycle' => 'monthly',
-                'price'         => 49.00,
-                'currency'      => 'USD',
-                'status'        => 'active',
-                'starts_at'     => now(),
-                'expires_at'    => now()->addMonths(1),
-                'notes'         => 'Demo SME Business Runner subscription.',
-                'created_at'    => now(),
-                'updated_at'    => now(),
-            ]);
+        // Activate all platform modules for Platform Core tenant
+        if (Schema::hasTable('tenant_modules') && Schema::hasTable('platform_modules')) {
+            $allModules = DB::table('platform_modules')->pluck('id');
+            foreach ($allModules as $modId) {
+                DB::table('tenant_modules')->updateOrInsert(
+                    ['tenant_id' => $platformTenantId, 'module_id' => $modId],
+                    [
+                        'is_active' => true,
+                        'activated_by' => $superAdmin?->id,
+                        'activated_at' => now(),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]
+                );
+            }
         }
     }
 }

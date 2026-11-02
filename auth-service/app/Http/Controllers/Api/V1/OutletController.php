@@ -3,6 +3,11 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Outlet\StoreOutletRequest;
+use App\Http\Requests\Outlet\UpdateBusinessProfileRequest;
+use App\Http\Requests\Outlet\UpdateOutletRequest;
+use App\Http\Requests\Outlet\UpdateTerminalSettingsRequest;
+use App\Http\Resources\Outlet\OutletResource;
 use App\Services\PosBusinessProfileService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -64,33 +69,24 @@ class OutletController extends Controller
                 'o.is_cfd_enabled',
                 'o.terminal_settings',
                 'o.created_at',
-                DB::raw('(SELECT COUNT(*) FROM users WHERE outlet_uuid = o.uuid) as staff_count'),
-                DB::raw('(SELECT COUNT(*) FROM registers WHERE outlet_id = o.id) as registers_count')
+                DB::raw('(SELECT COUNT(*) FROM tenant_user_outlets WHERE outlet_uuid = o.uuid) as staff_count'),
+                \Illuminate\Support\Facades\Schema::hasTable('registers')
+                    ? DB::raw('(SELECT COUNT(*) FROM registers WHERE outlet_id = o.id) as registers_count')
+                    : DB::raw('0 as registers_count')
             )
             ->orderBy('o.name', 'asc')
             ->get();
 
         return response()->json([
             'status' => 'success',
-            'data' => $outlets,
+            'data' => OutletResource::collection($outlets),
         ]);
     }
 
-    public function store(Request $request)
+    public function store(StoreOutletRequest $request)
     {
         $user = $request->user();
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'code' => 'required|string|max:50|unique:outlets,code',
-            'business_type' => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
-            'phone' => 'nullable|string|max:50',
-            'address' => 'nullable|string|max:500',
-            'receipt_header' => 'nullable|string|max:255',
-            'receipt_footer' => 'nullable|string|max:255',
-            'is_kds_enabled' => 'nullable|boolean',
-            'is_cfd_enabled' => 'nullable|boolean',
-            'terminal_settings' => 'nullable|array',
-        ]);
+        $validated = $request->validated();
 
         $tenantId = $user ? $user->tenant_id : null;
         $businessType = $validated['business_type'] ?? 'retail_mart';
@@ -104,6 +100,7 @@ class OutletController extends Controller
         $terminalSettings['tablesEnabled'] = $profile['presets']['tables_enabled'];
 
         $id = DB::table('outlets')->insertGetId([
+            'uuid' => (string) Str::uuid(),
             'tenant_id' => $tenantId,
             'name' => $validated['name'],
             'business_type' => $businessType,
@@ -131,19 +128,20 @@ class OutletController extends Controller
         ], 201);
     }
 
-    public function update(Request $request, $id)
+    public function update(UpdateOutletRequest $request, $id)
     {
-        $validated = $request->validate([
-            'name' => 'required|string|max:255',
-            'business_type' => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
-            'phone' => 'nullable|string|max:50',
-            'address' => 'nullable|string|max:500',
-            'receipt_header' => 'nullable|string|max:255',
-            'receipt_footer' => 'nullable|string|max:255',
-            'is_kds_enabled' => 'nullable|boolean',
-            'is_cfd_enabled' => 'nullable|boolean',
-            'terminal_settings' => 'nullable|array',
-        ]);
+        $user = $request->user();
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
+        }
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
+            }
+        }
+
+        $validated = $request->validated();
 
         $updates = [
             'name' => $validated['name'],
@@ -194,6 +192,7 @@ class OutletController extends Controller
      */
     public function getBusinessProfile($id)
     {
+        \App\Services\TenantAccess::record('outlets', $id);
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
@@ -218,16 +217,20 @@ class OutletController extends Controller
      * Update active POS Business Operating Profile for an outlet.
      * PATCH|PUT /api/v1/outlets/{id}/business-profile
      */
-    public function updateBusinessProfile(Request $request, $id)
+    public function updateBusinessProfile(UpdateBusinessProfileRequest $request, $id)
     {
-        $validated = $request->validate([
-            'business_type' => 'required|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
-        ]);
-
+        $user = $request->user();
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
+            }
+        }
+
+        $validated = $request->validated();
 
         $businessType = $validated['business_type'];
         $profile = PosBusinessProfileService::getProfile($businessType);
@@ -281,6 +284,7 @@ class OutletController extends Controller
      */
     public function getTerminalSettings($id)
     {
+        \App\Services\TenantAccess::record('outlets', $id);
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
@@ -301,6 +305,9 @@ class OutletController extends Controller
                 'business_profile' => PosBusinessProfileService::getProfile($businessType),
                 'is_kds_enabled' => (bool) $outlet->is_kds_enabled,
                 'is_cfd_enabled' => (bool) $outlet->is_cfd_enabled,
+                'receipt_header' => $outlet->receipt_header ?? null,
+                'receipt_footer' => $outlet->receipt_footer ?? null,
+                'receipt_logo_url' => $outlet->receipt_logo_url ?? null,
                 'terminal_settings' => $terminalSettings ?? [],
             ],
         ]);
@@ -310,19 +317,20 @@ class OutletController extends Controller
      * Update POS Terminal Feature Flags & Peripherals for an outlet.
      * PATCH /api/v1/outlets/{id}/terminal-settings
      */
-    public function updateTerminalSettings(Request $request, $id)
+    public function updateTerminalSettings(UpdateTerminalSettingsRequest $request, $id)
     {
-        $validated = $request->validate([
-            'business_type' => 'nullable|string|in:retail_mart,restaurant_fnb,cafe_qsr,boutique_retail',
-            'is_kds_enabled' => 'nullable|boolean',
-            'is_cfd_enabled' => 'nullable|boolean',
-            'terminal_settings' => 'nullable|array',
-        ]);
-
+        $user = $request->user();
         $outlet = DB::table('outlets')->where('id', $id)->first();
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
+            }
+        }
+
+        $validated = $request->validated();
 
         $updates = [
             'updated_at' => now(),
@@ -399,8 +407,19 @@ class OutletController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
+        $user = $request->user();
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
+        }
+        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
+            }
+        }
+
         DB::table('outlets')->where('id', $id)->update([
             'is_active' => false,
             'updated_at' => now(),
@@ -409,6 +428,72 @@ class OutletController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'Store outlet deactivated.',
+        ]);
+    }
+
+    /**
+     * Update thermal receipt custom branding (logo, header, footer, tax tin)
+     * POST /api/v1/outlets/{id}/receipt-branding
+     */
+    public function updateReceiptBranding(Request $request, $id)
+    {
+        \App\Services\TenantAccess::record('outlets', $id, $request);
+        $outlet = DB::table('outlets')->where('id', $id)->first();
+        if (!$outlet) {
+            return response()->json(['status' => 'error', 'message' => 'Outlet not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'logo' => 'nullable|file|mimes:jpeg,png,jpg,webp,gif|max:10240',
+            'receipt_header' => 'nullable|string|max:500',
+            'receipt_footer' => 'nullable|string|max:500',
+            'receipt_logo_url' => 'nullable|string|max:500',
+            'vat_tin' => 'nullable|string|max:50',
+            'phone' => 'nullable|string|max:50',
+            'address' => 'nullable|string|max:500',
+        ]);
+
+        $updateData = [
+            'updated_at' => now(),
+        ];
+
+        if ($request->has('receipt_header')) $updateData['receipt_header'] = $validated['receipt_header'];
+        if ($request->has('receipt_footer')) $updateData['receipt_footer'] = $validated['receipt_footer'];
+        if ($request->has('phone')) $updateData['phone'] = $validated['phone'];
+        if ($request->has('address')) $updateData['address'] = $validated['address'];
+
+        // If logo file is uploaded
+        if ($request->hasFile('logo')) {
+            $path = $request->file('logo')->store('receipt_logos', 'public');
+            $updateData['receipt_logo_url'] = '/storage/' . $path;
+        } elseif ($request->filled('receipt_logo_url')) {
+            $updateData['receipt_logo_url'] = $validated['receipt_logo_url'];
+        }
+
+        // Store VAT TIN or tax number in terminal_settings JSON
+        $terminalSettings = json_decode($outlet->terminal_settings ?? '{}', true) ?: [];
+        if ($request->has('vat_tin')) {
+            $terminalSettings['vat_tin'] = $validated['vat_tin'];
+            $updateData['terminal_settings'] = json_encode($terminalSettings);
+        }
+
+        DB::table('outlets')->where('id', $id)->update($updateData);
+
+        $fresh = DB::table('outlets')->where('id', $id)->first();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Thermal receipt branding updated successfully.',
+            'data' => [
+                'id' => $fresh->id,
+                'name' => $fresh->name,
+                'receipt_header' => $fresh->receipt_header,
+                'receipt_footer' => $fresh->receipt_footer,
+                'receipt_logo_url' => $fresh->receipt_logo_url ?? ($updateData['receipt_logo_url'] ?? null),
+                'phone' => $fresh->phone,
+                'address' => $fresh->address,
+                'vat_tin' => $terminalSettings['vat_tin'] ?? null,
+            ],
         ]);
     }
 }

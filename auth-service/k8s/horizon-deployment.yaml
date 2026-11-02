@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth-horizon
+  namespace: codebridge
+  labels:
+    app.kubernetes.io/name: auth-horizon
+    app.kubernetes.io/part-of: codebridge
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: auth-horizon
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: auth-horizon
+    spec:
+      containers:
+        - name: worker
+          image: codebridge-auth-service:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
+          envFrom:
+            - configMapRef:
+                name: auth-configmap
+            - secretRef:
+                name: auth-secret
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+

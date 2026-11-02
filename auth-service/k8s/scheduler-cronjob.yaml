@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: auth-scheduler
+  namespace: codebridge
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: scheduler
+              image: codebridge-auth-service:latest
+              imagePullPolicy: IfNotPresent
+              command: ["php", "artisan", "schedule:run"]
+              envFrom:
+                - configMapRef:
+                    name: auth-configmap
+                - secretRef:
+                    name: auth-secret

@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Attendance\ClockInRequest;
+use App\Http\Requests\Attendance\ClockOutRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -32,8 +34,13 @@ class AttendanceController extends Controller
 {
     protected function getTenantId(Request $request): ?string
     {
+        $user = $request->user();
+        if ($user && $user->role !== 'super_admin') {
+            return $user->tenant_id ? (string) $user->tenant_id : null;
+        }
+
         return $request->header('X-Tenant-Id')
-            ?? $request->user()?->tenant_id
+            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
             ?? $request->query('tenant_id')
             ?? null;
     }
@@ -52,6 +59,8 @@ class AttendanceController extends Controller
         if (!empty($tenantId) && $tenantId !== 'all') {
             $query->where('a.tenant_id', $tenantId);
         }
+
+        if (!\App\Services\TenantAccess::isAdmin($request->user())) $query->where('a.user_id', $request->user()->id);
 
         if (!empty($date)) {
             $query->whereDate('a.clock_in', $date);
@@ -89,19 +98,23 @@ class AttendanceController extends Controller
         ]);
     }
 
-    public function clockIn(Request $request)
+    public function clockIn(ClockInRequest $request)
     {
         $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'user_id' => 'nullable',
-            'employee_id' => 'nullable',
-            'outlet_id' => 'nullable',
-            'notes' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         $userId = $validated['user_id'] ?? $request->user()?->id;
         $employeeId = $validated['employee_id'] ?? null;
         $outletId = $validated['outlet_id'] ?? $request->user()?->outlet_id;
+
+        $actor = $request->user();
+        if (!\App\Services\TenantAccess::isAdmin($actor)) {
+            abort_unless((int) $userId === $actor->id, 403);
+            if ($employeeId) abort_unless(DB::table('employees')->where('id', $employeeId)->where('user_id', $actor->id)->exists(), 403);
+        }
+        if ($userId) abort_unless(DB::table('tenant_users')->where('tenant_id', $tenantId)->where('user_id', $userId)->where('status', 'active')->exists(), 422);
+        if ($employeeId) \App\Services\TenantAccess::record('employees', $employeeId, $request);
+        if ($outletId) \App\Services\TenantAccess::record('outlets', $outletId, $request);
 
         // Check if there is already an active clock-in without clock-out
         $activeQuery = DB::table('attendances')
@@ -127,6 +140,7 @@ class AttendanceController extends Controller
             'user_id' => $userId,
             'employee_id' => $employeeId,
             'outlet_id' => $outletId,
+            'date' => now()->toDateString(),
             'clock_in' => now(),
             'status' => 'present',
             'notes' => $validated['notes'] ?? 'Shift Started',
@@ -142,15 +156,13 @@ class AttendanceController extends Controller
         ], 201);
     }
 
-    public function clockOut(Request $request)
+    public function clockOut(ClockOutRequest $request)
     {
-        $validated = $request->validate([
-            'attendance_id' => 'nullable',
-            'notes' => 'nullable|string|max:255',
-        ]);
+        $validated = $request->validated();
 
         $userId = $request->user()?->id;
-        $query = DB::table('attendances');
+        $query = \App\Services\TenantAccess::scope(DB::table('attendances')->whereNull('clock_out'), $request);
+        if (!\App\Services\TenantAccess::isAdmin($request->user())) $query->where('user_id', $userId);
 
         if (!empty($validated['attendance_id'])) {
             $query->where('id', $validated['attendance_id']);

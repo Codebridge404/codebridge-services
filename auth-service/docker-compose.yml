@@ -34,6 +34,9 @@ services:
       codebridge-network:
         aliases:
           - auth-service
+      smartpos-network:
+        aliases:
+          - auth-service
 
   # 2. Auth Background Queue / Horizon Worker
   auth-horizon:
@@ -65,6 +68,25 @@ services:
       - auth-network
       - codebridge-network
 
+  auth-scheduler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["php", "artisan", "schedule:work"]
+    env_file:
+      - .env
+    volumes:
+      - .:/var/www/html
+      - auth-vendor:/var/www/html/vendor
+    depends_on:
+      auth-mysql:
+        condition: service_healthy
+      auth-redis:
+        condition: service_healthy
+    networks:
+      - auth-network
+
   # 3. Dedicated Auth MySQL Database (codebridge_auth)
   auth-mysql:
     image: mysql:8.4
@@ -76,17 +98,17 @@ services:
     environment:
       MYSQL_DATABASE: codebridge_auth
       MYSQL_USER: codebridge_auth
-      MYSQL_PASSWORD: ${DB_PASSWORD:-root_password}
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root_password}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD must be set in .env}}
 
     ports:
-      - "3307:3306"
+      - "127.0.0.1:3307:3306"
 
     volumes:
       - auth-mysql-data:/var/lib/mysql
 
     healthcheck:
-      test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD:-root_password}\" --silent" ]
+      test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -122,7 +144,7 @@ services:
       '
 
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
 
     volumes:
       - auth-redis-data:/data
@@ -178,6 +200,10 @@ networks:
 
   codebridge-network:
     name: codebridge-network
+    external: true
+
+  smartpos-network:
+    name: smartpos-network
     external: true
 
 volumes:

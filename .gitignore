@@ -5,11 +5,21 @@ Desktop.ini
 .vscode/
 .idea/
 *.swp
+*.code-workspace
 
 # Environment & Secrets (Ignored across all microservices)
 .env
 .env.*
 !.env.example
+env/**/*.env
+!env/**/*.env.example
+
+# Kubernetes Secrets
+secrets.yaml
+**/secrets.yaml
+k8s/**/secrets.yaml
+!k8s/**/secrets.example.yaml
+!**/secrets.example.yaml
 
 # Composer & Node Dependencies
 **/vendor/
@@ -29,3 +39,19 @@ Desktop.ini
 **/storage/framework/views/*
 **/storage/framework/testing/*
 **/bootstrap/cache/*
+
+# Nginx Proxy Manager Data & SSL Certificates
+nginx-proxy-manager/data/
+nginx-proxy-manager/letsencrypt/
+**/data/
+**/letsencrypt/
+
+# Database & System Backups
+backups/
+*.sql.gz
+*.tar.gz
+
+# Kubernetes Secrets & Credentials
+secrets.yaml
+**/secrets.yaml
+!**/secrets.example.yaml

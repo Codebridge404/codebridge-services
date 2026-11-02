@@ -81,15 +81,35 @@ class RefundController extends Controller
             ];
         }
 
+        $saleDate = \Carbon\Carbon::parse($sale->created_at);
+        $daysElapsed = (int) $saleDate->diffInDays(now());
+        $isPastReturnPolicy = $daysElapsed > 7;
+
         return response()->json([
             'status' => 'success',
             'data' => [
                 'sale' => $sale,
+                'days_elapsed' => $daysElapsed,
+                'return_policy_days' => 7,
+                'is_past_policy_window' => $isPastReturnPolicy,
+                'requires_supervisor_approval' => $isPastReturnPolicy,
                 'lines' => $eligibleLines,
                 'max_refund_amount' => $totalReturnableAmount,
                 'is_fully_refunded' => $totalReturnableAmount <= 0,
             ],
         ]);
+    }
+
+    /**
+     * Store alias for refunds endpoint (POST /api/v1/refunds)
+     */
+    public function store(Request $request)
+    {
+        $saleId = $request->input('sale_id') ?? $request->input('receipt_number');
+        if (!$saleId) {
+            return response()->json(['status' => 'error', 'message' => 'sale_id or receipt_number is required.'], 422);
+        }
+        return $this->refund($request, $saleId);
     }
 
     /**
@@ -99,19 +119,48 @@ class RefundController extends Controller
     {
         $user = $request->user();
 
+        $sale = DB::table('sales')->where('id', $id)->first();
+        if (!$sale) {
+            $sale = DB::table('sales')->where('receipt_number', $id)->first();
+        }
+
+        if (!$sale) {
+            return response()->json(['status' => 'error', 'message' => 'Sale record not found.'], 404);
+        }
+
         $validated = $request->validate([
             'supervisor_pin' => 'nullable|string',
             'reason' => 'required|string|max:255',
             'items' => 'required|array|min:1',
-            'items.*.sale_line_id' => 'required|string',
+            'items.*.sale_line_id' => 'required',
             'items.*.quantity' => 'required|numeric|min:0.01',
-            'items.*.restock_decision' => 'required|string|in:restock,wastage,non_returnable',
+            'items.*.restock_decision' => 'required|string|in:restock,wastage,non_returnable,resellable,damaged,expired',
             'items.*.reason' => 'nullable|string|max:255',
         ]);
 
-        // Supervisor PIN Verification (if user is not supervisor/admin)
+        // Normalize restock_decision values: resellable -> restock, damaged/expired -> wastage
+        foreach ($validated['items'] as &$item) {
+            if ($item['restock_decision'] === 'resellable') $item['restock_decision'] = 'restock';
+            if (in_array($item['restock_decision'], ['damaged', 'expired'])) $item['restock_decision'] = 'wastage';
+        }
+
+        // 7-day return policy window enforcement
+        $saleDate = \Carbon\Carbon::parse($sale->created_at);
+        $daysElapsed = (int) $saleDate->diffInDays(now());
+        if ($daysElapsed > 7) {
+            if (empty($validated['supervisor_pin'])) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => "Sale date ({$saleDate->toDateString()}) exceeds the 7-day return policy window ({$daysElapsed} days elapsed). Supervisor PIN override is required.",
+                    'requires_supervisor_override' => true,
+                    'days_elapsed' => $daysElapsed,
+                ], 422);
+            }
+        }
+
+        // Supervisor PIN Verification (if user is cashier or policy exceeded)
         $userRole = $user->role ?? 'cashier';
-        if (!in_array($userRole, ['supervisor', 'outlet_manager', 'admin', 'super_admin'])) {
+        if (!in_array($userRole, ['supervisor', 'outlet_manager', 'admin', 'super_admin']) || ($daysElapsed > 7 && !empty($validated['supervisor_pin']))) {
             if (empty($validated['supervisor_pin'])) {
                 return response()->json([
                     'status' => 'error',
@@ -132,15 +181,7 @@ class RefundController extends Controller
             }
         }
 
-        return DB::transaction(function () use ($id, $validated, $user) {
-            $sale = DB::table('sales')->where('id', $id)->first();
-            if (!$sale) {
-                $sale = DB::table('sales')->where('receipt_number', $id)->first();
-            }
-
-            if (!$sale) {
-                throw new Exception('Sale record not found.');
-            }
+        return DB::transaction(function () use ($sale, $validated, $user) {
 
             // Calculate returnable balances
             $previousRefunds = DB::table('refunds')->where('sale_id', $sale->id)->pluck('id');

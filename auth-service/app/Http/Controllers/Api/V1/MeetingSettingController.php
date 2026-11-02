@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Meeting\BatchUpdateMeetingSettingsRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -44,6 +45,7 @@ class MeetingSettingController extends Controller
             });
         }
 
+        $query->where('setting_key', 'not like', '%token%')->where('setting_key', 'not like', '%secret%');
         $settings = $query->orderBy('category', 'asc')->orderBy('setting_key', 'asc')->get();
 
         // Seed default corporate governance policies if empty
@@ -79,7 +81,7 @@ class MeetingSettingController extends Controller
                 ]));
             }
 
-            $settings = DB::table('meeting_system_settings')->where('tenant_id', $tenantId)->get();
+            $settings = DB::table('meeting_system_settings')->where('tenant_id', $tenantId)->where('setting_key', 'not like', '%token%')->where('setting_key', 'not like', '%secret%')->get();
         }
 
         return response()->json(['status' => 'success', 'data' => $settings]);
@@ -89,13 +91,9 @@ class MeetingSettingController extends Controller
      * Batch update dynamic settings.
      * PUT /api/v1/meetings/system-settings/batch
      */
-    public function batchUpdate(Request $request)
+    public function batchUpdate(BatchUpdateMeetingSettingsRequest $request)
     {
-        $validated = $request->validate([
-            'settings' => 'required|array',
-            'settings.*.setting_key' => 'required|string',
-            'settings.*.setting_value' => 'nullable|string',
-        ]);
+        $validated = $request->validated();
 
         $user = $request->user();
         $tenantId = $user?->tenant_id;

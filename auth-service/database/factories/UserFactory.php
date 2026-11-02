@@ -37,6 +37,13 @@ class UserFactory extends Factory
     /**
      * Indicate that the model's email address should be unverified.
      */
+    public function inWorkspace(): static
+    {
+        return $this->state(fn () => ['tenant_id' => \App\Models\Tenant::create([
+            'name' => fake()->company(), 'slug' => (string) Str::uuid(), 'status' => 'active',
+        ])->id]);
+    }
+
     public function unverified(): static
     {
         return $this->state(fn (array $attributes) => [

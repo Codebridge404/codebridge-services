@@ -1,0 +1,4 @@
+# Nginx Proxy Manager runtime data and SSL certs
+data/
+letsencrypt/
+

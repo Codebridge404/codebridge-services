@@ -10,6 +10,7 @@ class Customer extends Model
     use HasFactory;
 
     protected $fillable = [
+        'uuid',
         'tenant_id',
         'code',
         'name',
@@ -17,6 +18,7 @@ class Customer extends Model
         'email',
         'address',
         'store_credit',
+        'store_credit_balance',
         'loyalty_points',
         'is_active',
     ];
@@ -24,6 +26,9 @@ class Customer extends Model
     protected static function booted()
     {
         static::creating(function ($customer) {
+            if (empty($customer->uuid)) {
+                $customer->uuid = (string) \Illuminate\Support\Str::uuid();
+            }
             if (empty($customer->code)) {
                 $customer->code = 'CUST-' . strtoupper(\Illuminate\Support\Str::random(8));
             }

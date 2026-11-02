@@ -50,7 +50,7 @@ class ApiKeyMiddleware
         $prefix = substr($rawKey, 0, 12);
 
         $apiKey = DB::table('api_keys')
-            ->where('secret_hash', $hashedSecret)
+            ->where('secret', $hashedSecret)
             ->where('is_active', true)
             ->where(function ($q) {
                 $q->whereNull('expires_at')
@@ -67,8 +67,8 @@ class ApiKeyMiddleware
         }
 
         // Check specific permission if specified
-        if ($permissionRequired && !empty($apiKey->permissions)) {
-            $permissions = json_decode($apiKey->permissions, true) ?: [];
+        if ($permissionRequired) {
+            $permissions = json_decode($apiKey->permissions ?? '[]', true) ?: [];
             if (!in_array('*', $permissions) && !in_array($permissionRequired, $permissions)) {
                 return response()->json([
                     'status' => 'error',

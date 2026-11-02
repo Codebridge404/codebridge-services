@@ -263,15 +263,20 @@ class CheckoutService
             try {
                 DB::table('kds_tickets')->insert([
                     'sale_id' => $saleId,
+                    'outlet_id' => $outletId ?? null,
                     'ticket_number' => 'TKT-' . substr($receiptNumber, -5),
                     'order_type' => $orderType,
                     'table_name' => $tableName ?? ($orderType === 'dine_in' ? 'Table Order' : 'Takeaway Counter'),
+                    'station' => 'all',
                     'items' => json_encode(array_map(fn($l) => ['name' => $l['product_name'], 'quantity' => $l['quantity']], $saleLines)),
                     'status' => 'pending',
                     'prep_time_minutes' => 0,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
+
+                // Signal active real-time SSE kitchen monitors
+                \Illuminate\Support\Facades\Cache::put('kds_last_update_time', microtime(true), 86400);
             } catch (\Exception $kdsErr) {
                 // Non-fatal
             }
@@ -282,6 +287,228 @@ class CheckoutService
                 'sale' => $sale,
                 'lines' => $saleLines,
                 'is_duplicate' => false,
+            ];
+        });
+    }
+
+    /**
+     * Process Restaurant Dine-In Split-Bill Calculation and Settlement.
+     */
+    public function processSplitBill(array $data, ?User $cashier = null): array
+    {
+        return DB::transaction(function () use ($data, $cashier) {
+            $tableId = $data['table_id'] ?? null;
+            $saleId = $data['sale_id'] ?? null;
+
+            if ($tableId) {
+                $table = DB::table('restaurant_tables')->where('id', $tableId)->first();
+                if (!$table) {
+                    throw new Exception("Restaurant table #{$tableId} not found.");
+                }
+                if (!$saleId && $table->active_sale_id) {
+                    $saleId = $table->active_sale_id;
+                }
+            }
+
+            if (!$saleId && $tableId) {
+                $latestSale = DB::table('sales')
+                    ->where('table_id', $tableId)
+                    ->whereIn('status', ['pending', 'bill_requested', 'completed'])
+                    ->orderByDesc('id')
+                    ->first();
+                if ($latestSale) {
+                    $saleId = $latestSale->id;
+                }
+            }
+
+            if (!$saleId) {
+                throw new Exception("No active dine-in sale found for this table to split.");
+            }
+
+            $parentSale = DB::table('sales')->where('id', $saleId)->first();
+            if (!$parentSale) {
+                throw new Exception("Sale #{$saleId} not found.");
+            }
+
+            $splitType = $data['split_type'] ?? 'equal';
+            $cashierId = $cashier ? $cashier->id : ($parentSale->user_id ?? 1);
+            $splitSales = [];
+
+            if ($splitType === 'equal') {
+                $splitsCount = max(2, (int) ($data['splits_count'] ?? 2));
+                $splitsPayload = $data['splits'] ?? [];
+
+                $baseAmount = round(floor(($parentSale->grand_total / $splitsCount) * 100) / 100, 2);
+                $roundingRemainder = round($parentSale->grand_total - ($baseAmount * $splitsCount), 2);
+                $subtotalPerSplit = round($parentSale->subtotal / $splitsCount, 2);
+                $taxPerSplit = round($parentSale->tax_total / $splitsCount, 2);
+                $discountPerSplit = round($parentSale->discount_total / $splitsCount, 2);
+
+                for ($i = 1; $i <= $splitsCount; $i++) {
+                    $customTender = $splitsPayload[$i - 1]['tender_type'] ?? $data['default_tender_type'] ?? 'cash';
+                    $guestName = $splitsPayload[$i - 1]['customer_name'] ?? "Guest #{$i}";
+                    $allocatedAmount = $baseAmount + ($i === 1 ? $roundingRemainder : 0);
+
+                    $splitReceipt = "{$parentSale->receipt_number}-S{$i}";
+
+                    $childSaleId = DB::table('sales')->insertGetId([
+                        'parent_sale_id' => $parentSale->id,
+                        'outlet_id' => $parentSale->outlet_id,
+                        'register_id' => $parentSale->register_id,
+                        'shift_id' => $parentSale->shift_id,
+                        'user_id' => $cashierId,
+                        'customer_id' => $splitsPayload[$i - 1]['customer_id'] ?? null,
+                        'customer_name' => $guestName,
+                        'table_id' => $parentSale->table_id,
+                        'table_name' => $parentSale->table_name,
+                        'seat_number' => $i,
+                        'order_type' => 'dine_in',
+                        'split_type' => 'equal',
+                        'split_status' => 'split_settled',
+                        'receipt_number' => $splitReceipt,
+                        'idempotency_key' => "split-eq-{$parentSale->id}-{$i}-" . time(),
+                        'subtotal' => $subtotalPerSplit,
+                        'tax_total' => $taxPerSplit,
+                        'discount_total' => $discountPerSplit,
+                        'grand_total' => $allocatedAmount,
+                        'currency' => $parentSale->currency ?? 'USD',
+                        'status' => 'completed',
+                        'print_count' => 1,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    // Record Payment for this equal split
+                    DB::table('payments')->insert([
+                        'sale_id' => $childSaleId,
+                        'tender_type' => $customTender,
+                        'amount' => $allocatedAmount,
+                        'currency' => $parentSale->currency ?? 'USD',
+                        'status' => 'paid',
+                        'reference_number' => "SPLIT-EQ-{$i}",
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    $splitSales[] = DB::table('sales')->where('id', $childSaleId)->first();
+                }
+            } else {
+                // Itemized / Seat Split
+                $splits = $data['splits'] ?? [];
+                if (empty($splits)) {
+                    throw new Exception("Itemized split requires at least one split seat configuration.");
+                }
+
+                $seatIdx = 1;
+                foreach ($splits as $splitItem) {
+                    $guestName = $splitItem['customer_name'] ?? "Seat #{$seatIdx}";
+                    $tender = $splitItem['tender_type'] ?? 'cash';
+                    $items = $splitItem['items'] ?? [];
+
+                    $splitSubtotal = 0;
+                    $splitLines = [];
+
+                    foreach ($items as $it) {
+                        $pId = $it['product_id'] ?? $it['id'];
+                        $qty = (float) ($it['quantity'] ?? 1);
+                        $product = DB::table('products')->where('id', $pId)->first();
+                        $price = $product ? (float)$product->selling_price : (float)($it['price'] ?? 0);
+                        $lineTotal = round($price * $qty, 2);
+                        $splitSubtotal += $lineTotal;
+
+                        $splitLines[] = [
+                            'product_id' => $pId,
+                            'variant_id' => $it['variant_id'] ?? null,
+                            'product_name' => $product ? $product->name : ($it['name'] ?? "Item {$pId}"),
+                            'unit_price' => $price,
+                            'quantity' => $qty,
+                            'discount_amount' => 0,
+                            'subtotal' => $lineTotal,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ];
+                    }
+
+                    $splitTax = round($splitSubtotal * 0.10, 2);
+                    $splitGrandTotal = $splitSubtotal + $splitTax;
+                    $splitReceipt = "{$parentSale->receipt_number}-S{$seatIdx}";
+
+                    $childSaleId = DB::table('sales')->insertGetId([
+                        'parent_sale_id' => $parentSale->id,
+                        'outlet_id' => $parentSale->outlet_id,
+                        'register_id' => $parentSale->register_id,
+                        'shift_id' => $parentSale->shift_id,
+                        'user_id' => $cashierId,
+                        'customer_id' => $splitItem['customer_id'] ?? null,
+                        'customer_name' => $guestName,
+                        'table_id' => $parentSale->table_id,
+                        'table_name' => $parentSale->table_name,
+                        'seat_number' => $seatIdx,
+                        'order_type' => 'dine_in',
+                        'split_type' => 'itemized',
+                        'split_status' => 'split_settled',
+                        'receipt_number' => $splitReceipt,
+                        'idempotency_key' => "split-item-{$parentSale->id}-{$seatIdx}-" . time(),
+                        'subtotal' => $splitSubtotal,
+                        'tax_total' => $splitTax,
+                        'discount_total' => 0,
+                        'grand_total' => $splitGrandTotal,
+                        'currency' => $parentSale->currency ?? 'USD',
+                        'status' => 'completed',
+                        'print_count' => 1,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    foreach ($splitLines as $sl) {
+                        $sl['sale_id'] = $childSaleId;
+                        DB::table('sale_lines')->insert($sl);
+                    }
+
+                    DB::table('payments')->insert([
+                        'sale_id' => $childSaleId,
+                        'tender_type' => $tender,
+                        'amount' => $splitGrandTotal,
+                        'currency' => $parentSale->currency ?? 'USD',
+                        'status' => 'paid',
+                        'reference_number' => "SPLIT-ITEM-{$seatIdx}",
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+
+                    $splitSales[] = DB::table('sales')->where('id', $childSaleId)->first();
+                    $seatIdx++;
+                }
+            }
+
+            // Mark Parent Sale as split_parent and completed
+            DB::table('sales')->where('id', $parentSale->id)->update([
+                'status' => 'completed',
+                'split_type' => $splitType,
+                'split_status' => 'split_parent',
+                'updated_at' => now(),
+            ]);
+
+            // Release Dining Table to vacant
+            if ($parentSale->table_id) {
+                DB::table('restaurant_tables')->where('id', $parentSale->table_id)->update([
+                    'status' => 'vacant',
+                    'active_sale_id' => null,
+                    'updated_at' => now(),
+                ]);
+            }
+
+            $updatedTable = $parentSale->table_id
+                ? DB::table('restaurant_tables')->where('id', $parentSale->table_id)->first()
+                : null;
+
+            return [
+                'parent_sale' => $parentSale,
+                'split_type' => $splitType,
+                'split_count' => count($splitSales),
+                'split_sales' => $splitSales,
+                'table' => $updatedTable,
+                'message' => 'Table bill split and settled successfully across ' . count($splitSales) . ' parties.',
             ];
         });
     }
