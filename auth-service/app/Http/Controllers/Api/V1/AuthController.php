@@ -1711,6 +1711,7 @@ class AuthController extends Controller
         $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:3000'));
         $allowedHosts = array_filter([
             parse_url($frontendUrl, PHP_URL_HOST),
+            'codebridge-service.vercel.app',
             'localhost',
             '127.0.0.1',
             'codebridge.dev',

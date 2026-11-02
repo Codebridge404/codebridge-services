@@ -11,7 +11,7 @@ data:
   APP_ENV: "staging"
   APP_DEBUG: "false"
   APP_URL: "https://staging-codebridge-api.servicefixit.me"
-  FRONTEND_URL: "https://staging.codebridge.servicefixit.me"
+  FRONTEND_URL: "https://codebridge-service.vercel.app"
   API_BASE_URL: "https://staging-codebridge-api.servicefixit.me/api/v1"
   DOCS_URL: "https://staging-codebridge-docs.servicefixit.me"
   CDN_URL: "https://staging-codebridge-cdn.servicefixit.me"
@@ -74,7 +74,7 @@ data:
   APP_ENV: "staging"
   APP_DEBUG: "false"
   APP_URL: "https://staging-codebridge-api.servicefixit.me"
-  FRONTEND_URL: "https://staging.codebridge.servicefixit.me"
+  FRONTEND_URL: "https://codebridge-service.vercel.app"
   API_BASE_URL: "https://staging-codebridge-api.servicefixit.me/api/v1"
   DOCS_URL: "https://staging-codebridge-docs.servicefixit.me"
   CDN_URL: "https://staging-codebridge-cdn.servicefixit.me"
@@ -142,6 +142,9 @@ data:
         keepalive_timeout 65;
         client_max_body_size 64M;
         resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
+
+        absolute_redirect off;
+        port_in_redirect off;
 
         # Upstream microservices resolve via Kubernetes ClusterIP Services (Port 9000)
         upstream auth_service {
@@ -236,8 +239,7 @@ data:
                 default_type text/html;
             }
             location = /docs/ {
-                alias /usr/share/nginx/html/docs.html;
-                default_type text/html;
+                return 301 /docs;
             }
             location /docs/api {
                 fastcgi_pass auth_service;
