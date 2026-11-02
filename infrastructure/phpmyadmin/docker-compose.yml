@@ -21,4 +21,3 @@ services:
 networks:
   codebridge-staging-network:
     name: codebridge-staging-network
-

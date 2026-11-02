@@ -226,32 +226,36 @@ class TenantModuleController extends Controller
         $modules = array_values(array_unique($modules));
 
         if ($authUser->role !== 'super_admin') {
-            $subscription = DB::table('tenant_subscriptions')
-                ->where('tenant_id', $tenant->id)
-                ->where(function ($q) {
-                    $q->where('status', 'active')
-                      ->orWhere('status', 'pending')
-                      ->orWhere('status', 'trial');
-                })
-                ->where(function ($q) {
-                    $q->whereNull('expires_at')
-                      ->orWhere('expires_at', '>', now());
-                })
-                ->orderByDesc('id')
-                ->first();
-
-            $planModuleCount = 0;
-            if ($subscription?->plan_id) {
-                $planModuleCount = DB::table('subscription_plan_modules')->where('plan_id', $subscription->plan_id)->count();
-            }
-
-            // Only enforce restriction if subscription plan explicitly defines restricted modules AND tenant is not on trial
             $isTrial = ($tenant->status === 'trial') || ($tenant->trial_ends_at && \Carbon\Carbon::parse($tenant->trial_ends_at)->isFuture());
-            if (!$isTrial && $planModuleCount > 0) {
-                $allowed = DB::table('subscription_plan_modules')->where('plan_id', $subscription->plan_id)->pluck('module_id')->all();
-                $allowed = array_merge($allowed, DB::table('platform_modules')->where('is_core', true)->where('is_active', true)->pluck('id')->all());
-                abort_if(array_diff($modules, $allowed), 403, 'The subscription does not include these modules.');
+
+            if ($isTrial) {
+                // Trial workspaces can access all active platform modules
+                $allowed = DB::table('platform_modules')->where('is_active', true)->pluck('id')->all();
+            } else {
+                $subscription = DB::table('tenant_subscriptions')
+                    ->where('tenant_id', $tenant->id)
+                    ->where(function ($q) {
+                        $q->where('status', 'active')
+                          ->orWhere('status', 'pending');
+                    })
+                    ->where(function ($q) {
+                        $q->whereNull('expires_at')
+                          ->orWhere('expires_at', '>', now());
+                    })
+                    ->orderByDesc('id')
+                    ->first();
+
+                $allowed = $subscription?->plan_id
+                    ? DB::table('subscription_plan_modules')->where('plan_id', $subscription->plan_id)->pluck('module_id')->all()
+                    : [];
+
+                $allowed = array_merge(
+                    $allowed,
+                    DB::table('platform_modules')->where('is_core', true)->where('is_active', true)->pluck('id')->all()
+                );
             }
+
+            abort_if(array_diff($modules, $allowed), 403, 'The subscription does not include these modules.');
         }
 
         DB::transaction(function () use ($tenant, $modules, $authUser) {

@@ -46,7 +46,7 @@ spec:
                 port:
                   number: 80
 
-    # 3. MinIO S3 Object Storage CDN & Console
+    # 3. MinIO S3 Object Storage CDN
     - host: staging-codebridge-cdn.servicefixit.me
       http:
         paths:
@@ -56,7 +56,7 @@ spec:
               service:
                 name: minio
                 port:
-                  number: 9001
+                  number: 9000
 
     # 4. Nginx Proxy Manager Dashboard (Port 81)
     - host: npm.servicefixit.me

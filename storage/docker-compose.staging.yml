@@ -7,6 +7,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-codebridge_staging_admin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-staging_minio_secret_change_me}
+    ports:
+      - "9001:9001"
     volumes:
       - staging-minio-data:/data
     healthcheck:

@@ -117,9 +117,12 @@ class User extends Authenticatable
     protected static function booted(): void
     {
         static::creating(function (User $user) {
-            if (empty($user->uuid)) {
-                $user->uuid = (string) \Illuminate\Support\Str::uuid();
-            }
+            try {
+                $conn = $user->getConnectionName();
+                if ($conn !== 'sqlite' && empty($user->uuid) && \Illuminate\Support\Facades\Schema::connection($conn)->hasColumn('users', 'uuid')) {
+                    $user->uuid = (string) \Illuminate\Support\Str::uuid();
+                }
+            } catch (\Throwable) {}
         });
 
         static::saved(function (User $user) {
