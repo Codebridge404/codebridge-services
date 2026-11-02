@@ -21,6 +21,7 @@ return [
 
     'allowed_origins_patterns' => [
         '#^https?://.*\.servicefixit\.me$#',
+        '#^https?://.*\.vercel\.app$#',
     ],
 
     'allowed_headers' => ['*'],
