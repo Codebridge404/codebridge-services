@@ -77,10 +77,19 @@ class UserResource extends JsonResource
             $assignedModules = array_values(array_unique($assignedModules));
         }
 
+        $tenantId = data_get($this->resource, 'tenant_id');
+        $tenantName = data_get($this->resource, 'tenant_name') ?: data_get($this->resource, 'company_name');
+        if (!$tenantName && $tenantId) {
+            $tenantRecord = \Illuminate\Support\Facades\DB::table('tenants')->where('id', $tenantId)->first();
+            $tenantName = $tenantRecord?->name;
+        }
+
         return [
             'id' => data_get($this->resource, 'id'),
             'uuid' => data_get($this->resource, 'uuid'),
-            'tenant_id' => data_get($this->resource, 'tenant_id'),
+            'tenant_id' => $tenantId,
+            'tenant_name' => $tenantName,
+            'company_name' => $tenantName,
             'outlet_uuid' => data_get($this->resource, 'outlet_uuid'),
             'name' => data_get($this->resource, 'name'),
             'email' => data_get($this->resource, 'email'),

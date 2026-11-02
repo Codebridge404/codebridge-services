@@ -134,6 +134,29 @@ class PlatformModuleController extends Controller
             ? strtoupper($validated['monogram'])
             : strtoupper(substr(preg_replace('/[^a-zA-Z]/', '', $validated['name']), 0, 3));
 
+        $logoUrl = $validated['logo_url'] ?? null;
+        if ($request->hasFile('logo')) {
+            try {
+                /** @var \App\Services\ImageService $imageService */
+                $imageService = app(\App\Services\ImageService::class);
+                $logoUrl = $imageService->storeLogo($request->file('logo'), 'mod_' . $id);
+            } catch (\Throwable $e) {
+                $file = $request->file('logo');
+                $ext = $file->getClientOriginalExtension() ?: 'png';
+                $filename = 'module_' . $id . '_' . time() . '.' . $ext;
+                $file->storeAs('modules', $filename, 'public');
+                $logoUrl = '/storage/modules/' . $filename;
+            }
+        } elseif ($request->filled('logo_data') && str_starts_with($request->logo_data, 'data:image')) {
+            try {
+                /** @var \App\Services\ImageService $imageService */
+                $imageService = app(\App\Services\ImageService::class);
+                $logoUrl = $imageService->storeLogo($request->logo_data, 'mod_' . $id);
+            } catch (\Throwable $e) {
+                // Ignore fallback
+            }
+        }
+
         $record = [
             'id'          => $id,
             'name'        => $validated['name'],
@@ -141,7 +164,7 @@ class PlatformModuleController extends Controller
             'category'    => $validated['category'],
             'description' => $validated['description'],
             'icon'        => $validated['icon'] ?? 'Store',
-            'logo_url'    => $validated['logo_url'] ?? null,
+            'logo_url'    => $logoUrl,
             'href'        => $validated['href'],
             'bg_pill'     => $validated['bg_pill'] ?? 'bg-brand-subtle text-brand',
             'card_bg'     => $validated['card_bg'] ?? 'bg-blue-50/70 border-blue-200/90 hover:border-blue-400',
@@ -191,10 +214,35 @@ class PlatformModuleController extends Controller
 
         $updates = [];
         foreach ($validated as $key => $val) {
-            if ($val !== null) {
+            if ($val !== null && $key !== 'logo' && $key !== 'logo_data') {
                 $updates[$key] = $val;
             }
         }
+
+        if ($request->hasFile('logo')) {
+            try {
+                /** @var \App\Services\ImageService $imageService */
+                $imageService = app(\App\Services\ImageService::class);
+                $updates['logo_url'] = $imageService->storeLogo($request->file('logo'), 'mod_' . $id, $module->logo_url ?? null);
+            } catch (\Throwable $e) {
+                $file = $request->file('logo');
+                $ext = $file->getClientOriginalExtension() ?: 'png';
+                $filename = 'module_' . $id . '_' . time() . '.' . $ext;
+                $file->storeAs('modules', $filename, 'public');
+                $updates['logo_url'] = '/storage/modules/' . $filename;
+            }
+        } elseif ($request->filled('logo_data') && str_starts_with($request->logo_data, 'data:image')) {
+            try {
+                /** @var \App\Services\ImageService $imageService */
+                $imageService = app(\App\Services\ImageService::class);
+                $updates['logo_url'] = $imageService->storeLogo($request->logo_data, 'mod_' . $id, $module->logo_url ?? null);
+            } catch (\Throwable $e) {
+                // Ignore fallback
+            }
+        } elseif ($request->has('logo_url')) {
+            $updates['logo_url'] = $request->input('logo_url');
+        }
+
         $updates['updated_at'] = now();
 
         DB::table('platform_modules')->where('id', $id)->update($updates);

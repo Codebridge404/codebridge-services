@@ -125,5 +125,42 @@ Implemented comprehensive automated PHPUnit / Pest feature & security tests:
     codebridge-operations-redis (6380), codebridge-operations-phpmyadmin (8082), Horizon
 
 ================================================================================
-Generated on: 2026-10-19 17:02:00 +07:00
+CODEBRIDGE PLATFORM - APPLE FLUID DESIGN SYSTEM & ZERO-MOCK OVERHAUL (BD-0120)
+Date: November 01, 2026
+Branch: demo (codebridgesfront) & fix/pos-backend-tasks-and-superadmin (services)
+================================================================================
+
+1. ZERO-MOCK PURGE & DYNAMIC MULTI-TENANT BACKEND INTEGRATION
+--------------------------------------------------------------------------------
+  • Database & Seeders: Completely purged mock tenant 'Sunny Cafe Phnom Penh' and
+    artificial fixtures from codebridge_auth and codebridge_operations MySQL databases.
+  • Eliminated auto-seeding routines in TableController, CouponController, DiscountController,
+    KdsController, and seeder classes.
+  • Dynamic Endpoints: Connected communications broadcast views to real platform announcements
+    APIs; removed all static mock arrays.
+
+2. APPLE WWDC FLUID DESIGN FOUNDATIONS & PHYSICS ENGINE
+--------------------------------------------------------------------------------
+  • Physics Tokens (lib/animations.ts):
+    - Critically damped springs (zeta = 1.0, stiffness: 380, damping: 38) for non-oscillating
+      natural motion (modals, sheets, route views).
+    - Underdamped momentum springs (zeta = 0.8, stiffness: 400, damping: 28) for micro-actions.
+  • Gesture Physics (lib/motion/gesturePhysics.ts):
+    - Implemented rubberband() resistance, projectMomentum(), and resolveSnapPoint() for 1:1 touch.
+  • Translucent Glass Materials:
+    - Frosted glass chrome: backdrop-filter: blur(24px) saturate(190%) with subtle border highlights.
+
+3. PLATFORM CHROME & UI OVERHAUL
+--------------------------------------------------------------------------------
+  • AppHeader: Sticky floating glass with AnimatePresence origin-anchored spring dropdowns.
+  • Sidebars (OrganizationSidebar & SuperAdminSidebar): Floating frosted glass panels with
+    Framer Motion layoutId sliding active indicator capsules and tactile press responses.
+  • Module Cards & Launchpad: Tactile whileTap physics and smooth layout morph transitions.
+  • POS Terminal & Cart: Instant touch feedback (active:scale-[0.96]), swipeable line items,
+    and tactile spring-animated numeric cashier keypad.
+  • Modals & Sheets: Symmetrical entrance/exit materialization (modalContent, scrimFade).
+  • Accessibility: Full compliance with prefers-reduced-motion and prefers-reduced-transparency.
+
+================================================================================
+Generated on: 2026-11-01 15:50:00 +07:00
 ================================================================================

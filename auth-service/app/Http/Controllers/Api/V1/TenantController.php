@@ -131,12 +131,11 @@ class TenantController extends Controller
             ]);
         }
 
-        // Link authenticated user to new tenant workspace and grant admin role as organization owner
+        // Link authenticated user to new tenant workspace and grant organization role directly
         $authUser = auth('sanctum')->user() ?? $request->user();
         $updatedUser = null;
         if ($authUser) {
-            $currentRole = $authUser->role;
-            $newRole = in_array($currentRole, ['super_admin', 'organization', 'admin']) ? $currentRole : 'organization';
+            $newRole = 'organization';
 
             // 1. Ensure owner_user_id is set on tenant
             DB::table('tenants')->where('id', $id)->update(['owner_user_id' => $authUser->id]);
@@ -154,10 +153,11 @@ class TenantController extends Controller
                 );
             }
 
-            // 3. Link user role in user_roles pivot
+            // 3. Link user role in user_roles pivot (role: organization = admin)
             if (Schema::hasTable('user_roles')) {
-                $roleId = DB::table('roles')->where('slug', $newRole)->value('id') ?? DB::table('roles')->where('slug', 'organization')->value('id');
+                $roleId = DB::table('roles')->where('slug', 'organization')->value('id');
                 if ($roleId) {
+                    DB::table('user_roles')->where('user_id', $authUser->id)->update(['is_active' => false]);
                     DB::table('user_roles')->updateOrInsert(
                         ['user_id' => $authUser->id, 'role_id' => $roleId],
                         ['tenant_id' => $id, 'is_active' => true, 'updated_at' => now()]
@@ -172,7 +172,11 @@ class TenantController extends Controller
             if (Schema::hasColumn('users', 'role')) $legacyUpdates['role'] = $newRole;
             DB::table('users')->where('id', $authUser->id)->update($legacyUpdates);
 
-            $updatedUser = DB::table('users')->where('id', $authUser->id)->first();
+            $userModel = \App\Models\User::find($authUser->id);
+            if ($userModel) {
+                $userModel->refresh();
+                $updatedUser = (new \App\Http\Resources\User\UserResource($userModel))->toArray($request);
+            }
         }
 
         return response()->json([

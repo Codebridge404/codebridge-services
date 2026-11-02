@@ -44,9 +44,6 @@ class CouponController extends Controller
         $code = strtoupper(trim($validated['code']));
         $subtotal = (float) $validated['subtotal'];
 
-        // Auto-seed default coupons if table empty
-        $this->ensureDefaultCouponsSeeded();
-
         $coupon = DB::table('coupons')
             ->where(DB::raw('UPPER(code)'), $code)
             ->where('is_active', true)
@@ -94,36 +91,5 @@ class CouponController extends Controller
                 'new_subtotal' => max(0, $subtotal - $discountAmount),
             ],
         ]);
-    }
-
-    /**
-     * Helper to seed default test coupons
-     */
-    protected function ensureDefaultCouponsSeeded()
-    {
-        if (DB::table('coupons')->count() === 0) {
-            DB::table('coupons')->insert([
-                [
-                    'code' => 'WELCOME10',
-                    'discount_type' => 'percentage',
-                    'discount_value' => 10.00,
-                    'min_spend' => 5.00,
-                    'is_active' => true,
-                    'expires_at' => now()->addYear(),
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ],
-                [
-                    'code' => 'FRESH5',
-                    'discount_type' => 'fixed',
-                    'discount_value' => 5.00,
-                    'min_spend' => 15.00,
-                    'is_active' => true,
-                    'expires_at' => now()->addYear(),
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ],
-            ]);
-        }
     }
 }

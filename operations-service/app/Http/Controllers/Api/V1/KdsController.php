@@ -39,8 +39,6 @@ class KdsController extends Controller
      */
     public function index(Request $request)
     {
-        $this->ensureSampleTicketsSeeded();
-
         $outletId = $request->query('outlet_id');
         $station = $request->query('station', 'all');
 
@@ -221,39 +219,5 @@ class KdsController extends Controller
             'message' => 'Kitchen ticket successfully bumped.',
             'data' => $ticket,
         ]);
-    }
-
-    /**
-     * Seed initial tickets if database table is empty
-     */
-    protected function ensureSampleTicketsSeeded()
-    {
-        if (KdsTicket::count() === 0) {
-            KdsTicket::create([
-                'ticket_number' => 'KDS-0881',
-                'order_type' => 'dine_in',
-                'table_name' => 'Table #03',
-                'station' => 'all',
-                'items' => [
-                    ['name' => 'Iced Americano', 'quantity' => 2, 'note' => 'Less ice, 50% sugar'],
-                    ['name' => 'Butter Croissant', 'quantity' => 1, 'note' => 'Warmed up'],
-                ],
-                'status' => 'preparing',
-                'prep_time_minutes' => 4,
-            ]);
-
-            KdsTicket::create([
-                'ticket_number' => 'KDS-0882',
-                'order_type' => 'takeaway',
-                'table_name' => 'Takeaway #12',
-                'station' => 'bar',
-                'items' => [
-                    ['name' => 'Matcha Green Tea Latte', 'quantity' => 1, 'note' => 'Oat milk'],
-                    ['name' => 'Chocolate Muffin', 'quantity' => 2, 'note' => ''],
-                ],
-                'status' => 'pending',
-                'prep_time_minutes' => 1,
-            ]);
-        }
     }
 }

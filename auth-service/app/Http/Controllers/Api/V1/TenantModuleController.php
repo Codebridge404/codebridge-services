@@ -104,11 +104,34 @@ class TenantModuleController extends Controller
             }
         }
 
+        // Expand with canonical aliases so frontend checks pass seamlessly
+        $expanded = [];
+        $reverseAliasMap = [
+            'pos-management'       => ['pos', 'pos-management'],
+            'inventory-suite'      => ['inventory', 'inventory-suite'],
+            'financial-management' => ['finance', 'financial-management'],
+            'staff-hrm'            => ['hrm', 'staff-hrm'],
+            'crm-loyalty'          => ['crm', 'crm-loyalty'],
+            'meeting-management'   => ['meetings', 'meeting-management'],
+            'shop-storefront'      => ['shop', 'shop-storefront'],
+            'bill-subscription'    => ['bill-subscription'],
+        ];
+
+        foreach ($modules as $mod) {
+            if (isset($reverseAliasMap[$mod])) {
+                foreach ($reverseAliasMap[$mod] as $alias) {
+                    $expanded[] = $alias;
+                }
+            } else {
+                $expanded[] = $mod;
+            }
+        }
+
         return response()->json([
             'success'     => true,
             'tenant_id'   => $tenant->id,
             'tenant_name' => $tenant->name,
-            'modules'     => array_values($modules),
+            'modules'     => array_values(array_unique($expanded)),
         ]);
     }
 
@@ -119,7 +142,6 @@ class TenantModuleController extends Controller
     public function update(UpdateModulesRequest $request)
     {
         abort_unless(\App\Services\TenantAccess::isAdmin($request->user()), 403);
-
 
         $tenantId = $request->input('tenant_id');
         $orgName = $request->input('org_name');
@@ -163,38 +185,96 @@ class TenantModuleController extends Controller
             ], 404);
         }
 
-        $modules = array_values(array_unique($request->input('modules')));
+        $rawModules = (array) $request->input('modules', []);
+
+        // Canonical alias mapping to valid platform_modules IDs
+        $aliasMap = [
+            'pos'                  => 'pos-management',
+            'pos-terminal'         => 'pos-management',
+            'pos-management'       => 'pos-management',
+            'kds'                  => 'pos-management',
+            'cfd'                  => 'pos-management',
+            'inventory'            => 'inventory-suite',
+            'inventory-suite'      => 'inventory-suite',
+            'operations-service'   => 'inventory-suite',
+            'finance'              => 'financial-management',
+            'financial-management' => 'financial-management',
+            'accounting'           => 'financial-management',
+            'hrm'                  => 'staff-hrm',
+            'staff-hrm'            => 'staff-hrm',
+            'crm'                  => 'crm-loyalty',
+            'crm-loyalty'          => 'crm-loyalty',
+            'meetings'             => 'meeting-management',
+            'meeting'              => 'meeting-management',
+            'meeting-management'   => 'meeting-management',
+            'mms'                  => 'meeting-management',
+            'shop'                 => 'shop-storefront',
+            'shop-storefront'      => 'shop-storefront',
+            'bill-subscription'    => 'bill-subscription',
+            'subscription'         => 'bill-subscription',
+        ];
+
+        $validPlatformIds = DB::table('platform_modules')->where('is_active', true)->pluck('id')->all();
+
+        $modules = [];
+        foreach ($rawModules as $mod) {
+            $resolved = $aliasMap[$mod] ?? $mod;
+            if (in_array($resolved, $validPlatformIds, true)) {
+                $modules[] = $resolved;
+            }
+        }
+        $modules = array_values(array_unique($modules));
 
         if ($authUser->role !== 'super_admin') {
-            $subscription = DB::table('tenant_subscriptions')->where('tenant_id', $tenant->id)
-                ->where('status', 'active')->where(fn ($q) => $q->whereNull('expires_at')->orWhere('expires_at', '>', now()))
-                ->orderByDesc('id')->first();
-            $allowed = $subscription?->plan_id ? DB::table('subscription_plan_modules')->where('plan_id', $subscription->plan_id)->pluck('module_id')->all() : [];
-            $allowed = array_merge($allowed, DB::table('platform_modules')->where('is_core', true)->where('is_active', true)->pluck('id')->all());
-            abort_if(array_diff($modules, $allowed), 403, 'The subscription does not include these modules.');
-        }
-        DB::transaction(function () use ($tenant, $modules, $authUser) {
-        DB::table('tenants')->where('id', $tenant->id)->update([
-            'enabled_modules' => json_encode($modules),
-            'updated_at'      => now(),
-        ]);
+            $subscription = DB::table('tenant_subscriptions')
+                ->where('tenant_id', $tenant->id)
+                ->where(function ($q) {
+                    $q->where('status', 'active')
+                      ->orWhere('status', 'pending')
+                      ->orWhere('status', 'trial');
+                })
+                ->where(function ($q) {
+                    $q->whereNull('expires_at')
+                      ->orWhere('expires_at', '>', now());
+                })
+                ->orderByDesc('id')
+                ->first();
 
-        if (\Illuminate\Support\Facades\Schema::hasTable('tenant_modules')) {
-            DB::table('tenant_modules')->where('tenant_id', $tenant->id)->update(['is_active' => false]);
-            foreach ($modules as $modId) {
-                DB::table('tenant_modules')->updateOrInsert(
-                    ['tenant_id' => $tenant->id, 'module_id' => $modId],
-                    [
-                        'is_active' => true,
-                        'activated_by' => $authUser->id,
-                        'activated_at' => now(),
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ]
-                );
+            $planModuleCount = 0;
+            if ($subscription?->plan_id) {
+                $planModuleCount = DB::table('subscription_plan_modules')->where('plan_id', $subscription->plan_id)->count();
+            }
+
+            // Only enforce restriction if subscription plan explicitly defines restricted modules AND tenant is not on trial
+            $isTrial = ($tenant->status === 'trial') || ($tenant->trial_ends_at && \Carbon\Carbon::parse($tenant->trial_ends_at)->isFuture());
+            if (!$isTrial && $planModuleCount > 0) {
+                $allowed = DB::table('subscription_plan_modules')->where('plan_id', $subscription->plan_id)->pluck('module_id')->all();
+                $allowed = array_merge($allowed, DB::table('platform_modules')->where('is_core', true)->where('is_active', true)->pluck('id')->all());
+                abort_if(array_diff($modules, $allowed), 403, 'The subscription does not include these modules.');
             }
         }
 
+        DB::transaction(function () use ($tenant, $modules, $authUser) {
+            DB::table('tenants')->where('id', $tenant->id)->update([
+                'enabled_modules' => json_encode($modules),
+                'updated_at'      => now(),
+            ]);
+
+            if (\Illuminate\Support\Facades\Schema::hasTable('tenant_modules')) {
+                DB::table('tenant_modules')->where('tenant_id', $tenant->id)->update(['is_active' => false]);
+                foreach ($modules as $modId) {
+                    DB::table('tenant_modules')->updateOrInsert(
+                        ['tenant_id' => $tenant->id, 'module_id' => $modId],
+                        [
+                            'is_active'    => true,
+                            'activated_by' => $authUser->id,
+                            'activated_at' => now(),
+                            'created_at'   => now(),
+                            'updated_at'   => now(),
+                        ]
+                    );
+                }
+            }
         });
 
         // Record audit event
@@ -213,12 +293,35 @@ class TenantModuleController extends Controller
             );
         }
 
+        // Expand for frontend response
+        $expanded = [];
+        $reverseAliasMap = [
+            'pos-management'       => ['pos', 'pos-management'],
+            'inventory-suite'      => ['inventory', 'inventory-suite'],
+            'financial-management' => ['finance', 'financial-management'],
+            'staff-hrm'            => ['hrm', 'staff-hrm'],
+            'crm-loyalty'          => ['crm', 'crm-loyalty'],
+            'meeting-management'   => ['meetings', 'meeting-management'],
+            'shop-storefront'      => ['shop', 'shop-storefront'],
+            'bill-subscription'    => ['bill-subscription'],
+        ];
+
+        foreach ($modules as $mod) {
+            if (isset($reverseAliasMap[$mod])) {
+                foreach ($reverseAliasMap[$mod] as $alias) {
+                    $expanded[] = $alias;
+                }
+            } else {
+                $expanded[] = $mod;
+            }
+        }
+
         return response()->json([
             'success'     => true,
             'message'     => "Successfully updated module licenses for {$tenant->name}.",
             'tenant_id'   => $tenant->id,
             'tenant_name' => $tenant->name,
-            'modules'     => $modules,
+            'modules'     => array_values(array_unique($expanded)),
         ]);
     }
 }

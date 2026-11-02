@@ -33,7 +33,6 @@ class DiscountController extends Controller
 {
     public function index(Request $request)
     {
-        $this->ensureSeeded();
         $discounts = DB::table('discounts')->orderBy('created_at', 'desc')->get();
         return response()->json(['status' => 'success', 'data' => $discounts]);
     }
@@ -60,29 +59,5 @@ class DiscountController extends Controller
             'message' => 'Discount rule created.',
             'data' => DB::table('discounts')->where('id', $id)->first(),
         ], 201);
-    }
-
-    protected function ensureSeeded()
-    {
-        if (DB::table('discounts')->count() === 0) {
-            DB::table('discounts')->insert([
-                [
-                    'name' => 'Happy Hour Special',
-                    'discount_pct' => '15%',
-                    'applies_to' => 'All Beverages',
-                    'status' => 'active',
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ],
-                [
-                    'name' => 'Bakery Morning Bundle',
-                    'discount_pct' => '20%',
-                    'applies_to' => 'Bakery Category',
-                    'status' => 'active',
-                    'created_at' => now(),
-                    'updated_at' => now(),
-                ],
-            ]);
-        }
     }
 }

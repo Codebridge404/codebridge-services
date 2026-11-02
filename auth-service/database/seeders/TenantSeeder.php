@@ -75,60 +75,21 @@ class TenantSeeder extends Seeder
             );
         }
 
-        // 2. Seed a demo Business Runner tenant
-        $orgAdmin = DB::table('users')->where('email', 'admin@pos.com')->first();
-        $existingBiz = DB::table('tenants')->where('slug', 'sunny-cafe-pp')->first();
-        if (!$existingBiz) {
-            $bizTenantId = DB::table('tenants')->insertGetId([
-                'uuid'          => (string) Str::uuid(),
-                'owner_user_id' => $orgAdmin?->id,
-                'name'          => 'Sunny Cafe Phnom Penh',
-                'slug'          => 'sunny-cafe-pp',
-                'company_code'  => 'CB-0002',
-                'client_tier'   => 'business_runner',
-                'status'        => 'active',
-                'email'         => 'admin@sunnycafe.kh',
-                'phone'         => '+855 23 999 888',
-                'address'       => 'Toul Kork, Phnom Penh',
-                'country'       => 'KH',
-                'currency'      => 'USD',
-                'max_outlets'   => 3,
-                'max_registers' => 6,
-                'max_users'     => 20,
-                'trial_ends_at' => now()->addDays(30),
-                'created_at'    => now(),
-                'updated_at'    => now(),
-            ]);
-
-            DB::table('tenant_subscriptions')->insert([
-                'tenant_id'     => $bizTenantId,
-                'plan_name'     => 'Business Runner Pro',
-                'billing_cycle' => 'monthly',
-                'price'         => 49.00,
-                'currency'      => 'USD',
-                'status'        => 'active',
-                'starts_at'     => now(),
-                'expires_at'    => now()->addMonths(1),
-                'notes'         => 'Demo SME Business Runner subscription.',
-                'created_at'    => now(),
-                'updated_at'    => now(),
-            ]);
-        } else {
-            $bizTenantId = $existingBiz->id;
-            if (empty($existingBiz->uuid) || (empty($existingBiz->owner_user_id) && $orgAdmin)) {
-                DB::table('tenants')->where('id', $bizTenantId)->update(array_filter([
-                    'uuid' => $existingBiz->uuid ?: (string) Str::uuid(),
-                    'owner_user_id' => $existingBiz->owner_user_id ?: $orgAdmin?->id,
-                ]));
+        // Activate all platform modules for Platform Core tenant
+        if (Schema::hasTable('tenant_modules') && Schema::hasTable('platform_modules')) {
+            $allModules = DB::table('platform_modules')->pluck('id');
+            foreach ($allModules as $modId) {
+                DB::table('tenant_modules')->updateOrInsert(
+                    ['tenant_id' => $platformTenantId, 'module_id' => $modId],
+                    [
+                        'is_active' => true,
+                        'activated_by' => $superAdmin?->id,
+                        'activated_at' => now(),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]
+                );
             }
-        }
-
-        // Link org admin to sunny cafe in tenant_users
-        if ($orgAdmin && Schema::hasTable('tenant_users')) {
-            DB::table('tenant_users')->updateOrInsert(
-                ['tenant_id' => $bizTenantId, 'user_id' => $orgAdmin->id],
-                ['status' => 'active', 'joined_at' => now(), 'created_at' => now(), 'updated_at' => now()]
-            );
         }
     }
 }

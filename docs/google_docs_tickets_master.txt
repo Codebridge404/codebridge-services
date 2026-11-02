@@ -1617,6 +1617,26 @@ Step 3 (Signature Math Verification): Re-hashes header and payload to compare ag
 Step 4 (Claim Extraction): Returns structured claim payload (sub, tenant_id, outlet_id, role, exp).
 Step 5 (Token Exception Handling): Translates expired and malformed tokens into standard domain exceptions.
 
+--------------------------------------------------------------------------------
+TICKET: BD-0120 - Apple Fluid Design System Architecture & Zero-Mock Dynamic Backend Integration
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0120
+Component / Service:    codebridgesfront & microservices
+File Path:              codebridgesfront/lib/animations.ts, lib/theme/designSystem.ts, lib/motion/gesturePhysics.ts, components/header/AppHeader.tsx, components/sidebars/OrganizationSidebar.tsx, components/ui/ModuleCard.tsx, components/pos/terminal/*
+Related Model / Service:Apple WWDC Fluid Interfaces, Framer Motion Springs (zeta=1.0, zeta=0.8), Multi-Tenant Backend APIs
+Method / Entry Point:   Frontend Shell, Launchpad, POS Fleet, Modals
+Command / API Route:    Platform UI Overhaul, Real-Time Microservice Gateway
+Date & Time:            2026-11-01T15:45:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Mock Data & Seeder Purge): Completely eliminated static placeholder arrays, fictitious cafe records, and auto-seeding routines across MySQL databases and microservice controllers (TableController, CouponController, DiscountController, KdsController, DatabaseSeeder, MeetingSeeder).
+Step 2 (Fluid Physics Foundations): Implemented Apple WWDC Designing Fluid Interfaces spring formulas: critically damped spring (zeta=1.0, stiffness 380, damping 38), momentum spring (zeta=0.8), and gesture rubber-banding (rubberband(), projectMomentum()).
+Step 3 (Platform Chrome & Navigation Redesign): Upgraded AppHeader and sidebars (OrganizationSidebar, SuperAdminSidebar) to floating frosted glass surfaces (backdrop-filter: blur(24px) saturate(190%)) featuring shared layoutId sliding active indicator capsules and tactile press responses.
+Step 4 (Launchpad & Ecosystem Tactile Cards): Refactored ModuleCard and launchpad catalogs to support GPU-accelerated layout transitions, contextual subtle shadows, and zero-latency active:scale press states.
+Step 5 (Direct Manipulation POS & Touch Keypad): Enhanced POS product cards, swipe-to-remove line items in PosCartPanel, and tactile numeric keypad in supervisor PIN modals with spring-animated feedback.
+Step 6 (Interruptible Overlays & Accessibility): Standardized modals and sheets to enter and exit symmetrically via modalContent and scrimFade with full support for prefers-reduced-motion and prefers-reduced-transparency.
+
 ================================================================================
 END OF CODEBRIDGE SYSTEM MASTER TICKETS SPECIFICATION
 ================================================================================

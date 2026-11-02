@@ -23,7 +23,9 @@ class UpdateModulesRequest extends FormRequest
     {
         return [
             'modules' => ['present', 'array'],
-            'modules.*' => ['string', 'distinct', \Illuminate\Validation\Rule::exists('platform_modules', 'id')->where('is_active', true)],
+            'modules.*' => ['string'],
+            'tenant_id' => ['nullable'],
+            'org_name' => ['nullable', 'string'],
         ];
     }
 }

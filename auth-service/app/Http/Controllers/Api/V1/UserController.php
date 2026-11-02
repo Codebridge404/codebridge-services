@@ -93,7 +93,9 @@ class UserController extends Controller
             'u.created_at', 'o.name as outlet_name'
         )->distinct()->orderBy('u.created_at', 'desc')->get();
 
-        return response()->json(['status' => 'success', 'data' => UserResource::collection($users)]);
+        $dedupedUsers = $users->unique('id')->values();
+
+        return response()->json(['status' => 'success', 'data' => UserResource::collection($dedupedUsers)]);
     }
 
     public function permissions()
