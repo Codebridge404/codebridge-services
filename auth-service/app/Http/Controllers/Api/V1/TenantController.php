@@ -59,6 +59,9 @@ class TenantController extends Controller
         };
 
         $authUser = auth('sanctum')->user() ?? $request->user();
+        if (!$authUser && !empty($email)) {
+            $authUser = \App\Models\User::where('email', strtolower(trim($email)))->first();
+        }
         $tenantUuid = (string) Str::uuid();
 
         $id = DB::table('tenants')->insertGetId([
@@ -133,6 +136,9 @@ class TenantController extends Controller
 
         // Link authenticated user to new tenant workspace and grant organization role directly
         $authUser = auth('sanctum')->user() ?? $request->user();
+        if (!$authUser && !empty($email)) {
+            $authUser = \App\Models\User::where('email', strtolower(trim($email)))->first();
+        }
         $updatedUser = null;
         if ($authUser) {
             $newRole = 'organization';

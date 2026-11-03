@@ -1811,6 +1811,26 @@ Step 3 (Access Token TTL Floor): Implemented a guaranteed 1440-minute (24-hour) 
 Step 4 (Resilient Session Verification): Refactored JwtService::sessionForPayload to query standard model keys and perform safe Carbon datetime evaluation in PHP, completely eliminating uncaught SQL column query exceptions during silent refresh.
 Step 5 (Client Refresh Header Sanitization): Sanitized codebridgesfront/lib/api/client.ts to avoid sending expired Bearer Authorization tokens during POST /auth/refresh calls, eliminating reverse proxy and gateway rejection.
 
+--------------------------------------------------------------------------------
+TICKET: BD-0130 - Super Admin User Management Multi-Select Bulk Actions, Full-Screen Modal Portals & Automated Role Elevation
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0130
+Component / Service:    auth-service & codebridgesfront
+File Path:              codebridgesfront/components/security/users/UserTable.tsx, codebridgesfront/components/security/users/SuperAdminUsersView.tsx, codebridgesfront/components/security/users/UserFormModal.tsx, codebridgesfront/components/security/users/UserDetailModal.tsx, codebridgesfront/components/security/users/ResetPasswordModal.tsx, codebridgesfront/components/security/users/PermissionsMatrixModal.tsx, codebridgesfront/components/tenant/CreateOrgModal.tsx, services/auth-service/app/Http/Controllers/Api/V1/TenantController.php, services/auth-service/app/Http/Controllers/Api/V1/UserController.php
+Related Model / Service:User, Tenant, SuperAdminUsersView, UserTable
+Method / Entry Point:   TenantController::store(), UserController::index(), SuperAdminUsersView bulk action handlers
+Command / API Route:    GET /api/v1/users, POST /api/v1/tenants, PUT /api/v1/users/{id}, DELETE /api/v1/users/{id}
+Date & Time:            2026-11-03T17:35:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Multi-Select & Bulk Actions Dock): Implemented row checkboxes with sticky left-0 alignment, indeterminate select-all/deselect-all in table header, and floating bottom bulk actions dock with animated action buttons (Activate, Suspend, Delete, Clear) and batch processing in UserTable and SuperAdminUsersView.
+Step 2 (Full-Screen Modal Blur Backdrops via React Portals): Migrated UserFormModal, UserDetailModal, ResetPasswordModal, and PermissionsMatrixModal to React Portals (createPortal(..., document.body)). This eliminates parent CSS stacking context and overflow clipping by the sidebar/header, ensuring 100vw x 100vh full-screen dark blur backdrops (fixed inset-0 z-[9999] bg-slate-950/70 backdrop-blur-md) with click-to-dismiss behavior.
+Step 3 (Client-Side Duplicate Email Prevention): Added real-time email existence validation against loaded user records in UserFormModal, displaying an inline warning pill and disabling the submission button when a duplicate email is entered.
+Step 4 (Automated User Role Elevation on Tenant Creation): Resolved session role stagnation where newly registered users with role "user" retained their old token after creating a tenant. Updated CreateOrgModal to immediately refresh active session credentials via setAuthToken(newToken) and setRefreshToken(...).
+Step 5 (Backend Tenant User Association Fallback): Enhanced TenantController::store() to inspect Sanctum session user as well as lookup user by email fallback, cleanly binding the tenant to the authenticated registrant and promoting their role directly to "organization" without duplicate records.
+Step 6 (Role Sorting & Stale Role Display Fix): Updated UserController::index() to order records by role priority hierarchy (super_admin > organization > admin > outlet_manager > cashier > user) and resolve effective role via COALESCE(r.slug, u.role, "user").
+
 ================================================================================
 END OF CODEBRIDGE SYSTEM MASTER TICKETS SPECIFICATION
 ================================================================================
