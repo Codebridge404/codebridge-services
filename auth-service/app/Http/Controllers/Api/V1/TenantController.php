@@ -173,9 +173,19 @@ class TenantController extends Controller
             DB::table('users')->where('id', $authUser->id)->update($legacyUpdates);
 
             $userModel = \App\Models\User::find($authUser->id);
+            $newJwtToken = null;
+            $newRefreshToken = null;
             if ($userModel) {
                 $userModel->refresh();
                 $updatedUser = (new \App\Http\Resources\User\UserResource($userModel))->toArray($request);
+
+                /** @var \App\Services\JwtService $jwtService */
+                $jwtService = app(\App\Services\JwtService::class);
+                $deviceName = $request->device_name ?? 'web_session';
+                $tokenResult = $userModel->createToken($deviceName, ['*'], now()->addSeconds($jwtService->getTtlSeconds()));
+                $jwtService->bindSession($tokenResult->accessToken);
+                $newJwtToken = $jwtService->generateTokenForUser($userModel, ['sid' => (string) $tokenResult->accessToken->id]);
+                $newRefreshToken = $jwtService->generateRefreshTokenForUser($userModel, ['sid' => (string) $tokenResult->accessToken->id]);
             }
         }
 
@@ -183,6 +193,9 @@ class TenantController extends Controller
             'success' => true,
             'message' => 'Tenant workspace registered successfully! Your 14-day trial has started.',
             'user'    => $updatedUser,
+            'token'   => $newJwtToken,
+            'access_token' => $newJwtToken,
+            'refresh_token' => $newRefreshToken,
             'data'    => array_merge(
                 (array) DB::table('tenants')->where('id', $id)->first(),
                 [

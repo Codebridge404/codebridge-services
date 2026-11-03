@@ -8,6 +8,7 @@ use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -90,16 +91,54 @@ class AuthenticateJwt
                     }
                 }
 
-                // Construct stateless authenticated user from verified cryptographic JWT claims
+                $userId = (int) $payload['sub'];
+                $userRole = $payload['role'] ?? 'cashier';
+                $userTenantId = isset($payload['tenant_id']) && $payload['tenant_id'] !== null ? (int) $payload['tenant_id'] : null;
+                $userOutletId = isset($payload['outlet_id']) && $payload['outlet_id'] !== null ? (int) $payload['outlet_id'] : null;
+
+                // Reconcile tenant context and elevated roles from auth_db if missing or downgraded in stale token
+                if (($userRole === 'user' || empty($userTenantId)) && $userId) {
+                    try {
+                        if (empty($userTenantId)) {
+                            $liveTenantId = DB::connection('auth_db')
+                                ->table('tenant_users')
+                                ->where('user_id', $userId)
+                                ->where('status', 'active')
+                                ->value('tenant_id');
+                            if ($liveTenantId) {
+                                $userTenantId = (int) $liveTenantId;
+                            }
+                        }
+
+                        $liveRole = DB::connection('auth_db')
+                            ->table('user_roles')
+                            ->join('roles', 'user_roles.role_id', '=', 'roles.id')
+                            ->where('user_roles.user_id', $userId)
+                            ->where('user_roles.is_active', true)
+                            ->value('roles.slug');
+
+                        if ($liveRole && $liveRole !== 'user') {
+                            $userRole = $liveRole;
+                        }
+                    } catch (\Throwable) {}
+                }
+
+                // Construct authenticated user with verified credentials
                 $user = new User([
                     'name' => $payload['name'] ?? 'Authorized User',
                     'email' => $payload['email'] ?? '',
-                    'role' => $payload['role'] ?? 'cashier',
-                    'tenant_id' => $payload['tenant_id'] ?? null,
-                    'outlet_id' => $payload['outlet_id'] ?? null,
+                    'role' => $userRole,
+                    'tenant_id' => $userTenantId,
+                    'outlet_id' => $userOutletId,
                 ]);
-                $user->id = (int) $payload['sub'];
+                $user->id = $userId;
                 $user->exists = true;
+                if ($userTenantId) {
+                    $user->tenant_id = $userTenantId;
+                }
+                if ($userOutletId) {
+                    $user->outlet_id = $userOutletId;
+                }
 
                 // Propagate user across both default and sanctum guards
                 Auth::setUser($user);

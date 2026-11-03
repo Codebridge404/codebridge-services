@@ -18,6 +18,7 @@ class User extends Authenticatable
     public ?string $pendingRole = null;
     public ?string $pendingPinCode = null;
     public ?int $pendingOutletId = null;
+    public ?int $pendingTenantId = null;
 
     /**
      * Get the current connection name for the model.
@@ -42,10 +43,13 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'tenant_id',
+        'outlet_id',
     ];
 
     protected $appends = [
         'role',
+        'tenant_id',
     ];
 
     /**
@@ -73,7 +77,13 @@ class User extends Authenticatable
         }
         if (isset($attributes['outlet_id'])) {
             $this->pendingOutletId = (int) $attributes['outlet_id'];
+            $this->attributes['outlet_id'] = (int) $attributes['outlet_id'];
             unset($attributes['outlet_id']);
+        }
+        if (isset($attributes['tenant_id'])) {
+            $this->pendingTenantId = (int) $attributes['tenant_id'];
+            $this->attributes['tenant_id'] = (int) $attributes['tenant_id'];
+            unset($attributes['tenant_id']);
         }
 
         return parent::fill($attributes);
@@ -84,18 +94,53 @@ class User extends Authenticatable
         $this->pendingRole = (string) $value;
     }
 
+    public function setTenantIdAttribute($value): void
+    {
+        $this->pendingTenantId = $value ? (int) $value : null;
+        $this->attributes['tenant_id'] = $value ? (int) $value : null;
+    }
+
+    public function getTenantIdAttribute(): ?int
+    {
+        if (array_key_exists('tenant_id', $this->attributes) && !is_null($this->attributes['tenant_id'])) {
+            return (int) $this->attributes['tenant_id'];
+        }
+
+        if (!empty($this->pendingTenantId)) {
+            return (int) $this->pendingTenantId;
+        }
+
+        if (!$this->exists) {
+            return null;
+        }
+
+        try {
+            $tenantId = DB::connection($this->getConnectionName())
+                ->table('tenant_users')
+                ->where('user_id', $this->id)
+                ->where('status', 'active')
+                ->value('tenant_id');
+
+            if ($tenantId) {
+                return (int) $tenantId;
+            }
+        } catch (\Throwable) {}
+
+        return null;
+    }
+
     public function getRoleAttribute(): ?string
     {
-        if (array_key_exists('role', $this->attributes) && !is_null($this->attributes['role'])) {
+        if (array_key_exists('role', $this->attributes) && !is_null($this->attributes['role']) && $this->attributes['role'] !== 'user') {
             return $this->attributes['role'];
         }
 
-        if (!empty($this->pendingRole)) {
+        if (!empty($this->pendingRole) && $this->pendingRole !== 'user') {
             return $this->pendingRole;
         }
 
         if (!$this->exists) {
-            return 'user';
+            return !empty($this->pendingRole) ? $this->pendingRole : 'user';
         }
 
         try {
@@ -111,7 +156,7 @@ class User extends Authenticatable
             }
         } catch (\Throwable) {}
 
-        return 'user';
+        return !empty($this->pendingRole) ? $this->pendingRole : 'user';
     }
 
     protected static function booted(): void

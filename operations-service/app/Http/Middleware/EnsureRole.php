@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -51,8 +52,30 @@ class EnsureRole
 
         // Normalize role aliases (organization <=> admin <=> owner)
         $userRole = $user->role;
-        $effectiveRoles = [$userRole];
-        if (in_array($userRole, ['organization', 'admin', 'administrator', 'owner', 'organization_owner'])) {
+        $effectiveRoles = array_filter([$userRole]);
+
+        // If user has an ID and current role does not grant access, query live active roles from auth_db
+        if (empty(array_intersect($effectiveRoles, $roles)) && !empty($user->id)) {
+            try {
+                $dbRoles = DB::connection('auth_db')
+                    ->table('user_roles')
+                    ->join('roles', 'user_roles.role_id', '=', 'roles.id')
+                    ->where('user_roles.user_id', $user->id)
+                    ->where('user_roles.is_active', true)
+                    ->pluck('roles.slug')
+                    ->toArray();
+
+                if (!empty($dbRoles)) {
+                    $effectiveRoles = array_unique(array_merge($effectiveRoles, $dbRoles));
+                    if (isset($dbRoles[0])) {
+                        $user->role = $dbRoles[0];
+                    }
+                }
+            } catch (\Throwable) {}
+        }
+
+        if (in_array($userRole, ['organization', 'admin', 'administrator', 'owner', 'organization_owner']) ||
+            array_intersect($effectiveRoles, ['organization', 'admin', 'administrator', 'owner', 'organization_owner'])) {
             $effectiveRoles = array_unique(array_merge($effectiveRoles, ['organization', 'admin', 'administrator', 'owner', 'organization_owner']));
         }
 

@@ -204,7 +204,9 @@ class UserController extends Controller
         if (!$targetUser) return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
 
         $currentUser = $request->user();
-        $tenantId = $currentUser?->tenant_id;
+        $tenantId = ($currentUser?->role === 'super_admin' && !empty($validated['tenant_id']))
+            ? $validated['tenant_id']
+            : $currentUser?->tenant_id;
 
         $isMember = DB::table('tenant_users')
             ->where('tenant_id', $tenantId)
@@ -285,7 +287,9 @@ class UserController extends Controller
         $validated = $request->validated();
 
         $currentUser = $request->user();
-        $tenantId = $currentUser?->tenant_id;
+        $tenantId = ($currentUser?->role === 'super_admin' && !empty($validated['tenant_id']))
+            ? $validated['tenant_id']
+            : $currentUser?->tenant_id;
 
         if ($quotaErr = $this->checkQuota($currentUser, $tenantId)) {
             return response()->json(['status' => 'error', 'code' => 'QUOTA_EXCEEDED', 'message' => $quotaErr], 403);
@@ -365,7 +369,9 @@ class UserController extends Controller
         $validated = $request->validated();
 
         $currentUser = $request->user();
-        $tenantId = $currentUser?->tenant_id;
+        $tenantId = ($currentUser?->role === 'super_admin' && !empty($validated['tenant_id']))
+            ? $validated['tenant_id']
+            : $currentUser?->tenant_id;
 
         $existing = DB::table('users')->where('email', $validated['email'])->first();
         if ($existing && $tenantId) {
@@ -435,15 +441,58 @@ class UserController extends Controller
 
         $validated = $request->validated();
 
+        // Prevent self-suspension (active -> inactive)
+        if ($currentUser && (int) $currentUser->id === (int) $id && array_key_exists('is_active', $validated) && !$validated['is_active']) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You cannot suspend your own active account.',
+            ], 422);
+        }
+
+        // Prevent self-demotion if sole administrator
+        if ($currentUser && (int) $currentUser->id === (int) $id && !empty($validated['role']) && $currentUser->role !== 'super_admin') {
+            $newRole = $validated['role'];
+            if (!in_array($newRole, ['organization', 'admin', 'owner'], true)) {
+                $otherAdminsCount = DB::table('tenant_users as tu')
+                    ->join('user_roles as ur', 'tu.user_id', '=', 'ur.user_id')
+                    ->join('roles as r', 'ur.role_id', '=', 'r.id')
+                    ->where('tu.tenant_id', $currentUser->tenant_id)
+                    ->where('tu.user_id', '!=', $currentUser->id)
+                    ->where('tu.status', 'active')
+                    ->where('ur.is_active', true)
+                    ->whereIn('r.slug', ['organization', 'admin', 'owner'])
+                    ->count();
+
+                if ($otherAdminsCount === 0) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Cannot demote your own administrator role when you are the sole administrator of this workspace.',
+                    ], 422);
+                }
+            }
+        }
+
+        $effectiveTenantId = $targetUser->tenant_id ?? $currentUser?->tenant_id;
+        if (array_key_exists('tenant_id', $validated) && $currentUser?->role === 'super_admin') {
+            $effectiveTenantId = $validated['tenant_id'];
+            if ($effectiveTenantId) {
+                DB::table('tenant_users')->updateOrInsert(
+                    ['user_id' => $id],
+                    ['tenant_id' => $effectiveTenantId, 'status' => 'active', 'updated_at' => now()]
+                );
+            } else {
+                DB::table('tenant_users')->where('user_id', $id)->delete();
+            }
+        }
+
         $updateData = [];
         foreach (['name', 'email', 'phone', 'is_active'] as $field) {
             if (array_key_exists($field, $validated)) $updateData[$field] = $validated[$field];
         }
 
         if (array_key_exists('pin_code', $validated)) {
-            $effectiveTenantId = $targetUser->tenant_id ?? $currentUser?->tenant_id ?? 1;
             DB::table('user_pos_pins')->updateOrInsert(
-                ['tenant_id' => $effectiveTenantId, 'user_id' => $id],
+                ['tenant_id' => $effectiveTenantId ?? 1, 'user_id' => $id],
                 [
                     'pin_hash' => hash('sha256', (string) $validated['pin_code']),
                     'failed_attempts' => 0,
@@ -458,8 +507,7 @@ class UserController extends Controller
             $outlet = \App\Models\Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
             abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
             $outletUuid = $outlet->uuid;
-            if ($outletUuid) {
-                $effectiveTenantId = $targetUser->tenant_id ?? $currentUser?->tenant_id ?? 1;
+            if ($outletUuid && $effectiveTenantId) {
                 $tuId = DB::table('tenant_users')->where('tenant_id', $effectiveTenantId)->where('user_id', $id)->value('id');
                 if ($tuId) {
                     DB::table('tenant_user_outlets')->updateOrInsert(
@@ -473,12 +521,11 @@ class UserController extends Controller
         if (!empty($validated['role']) || !empty($validated['role_id'])) {
             [$pRole, $rId] = $this->resolveRoleAndId($validated['role'] ?? 'employee', $validated['role_id'] ?? null, $currentUser);
             if ($rId) {
-                DB::table('user_roles')->where('user_id', $id)
-                    ->where('tenant_id', $currentUser?->tenant_id)->update(['is_active' => false]);
+                DB::table('user_roles')->where('user_id', $id)->update(['is_active' => false]);
                 DB::table('user_roles')->updateOrInsert(
                     ['user_id' => $id, 'role_id' => $rId],
                     [
-                        'tenant_id' => $currentUser?->tenant_id,
+                        'tenant_id' => $effectiveTenantId,
                         'is_active' => true,
                         'updated_at' => now(),
                     ]
@@ -555,9 +602,49 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
         }
 
+        // Prevent self-deletion / self-deactivation
+        if ($currentUser && (int) $currentUser->id === (int) $id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You cannot remove or deactivate your own account. Another administrator must perform this action.',
+            ], 422);
+        }
+
         if ($currentUser && $currentUser->role !== 'super_admin') {
             if ($targetUser->tenant_id != $currentUser->tenant_id || $targetUser->role === 'super_admin') {
                 return response()->json(['status' => 'error', 'message' => 'Unauthorized access to user account.'], 403);
+            }
+
+            // Prevent deleting the workspace owner
+            if ($targetUser->role === 'owner') {
+                return response()->json(['status' => 'error', 'message' => 'Cannot delete the primary workspace owner account.'], 422);
+            }
+
+            // Prevent deleting the sole remaining administrator
+            $isTargetAdmin = in_array($targetUser->role, ['organization', 'admin', 'owner'], true) ||
+                DB::table('user_roles as ur')
+                    ->join('roles as r', 'ur.role_id', '=', 'r.id')
+                    ->where('ur.user_id', $id)
+                    ->where('ur.is_active', true)
+                    ->whereIn('r.slug', ['organization', 'admin', 'owner'])
+                    ->exists();
+
+            if ($isTargetAdmin) {
+                $activeAdminsCount = DB::table('tenant_users as tu')
+                    ->join('user_roles as ur', 'tu.user_id', '=', 'ur.user_id')
+                    ->join('roles as r', 'ur.role_id', '=', 'r.id')
+                    ->where('tu.tenant_id', $currentUser->tenant_id)
+                    ->where('tu.status', 'active')
+                    ->where('ur.is_active', true)
+                    ->whereIn('r.slug', ['organization', 'admin', 'owner'])
+                    ->count();
+
+                if ($activeAdminsCount <= 1) {
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Cannot remove the last remaining administrator of this workspace.',
+                    ], 422);
+                }
             }
         }
 

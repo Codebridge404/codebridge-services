@@ -1637,6 +1637,161 @@ Step 4 (Launchpad & Ecosystem Tactile Cards): Refactored ModuleCard and launchpa
 Step 5 (Direct Manipulation POS & Touch Keypad): Enhanced POS product cards, swipe-to-remove line items in PosCartPanel, and tactile numeric keypad in supervisor PIN modals with spring-animated feedback.
 Step 6 (Interruptible Overlays & Accessibility): Standardized modals and sheets to enter and exit symmetrically via modalContent and scrimFade with full support for prefers-reduced-motion and prefers-reduced-transparency.
 
+--------------------------------------------------------------------------------
+TICKET: BD-0121 - CodeBridge Enterprise Platform Release v1.0.0 Production Launch Plan & Post-Launch Operational Roadmap
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0121
+Component / Service:    docs & cross-platform system governance
+File Path:              docs/proposal/Project_Plan.md, docs/system version/1.0.0.md
+Related Model / Service:Version 1.0.0 Production Launch Plan & Post-v1.0.0 Operational Roadmap
+Method / Entry Point:   Enterprise Master Launch Schedule, Quality Gates, SLA & v1.1.0-v2.0.0 Strategic Evolution
+Command / API Route:    Production Go-Live Mandate, Quality Gates, Disaster Recovery & Multi-Tenant Scaling
+Date & Time:            2026-11-02T22:45:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Readiness Baseline Formulation): Audited complete production topology across Next.js 16.2 frontend, Laravel 12 microservices, dual MySQL 8.4 database engines, Redis caches, MinIO S3 storage, and Nginx Gateway.
+Step 2 (Quality Gate Verification): Formalized five mandatory production quality gates: Zero Mock Data compliance, strict multi-tenant isolation (tenant_id/outlet_id), security & CORS hardening, dual-currency financial integrity, and Apple Fluid Design physics.
+Step 3 (Phased Cutover Schedule): Established a 5-phase rollout schedule spanning Day -5 to Day +2 (Code Freeze & Staging Soak, DB Preparation, Custom Domain & SSL Cutover, Live Go-Live Day, and 48-Hour Hypercare Monitoring).
+Step 4 (Operational SLA & Disaster Recovery): Standardized 99.95% uptime SLA, sub-120ms POS response targets, automated daily logical MySQL dumps, encrypted offsite S3 cold storage replication, and RPO < 1h / RTO < 30m disaster recovery.
+Step 5 (Multi-Tenant Tier Scaling): Enforced automated resource limits across Solopreneur (1 outlet / 1 register), Business Runner (3 outlets / 6 registers), and Enterprise Group (unlimited outlets / registers) tiers.
+Step 6 (Multi-Year Strategic Evolution): Formulated strategic roadmap spanning v1.1.0 (WebSocket KDS & Offline PWA), v1.2.0 (Gemini AI inventory forecasting & BOM recipes), v1.3.0 (Native tablet apps & WhatsApp receipts), and v2.0.0 (Global multi-region K8s & custom enterprise whitelabeling).
+
+--------------------------------------------------------------------------------
+TICKET: BD-0122 - Super Admin User Management Full CRUD, Multi-Tenant Governance & Dual Pinned Sticky Columns
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0122
+Component / Service:    auth-service & codebridgesfront (super-admin)
+File Path:              app/Http/Controllers/Api/V1/UserController.php, components/security/users/UserTable.tsx, components/security/users/UserFormModal.tsx, components/security/users/UserDetailModal.tsx, components/security/users/UserFilterToolbar.tsx, components/security/users/SuperAdminUsersView.tsx
+Related Model / Service:App\Models\User, App\Models\UserRole, App\Models\Outlet, App\Models\Tenant
+Method / Entry Point:   GET /api/v1/users?scope=all, POST /api/v1/users, PUT /api/v1/users/{id}, DELETE /api/v1/users/{id}, POST /api/v1/users/{id}/reset-password
+Command / API Route:    /super-admin/users, /super-admin/security/users
+Date & Time:            2026-11-03T09:30:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Sticky Column Grid Architecture): Engineered high-density data table with pinned sticky left columns (User Name at 0px, Email Address at 200px, and Master Actions at 420px with right border shadow), enabling fluid horizontal scrolling for remaining telemetry attributes (phone, role, organization, outlet, PIN, status, registration date).
+Step 2 (Multi-Tenant CRUD Backend Scoping): Enhanced UserController, StoreUserRequest, and UpdateUserRequest to support super_admin tenant_id assignment, multi-tenant workspace association, outlet UUID mapping, and hashed 4-digit POS PIN management.
+Step 3 (Comprehensive User Telemetry Modal): Implemented UserDetailModal presenting full telemetry including ID, UUID, avatar initials, RBAC role, POS PIN status, tenant affiliation, branch outlet, creation timestamp, and live account state.
+Step 4 (In-Place Active/Suspended Quick Toggle): Integrated 1-click status toggling directly from the table row and detail modal, triggering real-time API updates and visual badge transitions.
+Step 5 (Advanced Multi-Facet Filtering): Upgraded UserFilterToolbar with organization/tenant dropdown, dynamic RBAC role filter, active/suspended status selector, real-time debounced search, and silent re-fetch synchronization.
+Step 6 (Safe Account Deactivation & Password Reset): Implemented ConfirmDialog integration for soft deactivation and modal-based credential resets with toast feedback.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0123 - Multi-Tenant Self-Protection Safeguards, Last Administrator Protection & Organization Scope Enforcement
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0123
+Component / Service:    auth-service & codebridgesfront (organization-staff)
+File Path:              services/auth-service/app/Http/Controllers/Api/V1/UserController.php, codebridgesfront/components/launchpad/staff/WorkspaceStaffDirectory.tsx, codebridgesfront/app/organization/staff/page.tsx, codebridgesfront/components/security/users/UserFormModal.tsx
+Related Model / Service:App\Models\User, App\Models\Tenant, App\Models\UserRole
+Method / Entry Point:   DELETE /api/v1/users/{id}, PUT /api/v1/users/{id}, GET /organization/staff
+Command / API Route:    /organization/staff
+Date & Time:            2026-11-03T10:10:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Self-Deletion & Self-Suspension Prevention): Hardened UserController::destroy and UserController::update to strictly reject any request where currentUser.id matches target user id, preventing organization admins from deactivating or deleting their own active accounts.
+Step 2 (Sole Administrator Protection): Implemented backend validation in UserController to prevent deactivation or role demotion of the workspace owner or the last remaining active administrator within a tenant workspace.
+Step 3 (Client-Side Self Identity Badge & Button Guard): Updated WorkspaceStaffDirectory in both Table and Grid views to identify the active user session with a "(You)" badge, hide the Trash removal button, and disable the status toggle with dedicated tooltip explanation.
+Step 4 (Strict Role Escalation Gating): Scoped UserFormModal in organization staff views to AVAILABLE_ROLES, completely preventing assignment of the platform super_admin role by organization-tier administrators.
+Step 5 (Cross-Tenant Boundary Isolation): Omitted the Tenant Organization selector in UserFormModal whenever tenant options are absent (non-super-admin context), preventing tenant reassignment tampering by organization staff.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0124 - Operations Microservice Cross-Service JWT Role Reconciliation & Tenant Context Recovery
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0124
+Component / Service:    operations-service, auth-service & codebridgesfront
+File Path:              services/operations-service/app/Models/User.php, services/operations-service/app/Http/Middleware/EnsureRole.php, services/operations-service/app/Http/Middleware/AuthenticateJwt.php, services/auth-service/app/Http/Controllers/Api/V1/TenantController.php, codebridgesfront/components/auth/RegisterTenantForm.tsx
+Related Model / Service:App\Models\User, App\Models\TenantUser, App\Models\UserRole, App\Models\Role
+Method / Entry Point:   POST /api/v1/products/bulk, POST /api/v1/tenants/register, EnsureRole::handle(), AuthenticateJwt::handle()
+Command / API Route:    /api/v1/products/bulk, /pos/products
+Date & Time:            2026-11-03T11:00:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Root Cause Resolution): Identified that self-registered workspace owners had stale JWT tokens issued at initial registration prior to tenant creation, retaining claims with role="user" and tenant_id=null.
+Step 2 (Operations User Model Dynamic Tenant & Role Resolution): Enhanced Operations User model with pendingTenantId, tenant_id fillable mapping, and getTenantIdAttribute/getRoleAttribute accessors that dynamically query auth_db when the token claim indicates an unassigned or downgraded role ("user").
+Step 3 (Operations EnsureRole Resilient Fallback): Updated EnsureRole middleware to check auth_db user_roles pivot before throwing HTTP 403 Forbidden, enabling real-time elevation recognition for newly minted organization owners and managers without requiring manual logout.
+Step 4 (AuthenticateJwt Tenant & Role Synchronization): Hardened AuthenticateJwt to dynamically reconcile user_id, active tenant_id, and primary operational role against auth_db when missing from verified JWT claims.
+Step 5 (Tenant Registration Token Re-issuance): Updated TenantController::register to immediately issue and return a newly minted JWT access token and refresh token containing the updated organization role and tenant affiliation.
+Step 6 (Frontend Workspace Registration State Sync): Enhanced RegisterTenantForm to persist the newly issued token and refresh token directly into localStorage on workspace creation, preventing token desynchronization.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0125 - Dynamic Organization VAT & Sales Tax Governance, Multi-Tenant Tax Engine & POS Policy Controls
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0125
+Component / Service:    codebridgesfront & auth-service (tenant terminal_settings)
+File Path:              codebridgesfront/lib/posTaxUtils.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/pos/settings/PosPolicySettingsTab.tsx, codebridgesfront/components/pos/settings/PosTerminalSettingsView.tsx, codebridgesfront/components/settings/tabs/RegionalSettingsTab.tsx, codebridgesfront/app/organization/settings/page.tsx, codebridgesfront/components/pos/terminal/PosCartPanel.tsx, codebridgesfront/components/pos/terminal/PosCheckoutModal.tsx, codebridgesfront/components/pos/terminal/usePosTerminalState.ts, codebridgesfront/components/pos/customer-display/PosCustomerDisplayView.tsx, codebridgesfront/components/pos/customer-display/CfdPaymentCard.tsx, codebridgesfront/components/pos/shifts/PosThermalReportModal.tsx, codebridgesfront/components/shop/ShopStorefrontView.tsx, codebridgesfront/components/shop/ShopCartDrawer.tsx
+Related Model / Service:App\Models\Tenant, DB table outlets (terminal_settings JSON), App\Models\TenantOperationSetting
+Method / Entry Point:   calculateCartTax(), getPosTaxSettings(), updateTenantProfileApi(), saveTerminalSettingsApi()
+Command / API Route:    /organization/settings?tab=regional, /pos/settings?tab=policies, /pos/pos-terminal
+Date & Time:            2026-11-03T11:35:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Root Cause Resolution): Replaced static hardcoded "* 0.1" (10% VAT) math across POS and storefront components with an enterprise, multi-tenant Dynamic Tax Engine (posTaxUtils.ts).
+Step 2 (Organization Workspace Governance UI): Added VAT & Sales Tax configuration panel inside RegionalSettingsTab.tsx and app/organization/settings/page.tsx with toggle switch for tax status, calculation mode selector (Exclusive vs Inclusive), custom tax rate percentage, and receipt tax label.
+Step 3 (POS Terminal Level Policy Overrides & Live Simulator): Built interactive Tax Policy card in PosPolicySettingsTab.tsx with real-time visual simulation preview displaying subtotal, calculated tax, and grand total for any sample cart amount.
+Step 4 (Multi-Tenant POS Checkout & Cart Integration): Wired dynamic calculations in PosCartPanel.tsx, PosCheckoutModal.tsx, and usePosTerminalState.ts, ensuring checkout totals, tax_total, and grand_total accurately reflect configured tax rules.
+Step 5 (Customer Display & Thermal Shift Audit Synchronization): Updated Customer-Facing Display (PosCustomerDisplayView.tsx, CfdPaymentCard.tsx), E-Commerce Storefront (ShopStorefrontView.tsx, ShopCartDrawer.tsx), and Thermal Shift Reports (PosThermalReportModal.tsx) to dynamically reflect tax status, rates, and labels.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0126 - POS Receipt Customization Harmonization, Thermal 80mm/58mm Branding & Multi-Tenant Slogan Pipeline
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0126
+Component / Service:    codebridgesfront & operations-service (ReceiptController)
+File Path:              codebridgesfront/lib/posReceiptUtils.ts, codebridgesfront/components/receipt/ThermalReceiptPaper.tsx, codebridgesfront/components/receipt/ThermalReceiptModal.tsx, codebridgesfront/components/pos/terminal/PosCheckoutModal.tsx, codebridgesfront/components/pos/terminal/PosDigitalReceiptModal.tsx, codebridgesfront/components/pos/settings/PosTerminalSettingsView.tsx, services/operations-service/app/Http/Controllers/Api/V1/ReceiptController.php
+Related Model / Service:App\Models\Outlet, DB table outlets (receipt_header, receipt_footer, receipt_logo_url, terminal_settings)
+Method / Entry Point:   getPosReceiptSettings(), mergeReceiptOutlet(), ReceiptController::show(), ReceiptController::html()
+Command / API Route:    /pos/pos-terminal, /pos/settings?tab=receipt, /api/v1/sales/{id}/receipt
+Date & Time:            2026-11-03T11:58:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Root Cause Resolution): Identified that ThermalReceiptModal and ThermalReceiptPaper relied on incomplete saleData.outlet payloads that lacked receipt_header, receipt_footer, and receipt_logo_url, causing custom slogans and return policies configured in Receipt Customization to be silently skipped or replaced with hardcoded fallback text.
+Step 2 (Receipt Settings Resolver Engine): Created unified posReceiptUtils.ts (getPosReceiptSettings, mergeReceiptOutlet) that aggregates customized headers, multi-line return footers, monochrome receipt logos, VAT TINs, and store addresses across localStorage and backend outlet records.
+Step 3 (Thermal Receipt Paper Dynamic Formatting): Updated ThermalReceiptPaper.tsx to render custom header slogans, multi-line whitespace-preserved return policies, store logo previews, VAT TIN numbers, and customized tax labels.
+Step 4 (Adaptive 80mm / 58mm Thermal Sizing): Added responsive styling and print media query adjustments supporting both 80mm countertop and 58mm compact mobile thermal printer rolls based on customized settings.
+Step 5 (Checkout Modal Default Auto-Print Honor): Synchronized PosCheckoutModal printReceipt toggle to default to the user-configured autoPrintReceipt preference from Receipt Customization.
+Step 6 (Operations Microservice Cross-DB Branding Sync): Enhanced ReceiptController in operations-service to reconcile outlet branding (receipt_header, receipt_footer, receipt_logo_url) against auth_db when local operations tables contain unpopulated outlet branding.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0127 - Framer Motion Spring Multi-Keyframe Runtime Invariant Resolution
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0127
+Component / Service:    codebridgesfront (POS PIN Modals)
+File Path:              codebridgesfront/components/pos/terminal/PosSupervisorPinModal.tsx, codebridgesfront/components/pos/CashierQuickSwitchModal.tsx
+Related Model / Service:appleSpring physics transition engine
+Method / Entry Point:   PosSupervisorPinModal, CashierQuickSwitchModal
+Command / API Route:    /pos/pos-terminal
+Date & Time:            2026-11-03T13:13:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Root Cause Resolution): Identified that PosSupervisorPinModal utilized a 3-keyframe array animation "{ scale: [1, 1.25, 1.1] }" while binding to the "appleSpring" transition ("type: 'spring'"). Motion v11/v12 enforces an invariant requiring spring physics to operate on exactly two keyframes (from/to), throwing runtime error: "Only two keyframes currently supported with spring and inertia animations. Trying to animate 1,1.25,1.1".
+Step 2 (Fluid Spring Scalar Value Alignment): Refactored scale animation to dynamic scalar values "{ scale: idx < pin.length ? 1.15 : 1 }", allowing Apple fluid interface physics to naturally compute overshoot, bounce, and settle without multi-keyframe conflicts.
+Step 3 (Proactive Modal Audit): Hardened CashierQuickSwitchModal to also eliminate 3-keyframe scale arrays, guaranteeing resilient execution across all POS keypad components.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0128 - Production Seeder Sanitization & Demo Data Elimination for Clean VPS Deployments
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0128
+Component / Service:    auth-service & operations-service (Database Seeders)
+File Path:              services/auth-service/database/seeders/TenantSeeder.php, services/auth-service/database/seeders/MeetingSeeder.php, services/auth-service/database/seeders/DatabaseSeeder.php, services/operations-service/database/seeders/DatabaseSeeder.php
+Related Model / Service:Database Seeders
+Method / Entry Point:   TenantSeeder::run(), MeetingSeeder::run(), DatabaseSeeder::run()
+Command / API Route:    php artisan db:seed
+Date & Time:            2026-11-03T15:23:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Root Cause Resolution): Identified that default seeders populated dummy organizations ("CodeBridges Platform"), demo conference rooms, sample categories, demo products, and mock outlets during database bootstrapping, cluttering live production databases upon VPS deployment.
+Step 2 (Demo Organization Removal): Sanitized TenantSeeder.php by purging all hardcoded tenant creation queries, ensuring organizations are only registered organically by real users through the onboarding flow.
+Step 3 (Demo Meeting Catalog Removal): Sanitized MeetingSeeder.php by removing mock boardroom entries and sample calendar meetings.
+Step 4 (Operations Demo Catalog Purge): Emptied demo outlet, register, beverage/snack categories, and sample products in operations-service DatabaseSeeder.php.
+Step 5 (Production Anchor Preservation): Retained essential system prerequisites including granular permissions (PermissionSeeder), system RBAC roles (RoleSeeder), platform modules catalog (PlatformModuleSeeder), and the root Super Admin account ("codebridge2026@gmail.com") in auth-service DatabaseSeeder.php.
+
 ================================================================================
 END OF CODEBRIDGE SYSTEM MASTER TICKETS SPECIFICATION
 ================================================================================

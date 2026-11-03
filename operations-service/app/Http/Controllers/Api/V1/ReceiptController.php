@@ -53,6 +53,14 @@ class ReceiptController extends Controller
 
         // 3. Fetch Outlet Details
         $outlet = DB::table('outlets')->where('id', $sale->outlet_id)->first();
+        if (!$outlet || empty($outlet->receipt_header)) {
+            try {
+                $authOutlet = DB::connection('auth_db')->table('outlets')->where('id', $sale->outlet_id)->first();
+                if ($authOutlet) {
+                    $outlet = (object) array_merge((array) ($outlet ?: []), (array) $authOutlet);
+                }
+            } catch (\Throwable $e) {}
+        }
         if (!$outlet) {
             $outlet = (object) [
                 'name' => 'Main Outlet',
@@ -278,13 +286,24 @@ class ReceiptController extends Controller
         }
 
         $lines = DB::table('sale_lines')->where('sale_id', $sale->id)->get();
-        $outlet = DB::table('outlets')->where('id', $sale->outlet_id)->first() ?? (object) [
-            'name' => 'CodeBridge Store',
-            'address' => 'Phnom Penh, Cambodia',
-            'phone' => '+855 12 345 678',
-            'receipt_header' => 'Thank you for your purchase!',
-            'receipt_footer' => 'Exchange or returns within 7 days with original slip.',
-        ];
+        $outlet = DB::table('outlets')->where('id', $sale->outlet_id)->first();
+        if (!$outlet || empty($outlet->receipt_header)) {
+            try {
+                $authOutlet = DB::connection('auth_db')->table('outlets')->where('id', $sale->outlet_id)->first();
+                if ($authOutlet) {
+                    $outlet = (object) array_merge((array) ($outlet ?: []), (array) $authOutlet);
+                }
+            } catch (\Throwable $e) {}
+        }
+        if (!$outlet) {
+            $outlet = (object) [
+                'name' => 'CodeBridge Store',
+                'address' => 'Phnom Penh, Cambodia',
+                'phone' => '+855 12 345 678',
+                'receipt_header' => 'Thank you for your purchase!',
+                'receipt_footer' => 'Exchange or returns within 7 days with original slip.',
+            ];
+        }
         $cashier = DB::table('users')->where('id', $sale->user_id)->select('name')->first() ?? (object) ['name' => 'Cashier'];
         $payments = DB::table('payments')->where('sale_id', $sale->id)->get();
 

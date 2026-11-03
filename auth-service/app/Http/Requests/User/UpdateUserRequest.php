@@ -33,6 +33,7 @@ class UpdateUserRequest extends FormRequest
             'outlet_id' => ['sometimes', 'nullable', 'string'],
             'pin_code' => ['sometimes', 'nullable', 'string', 'max:10'],
             'is_active' => ['sometimes', 'boolean'],
+            'tenant_id' => ['sometimes', 'nullable'],
         ];
     }
 }

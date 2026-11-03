@@ -36,9 +36,8 @@ class DatabaseSeeder extends Seeder
             ],
         ];
 
-        $adminUser = null;
         foreach ($users as $userData) {
-            $user = User::updateOrCreate(
+            User::updateOrCreate(
                 ['email' => $userData['email']],
                 [
                     'name' => $userData['name'],
@@ -49,15 +48,8 @@ class DatabaseSeeder extends Seeder
                     'password' => $userData['password'],
                 ]
             );
-            if ($userData['role'] === 'super_admin') {
-                $adminUser = $user;
-            }
         }
 
-        // 2. Seed Platform Core Tenant & link Super Admin
-        $this->call(TenantSeeder::class);
-
-        // 3. Seed Meeting Management System (Rooms, Displays, Schedules)
-        $this->call(MeetingSeeder::class);
+        // Demo tenants and demo meetings removed for clean production VPS deployment
     }
 }

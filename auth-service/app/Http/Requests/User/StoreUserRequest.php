@@ -32,6 +32,7 @@ class StoreUserRequest extends FormRequest
             'outlet_id' => ['nullable', 'string'],
             'pin_code' => ['nullable', 'string', 'max:10'],
             'phone' => ['nullable', 'string', 'max:30'],
+            'tenant_id' => ['nullable'],
         ];
     }
 }
