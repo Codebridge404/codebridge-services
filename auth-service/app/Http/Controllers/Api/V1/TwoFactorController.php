@@ -228,7 +228,7 @@ class TwoFactorController extends Controller
         $refreshToken = $this->jwtService->generateRefreshTokenForUser($user);
 
         $deviceName = $request->input('device_name') ?? $this->parseDeviceName($request->userAgent());
-        $expiresAt = now()->addSeconds($this->jwtService->getTtlSeconds());
+        $expiresAt = now()->addSeconds($this->jwtService->getRefreshTtlSeconds());
         $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
         $this->jwtService->bindSession($tokenResult->accessToken);
         $jwtToken = $this->jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);

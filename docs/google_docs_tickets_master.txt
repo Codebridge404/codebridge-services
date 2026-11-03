@@ -1792,6 +1792,25 @@ Step 3 (Demo Meeting Catalog Removal): Sanitized MeetingSeeder.php by removing m
 Step 4 (Operations Demo Catalog Purge): Emptied demo outlet, register, beverage/snack categories, and sample products in operations-service DatabaseSeeder.php.
 Step 5 (Production Anchor Preservation): Retained essential system prerequisites including granular permissions (PermissionSeeder), system RBAC roles (RoleSeeder), platform modules catalog (PlatformModuleSeeder), and the root Super Admin account ("codebridge2026@gmail.com") in auth-service DatabaseSeeder.php.
 
+--------------------------------------------------------------------------------
+TICKET: BD-0129 - Enterprise Session Lifecycle Hardening, 24-Hour Access Token Floor & Resilient Silent Token Refresh
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0129
+Component / Service:    auth-service & codebridgesfront
+File Path:              services/auth-service/app/Http/Controllers/Api/V1/AuthController.php, services/auth-service/app/Http/Controllers/Api/V1/TwoFactorController.php, services/auth-service/app/Http/Controllers/Api/V1/TenantController.php, services/auth-service/app/Services/JwtService.php, codebridgesfront/lib/api/client.ts
+Related Model / Service:App\\Services\\JwtService, App\\Http\\Controllers\\Api\\V1\\AuthController
+Method / Entry Point:   AuthController::login(), quickSwitch(), register(), JwtService::sessionForPayload()
+Command / API Route:    POST /api/v1/auth/login, POST /api/v1/auth/refresh
+Date & Time:            2026-11-03T16:53:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Root Cause Resolution): Identified that personal access token sessions were bound with a short 15-minute access TTL (getTtlSeconds), killing database session records when access tokens expired and causing background silent token refresh (/auth/refresh) to reject valid sessions with 401 and trigger abrupt client auto-logout.
+Step 2 (Database Session Lifetime Alignment): Updated AuthController (login, quickSwitch, acceptInvite, register), TwoFactorController, and TenantController to bind Sanctum personal access tokens to full refresh session lifecycle (getRefreshTtlSeconds = 30 days) instead of short access TTL.
+Step 3 (Access Token TTL Floor): Implemented a guaranteed 1440-minute (24-hour) safety floor for JWT access token lifetime in JwtService, preventing aggressive 5-15 minute session dropouts even when VPS environment variables default to short intervals.
+Step 4 (Resilient Session Verification): Refactored JwtService::sessionForPayload to query standard model keys and perform safe Carbon datetime evaluation in PHP, completely eliminating uncaught SQL column query exceptions during silent refresh.
+Step 5 (Client Refresh Header Sanitization): Sanitized codebridgesfront/lib/api/client.ts to avoid sending expired Bearer Authorization tokens during POST /auth/refresh calls, eliminating reverse proxy and gateway rejection.
+
 ================================================================================
 END OF CODEBRIDGE SYSTEM MASTER TICKETS SPECIFICATION
 ================================================================================

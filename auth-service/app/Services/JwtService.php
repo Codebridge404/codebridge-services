@@ -38,7 +38,9 @@ class JwtService
         }
 
         $this->algo = (string) config('jwt.algo', 'HS256');
-        $this->ttl = (int) config('jwt.ttl', 15);
+        $configuredTtl = (int) config('jwt.ttl', 1440);
+        // Ensure access token TTL has a safe floor of at least 1440 minutes (24 hours) to prevent unintended auto-logout
+        $this->ttl = $configuredTtl >= 1440 ? $configuredTtl : 1440;
         $this->refreshTtl = (int) config('jwt.refresh_ttl', 43200);
         $this->issuer = (string) config('jwt.issuer', 'codebridge-auth-service');
     }
@@ -204,17 +206,30 @@ class JwtService
     {
         if (empty($payload['sid'])) return null;
         
-        $query = \Laravel\Sanctum\PersonalAccessToken::where('id', $payload['sid'])
-            ->where('tokenable_id', $payload['sub'])
-            ->where('tokenable_type', User::class);
-
         try {
-            return $query->where(function ($q) {
-                $q->whereNull('session_expires_at')
-                  ->orWhere('session_expires_at', '>', now());
-            })->first();
-        } catch (\Throwable) {
-            return $query->first();
+            $session = \Laravel\Sanctum\PersonalAccessToken::where('id', $payload['sid'])
+                ->where('tokenable_id', $payload['sub'])
+                ->where('tokenable_type', User::class)
+                ->first();
+
+            if (!$session) {
+                return null;
+            }
+
+            // Check custom session expiration if column is present on model
+            if (!empty($session->session_expires_at) && \Carbon\Carbon::parse($session->session_expires_at)->isPast()) {
+                return null;
+            }
+
+            // Check standard Sanctum token expiration if present
+            if (!empty($session->expires_at) && \Carbon\Carbon::parse($session->expires_at)->isPast()) {
+                return null;
+            }
+
+            return $session;
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('sessionForPayload lookup error: ' . $e->getMessage());
+            return null;
         }
     }
 

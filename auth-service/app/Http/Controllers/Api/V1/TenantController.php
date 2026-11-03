@@ -182,7 +182,7 @@ class TenantController extends Controller
                 /** @var \App\Services\JwtService $jwtService */
                 $jwtService = app(\App\Services\JwtService::class);
                 $deviceName = $request->device_name ?? 'web_session';
-                $tokenResult = $userModel->createToken($deviceName, ['*'], now()->addSeconds($jwtService->getTtlSeconds()));
+                $tokenResult = $userModel->createToken($deviceName, ['*'], now()->addSeconds($jwtService->getRefreshTtlSeconds()));
                 $jwtService->bindSession($tokenResult->accessToken);
                 $newJwtToken = $jwtService->generateTokenForUser($userModel, ['sid' => (string) $tokenResult->accessToken->id]);
                 $newRefreshToken = $jwtService->generateRefreshTokenForUser($userModel, ['sid' => (string) $tokenResult->accessToken->id]);

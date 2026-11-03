@@ -201,9 +201,9 @@ class AuthController extends Controller
         $jwtToken = $jwtService->generateTokenForUser($user);
         $refreshToken = $jwtService->generateRefreshTokenForUser($user);
 
-        // Generate Sanctum token with client device telemetry
+        // Generate Sanctum token with client device telemetry (scoped to full refresh session lifecycle)
         $deviceName = $request->device_name ?? $this->parseDeviceName($request->userAgent());
-        $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
+        $expiresAt = now()->addSeconds($jwtService->getRefreshTtlSeconds());
         $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
         $jwtService->bindSession($tokenResult->accessToken);
         $jwtToken = $jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
@@ -366,7 +366,7 @@ class AuthController extends Controller
         $jwtService = app(JwtService::class);
         $deviceId = $request->header('X-Device-Id') ?? $request->input('device_id') ?? $request->input('device_uuid');
         $deviceName = $request->device_name ?? ($deviceId ? "Trusted POS Terminal ({$deviceId})" : 'POS Register Terminal (' . $this->parseDeviceName($request->userAgent()) . ')');
-        $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
+        $expiresAt = now()->addSeconds($jwtService->getRefreshTtlSeconds());
 
         // Enforce Principle of Least Privilege: POS PIN login grants limited POS abilities only
         $posAbilities = ['pos:access', 'pos:sales', 'pos:orders', 'pos:cashier'];
@@ -806,7 +806,7 @@ class AuthController extends Controller
             $jwtService = app(JwtService::class);
             $jwtToken = $jwtService->generateTokenForUser($user);
             $refreshToken = $jwtService->generateRefreshTokenForUser($user);
-            $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
+            $expiresAt = now()->addSeconds($jwtService->getRefreshTtlSeconds());
             $tokenResult = $user->createToken('POS Web Portal', ['*'], $expiresAt);
             $jwtService->bindSession($tokenResult->accessToken);
             $jwtToken = $jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
@@ -1302,7 +1302,7 @@ class AuthController extends Controller
         $jwtService = app(JwtService::class);
         $jwtToken = $jwtService->generateTokenForUser($user);
         $refreshToken = $jwtService->generateRefreshTokenForUser($user);
-        $expiresAt = now()->addSeconds($jwtService->getTtlSeconds());
+        $expiresAt = now()->addSeconds($jwtService->getRefreshTtlSeconds());
         $tokenResult = $user->createToken('pos_token', ['*'], $expiresAt);
         $plainToken = $tokenResult->plainTextToken;
         $jwtService->bindSession($tokenResult->accessToken);
