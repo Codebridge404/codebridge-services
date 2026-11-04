@@ -15,6 +15,27 @@ class AcceptInviteRequest extends FormRequest
     }
 
     /**
+     * Prepare the data for validation, allowing token to be supplied via header.
+     */
+    protected function prepareForValidation(): void
+    {
+        if (!$this->has('token')) {
+            $token = $this->header('token')
+                ?: $this->header('Token')
+                ?: $this->header('x-token')
+                ?: $this->bearerToken();
+
+            if ($token && str_starts_with($token, 'Bearer ')) {
+                $token = trim(substr($token, 7));
+            }
+
+            if ($token) {
+                $this->merge(['token' => $token]);
+            }
+        }
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
@@ -23,6 +44,7 @@ class AcceptInviteRequest extends FormRequest
     {
         return [
             'token' => ['required', 'string'],
+            'email' => ['nullable', 'string', 'email', 'max:255'],
             'name' => ['required', 'string', 'max:255'],
             'password' => ['required', 'string', 'min:6'],
             'pin_code' => ['nullable', 'string', 'min:4', 'max:8'],

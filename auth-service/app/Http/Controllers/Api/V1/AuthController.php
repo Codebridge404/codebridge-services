@@ -21,6 +21,7 @@ use App\Models\User;
 use App\Models\UserPosPin;
 use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
+use App\Services\DeviceDetectorService;
 use App\Services\JwtService;
 use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
 use Illuminate\Http\Request;
@@ -202,20 +203,34 @@ class AuthController extends Controller
         $refreshToken = $jwtService->generateRefreshTokenForUser($user);
 
         // Generate Sanctum token with client device telemetry (scoped to full refresh session lifecycle)
-        $deviceName = $request->device_name ?? $this->parseDeviceName($request->userAgent());
+        /** @var DeviceDetectorService $detector */
+        $detector = app(DeviceDetectorService::class);
+        $deviceName = $request->device_name ?? $detector->parseDeviceName($request->userAgent());
+        $browser = $detector->parseBrowser($request->userAgent());
+        $platform = $detector->parsePlatform($request->userAgent());
+        $location = $detector->parseLocation($request);
+
         $expiresAt = now()->addSeconds($jwtService->getRefreshTtlSeconds());
         $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
         $jwtService->bindSession($tokenResult->accessToken);
         $jwtToken = $jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
         $refreshToken = $jwtService->generateRefreshTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
 
+        $tokenMetadata = [
+            'ip_address' => $request->ip(),
+            'user_agent' => substr($request->userAgent() ?? '', 0, 500),
+            'device_name' => $deviceName,
+            'browser' => $browser,
+            'platform' => $platform,
+            'last_used_at' => now(),
+        ];
+        if (!empty($location)) {
+            $tokenMetadata['location'] = $location;
+        }
+
         DB::table('personal_access_tokens')
             ->where('id', $tokenResult->accessToken->id)
-            ->update([
-                'ip_address' => $request->ip(),
-                'user_agent' => substr($request->userAgent() ?? '', 0, 500),
-                'device_name' => $deviceName,
-            ]);
+            ->update($tokenMetadata);
 
         // Resolve workspace branding
         if ($user->tenant_id) {
@@ -364,8 +379,13 @@ class AuthController extends Controller
 
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
+        /** @var DeviceDetectorService $detector */
+        $detector = app(DeviceDetectorService::class);
         $deviceId = $request->header('X-Device-Id') ?? $request->input('device_id') ?? $request->input('device_uuid');
-        $deviceName = $request->device_name ?? ($deviceId ? "Trusted POS Terminal ({$deviceId})" : 'POS Register Terminal (' . $this->parseDeviceName($request->userAgent()) . ')');
+        $deviceName = $request->device_name ?? ($deviceId ? "Trusted POS Terminal ({$deviceId})" : 'POS Register Terminal (' . $detector->parseDeviceName($request->userAgent()) . ')');
+        $browser = $detector->parseBrowser($request->userAgent());
+        $platform = $detector->parsePlatform($request->userAgent());
+        $location = $detector->parseLocation($request);
         $expiresAt = now()->addSeconds($jwtService->getRefreshTtlSeconds());
 
         // Enforce Principle of Least Privilege: POS PIN login grants limited POS abilities only
@@ -373,13 +393,21 @@ class AuthController extends Controller
         $tokenResult = $user->createToken($deviceName, $posAbilities, $expiresAt);
         $plainToken = $tokenResult->plainTextToken;
 
+        $posTokenMetadata = [
+            'ip_address' => $request->ip(),
+            'user_agent' => substr($request->userAgent() ?? '', 0, 500),
+            'device_name' => $deviceName,
+            'browser' => $browser,
+            'platform' => $platform,
+            'last_used_at' => now(),
+        ];
+        if (!empty($location)) {
+            $posTokenMetadata['location'] = $location;
+        }
+
         DB::table('personal_access_tokens')
             ->where('id', $tokenResult->accessToken->id)
-            ->update([
-                'ip_address' => $request->ip(),
-                'user_agent' => substr($request->userAgent() ?? '', 0, 500),
-                'device_name' => $deviceName,
-            ]);
+            ->update($posTokenMetadata);
 
         if ($user->tenant_id) {
             $tenant = DB::table('tenants')->where('id', $user->tenant_id)->first();
@@ -540,33 +568,118 @@ class AuthController extends Controller
      * Active Devices & Sessions Listing.
      * GET /api/v1/auth/sessions
      */
-    #[OpenApiResponse(status: 200, description: 'Sessions retrieved successfully', type: 'array{status: string, message: string, data: array<int, array{id: string, name: string, device_name: string, ip_address: ?string, user_agent: ?string, is_current: bool, last_used_at: ?string, created_at: ?string}>}')]
+    #[OpenApiResponse(status: 200, description: 'Sessions retrieved successfully', type: 'array{status: string, message: string, data: array<int, array{id: string, name: string, device_name: string, browser: string, platform: string, ip_address: ?string, user_agent: ?string, is_current: bool, last_used_at: ?string, created_at: ?string, location?: ?string}>}')]
     public function sessions(Request $request)
     {
         $user = $request->user();
         $currentTokenId = $user->currentAccessToken()?->id;
+
+        /** @var DeviceDetectorService $detector */
+        $detector = app(DeviceDetectorService::class);
+        $inactivityDays = $user->session_inactivity_days ?: 180;
 
         $tokens = DB::table('personal_access_tokens')
             ->where('tokenable_id', $user->id)
             ->where('tokenable_type', get_class($user))
             ->orderBy('last_used_at', 'desc')
             ->get()
-            ->map(function ($token) use ($currentTokenId) {
-                return [
-                    'id' => $token->id,
+            ->map(function ($token) use ($currentTokenId, $detector) {
+                $browser = $token->browser ?? $detector->parseBrowser($token->user_agent);
+                $platform = $token->platform ?? $detector->parsePlatform($token->user_agent);
+                $deviceName = $token->device_name ?? $detector->parseDeviceName($token->user_agent);
+                $location = $token->location ?? null;
+
+                $data = [
+                    'id' => (string) $token->id,
                     'name' => $token->name,
-                    'device_name' => $token->device_name ?? $token->name ?? 'Unknown Device',
-                    'ip_address' => $token->ip_address,
+                    'device_name' => $deviceName,
+                    'browser' => $browser,
+                    'platform' => $platform,
+                    'ip_address' => $token->ip_address ?? '127.0.0.1',
                     'user_agent' => $token->user_agent,
                     'is_current' => (string) $token->id === (string) $currentTokenId,
-                    'last_used_at' => $token->last_used_at ?? $token->created_at,
-                    'created_at' => $token->created_at,
+                    'last_used_at' => $token->last_used_at
+                        ? \Illuminate\Support\Carbon::parse($token->last_used_at)->toIso8601String()
+                        : ($token->created_at ? \Illuminate\Support\Carbon::parse($token->created_at)->toIso8601String() : null),
+                    'created_at' => $token->created_at
+                        ? \Illuminate\Support\Carbon::parse($token->created_at)->toIso8601String()
+                        : null,
                 ];
+
+                if (!empty($location)) {
+                    $data['location'] = $location;
+                }
+
+                return $data;
             });
 
         return $this->successResponse(
             data: $tokens,
-            message: 'Sessions retrieved successfully.'
+            message: 'Sessions retrieved successfully.',
+            extra: [
+                'session_inactivity_days' => $inactivityDays,
+                'available_inactivity_options' => [7, 30, 90, 180, 365],
+            ]
+        );
+    }
+
+    /**
+     * Get Session Inactivity Timeout Settings.
+     * GET /api/v1/auth/sessions/settings
+     */
+    public function getSessionSettings(Request $request)
+    {
+        $user = $request->user();
+        return $this->successResponse(
+            data: [
+                'session_inactivity_days' => (int) ($user->session_inactivity_days ?: 180),
+                'available_options' => [7, 30, 90, 180, 365],
+            ],
+            message: 'Session settings retrieved successfully.'
+        );
+    }
+
+    /**
+     * Update Session Inactivity Timeout Settings.
+     * PUT /api/v1/auth/sessions/settings
+     */
+    public function updateSessionSettings(Request $request)
+    {
+        $validated = $request->validate([
+            'session_inactivity_days' => ['required', 'integer', 'in:7,30,90,180,365'],
+        ]);
+
+        $user = $request->user();
+        $user->session_inactivity_days = $validated['session_inactivity_days'];
+        $user->save();
+
+        return $this->successResponse(
+            data: [
+                'session_inactivity_days' => (int) $user->session_inactivity_days,
+                'available_options' => [7, 30, 90, 180, 365],
+            ],
+            message: 'Session inactivity timeout updated successfully.'
+        );
+    }
+
+    /**
+     * Session Heartbeat Ping.
+     * POST /api/v1/auth/sessions/ping
+     */
+    public function pingSession(Request $request)
+    {
+        $user = $request->user();
+        $currentToken = $user->currentAccessToken();
+        if ($currentToken) {
+            $currentToken->forceFill(['last_used_at' => now()])->save();
+        }
+
+        return $this->successResponse(
+            data: [
+                'last_used_at' => now()->toIso8601String(),
+                'is_active' => true,
+            ],
+            message: 'Heartbeat acknowledged.'
         );
     }
 
@@ -631,7 +744,15 @@ class AuthController extends Controller
     #[OpenApiResponse(status: 422, description: 'Missing invitation token', type: 'array{status: string, code: string, message: string}')]
     public function verifyInvite(Request $request)
     {
-        $token = $request->query('token');
+        $token = $request->query('token')
+            ?: $request->header('token')
+            ?: $request->header('Token')
+            ?: $request->header('x-token')
+            ?: $request->input('token');
+
+        if ($token && str_starts_with($token, 'Bearer ')) {
+            $token = trim(substr($token, 7));
+        }
 
         if (!$token) {
             return $this->errorResponse(
@@ -640,8 +761,9 @@ class AuthController extends Controller
             );
         }
 
+        $tokenHash = hash('sha256', $token);
         $invitation = DB::table('user_invitations')
-            ->where('token', $token)
+            ->where('token_hash', $tokenHash)
             ->whereNull('accepted_at')
             ->where('expires_at', '>', now())
             ->first();
@@ -652,15 +774,54 @@ class AuthController extends Controller
             );
         }
 
+        // Validate that role belongs to the invited tenant
+        $role = null;
+        if (!empty($invitation->role_id)) {
+            $role = DB::table('roles')->where('id', $invitation->role_id)->first();
+        }
+
+        if (!$role) {
+            return $this->errorResponse(
+                'Role configured for this invitation was not found.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::ROLE_NOT_FOUND
+            );
+        }
+
+        if ($role->tenant_id && (int) $role->tenant_id !== (int) $invitation->tenant_id) {
+            return $this->errorResponse(
+                'Role configured for this invitation does not belong to the invited tenant.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::FORBIDDEN
+            );
+        }
+
+        // Validate that outlet belongs to the invited tenant
+        $outlet = null;
+        if (!empty($invitation->outlet_uuid)) {
+            $outlet = DB::table('outlets')->where('uuid', $invitation->outlet_uuid)->first();
+        } elseif (!empty($invitation->outlet_id)) {
+            $outlet = DB::table('outlets')->where('id', $invitation->outlet_id)->first();
+        }
+
+        if ($outlet && $outlet->tenant_id && (int) $outlet->tenant_id !== (int) $invitation->tenant_id) {
+            return $this->errorResponse(
+                'Outlet configured for this invitation does not belong to the invited tenant.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::FORBIDDEN
+            );
+        }
+
         $tenant = $invitation->tenant_id ? DB::table('tenants')->where('id', $invitation->tenant_id)->first() : null;
-        $outlet = !empty($invitation->outlet_uuid) ? DB::table('outlets')->where('uuid', $invitation->outlet_uuid)->first() : null;
 
         return $this->successResponse(
             data: [
                 'email' => $invitation->email,
-                'role' => $invitation->role,
+                'role' => $role->slug,
+                'role_id' => $role->id,
                 'tenant_name' => $tenant->name ?? 'CodeBridges Store Organization',
                 'outlet_name' => $outlet->name ?? 'Primary Store',
+                'outlet_uuid' => $outlet?->uuid ?? ($invitation->outlet_uuid ?? null),
                 'expires_at' => $invitation->expires_at,
             ],
             message: 'Invitation is valid.'
@@ -680,8 +841,9 @@ class AuthController extends Controller
         $validated = $request->validated();
 
         return DB::transaction(function () use ($validated, $request) {
+            $tokenHash = hash('sha256', $validated['token']);
             $invitation = DB::table('user_invitations')
-                ->where('token', $validated['token'])
+                ->where('token_hash', $tokenHash)
                 ->whereNull('accepted_at')
                 ->where('expires_at', '>', now())
                 ->lockForUpdate()
@@ -691,6 +853,15 @@ class AuthController extends Controller
                 return $this->errorResponse(
                     'Invalid or expired invitation link.',
                     HttpStatus::UNPROCESSABLE_ENTITY
+                );
+            }
+
+            // Validate matching email if explicitly provided
+            if (!empty($validated['email']) && strtolower(trim($invitation->email)) !== strtolower(trim($validated['email']))) {
+                return $this->errorResponse(
+                    'The provided email address does not match this invitation.',
+                    HttpStatus::UNPROCESSABLE_ENTITY,
+                    ResponseCode::INVALID_CREDENTIALS
                 );
             }
 
@@ -717,10 +888,14 @@ class AuthController extends Controller
                     }
                 }
 
-                DB::table('users')->where('id', $existingUser->id)->update([
+                $userUpdates = [
                     'name' => $validated['name'] ?? $existingUser->name,
                     'updated_at' => now(),
-                ]);
+                ];
+                if (!empty($validated['phone'])) {
+                    $userUpdates['phone'] = $validated['phone'];
+                }
+                DB::table('users')->where('id', $existingUser->id)->update($userUpdates);
                 $user = User::find($existingUser->id);
             } else {
                 $user = User::create([
@@ -734,18 +909,25 @@ class AuthController extends Controller
             }
 
             // Resolve role within tenant or global scope; reject if not found
-            $roleQuery = DB::table('roles')->where('slug', $invitation->role);
-            if (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'tenant_id')) {
-                $roleQuery->where(function ($q) use ($invitation) {
-                    $q->where('tenant_id', $invitation->tenant_id)->orWhereNull('tenant_id');
-                });
+            $role = null;
+            if (!empty($invitation->role_id)) {
+                $role = DB::table('roles')->where('id', $invitation->role_id)->first();
             }
-            $role = $roleQuery->first();
+
             if (!$role) {
                 return $this->errorResponse(
                     'Configured role for this invitation was not found.',
                     HttpStatus::UNPROCESSABLE_ENTITY,
                     ResponseCode::ROLE_NOT_FOUND
+                );
+            }
+
+            // Enforce: Role must belong to the invited tenant (or global system role)
+            if ($role->tenant_id && (int) $role->tenant_id !== (int) $invitation->tenant_id) {
+                return $this->errorResponse(
+                    'Configured role does not belong to the invited tenant.',
+                    HttpStatus::UNPROCESSABLE_ENTITY,
+                    ResponseCode::FORBIDDEN
                 );
             }
             $roleId = $role->id;
@@ -765,12 +947,28 @@ class AuthController extends Controller
                 ]
             );
 
+            // Enforce: Outlet must belong to the invited tenant
             $outletUuid = $invitation->outlet_uuid ?? null;
-            if ($outletUuid && $tenantUser) {
-                TenantUserOutlet::firstOrCreate(
-                    ['tenant_user_id' => $tenantUser->id, 'outlet_uuid' => $outletUuid],
-                    ['is_primary' => true, 'is_active' => true]
-                );
+            if (!$outletUuid && !empty($invitation->outlet_id)) {
+                $outletUuid = DB::table('outlets')->where('id', $invitation->outlet_id)->value('uuid');
+            }
+
+            if ($outletUuid) {
+                $outlet = DB::table('outlets')->where('uuid', $outletUuid)->first();
+                if ($outlet && $outlet->tenant_id && (int) $outlet->tenant_id !== (int) $invitation->tenant_id) {
+                    return $this->errorResponse(
+                        'Configured outlet does not belong to the invited tenant.',
+                        HttpStatus::UNPROCESSABLE_ENTITY,
+                        ResponseCode::FORBIDDEN
+                    );
+                }
+
+                if ($tenantUser) {
+                    TenantUserOutlet::firstOrCreate(
+                        ['tenant_user_id' => $tenantUser->id, 'outlet_uuid' => $outletUuid],
+                        ['is_active' => true]
+                    );
+                }
             }
 
             if (!empty($validated['pin_code'])) {

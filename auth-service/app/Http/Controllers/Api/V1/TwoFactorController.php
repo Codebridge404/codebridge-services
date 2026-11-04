@@ -233,20 +233,34 @@ class TwoFactorController extends Controller
         $jwtToken = $this->jwtService->generateTokenForUser($user);
         $refreshToken = $this->jwtService->generateRefreshTokenForUser($user);
 
-        $deviceName = $request->input('device_name') ?? $this->parseDeviceName($request->userAgent());
+        /** @var \App\Services\DeviceDetectorService $detector */
+        $detector = app(\App\Services\DeviceDetectorService::class);
+        $deviceName = $request->input('device_name') ?? $detector->parseDeviceName($request->userAgent());
+        $browser = $detector->parseBrowser($request->userAgent());
+        $platform = $detector->parsePlatform($request->userAgent());
+        $location = $detector->parseLocation($request);
+
         $expiresAt = now()->addSeconds($this->jwtService->getRefreshTtlSeconds());
         $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
         $this->jwtService->bindSession($tokenResult->accessToken);
         $jwtToken = $this->jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
         $refreshToken = $this->jwtService->generateRefreshTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
 
+        $twoFaTokenData = [
+            'ip_address' => $request->ip(),
+            'user_agent' => substr($request->userAgent() ?? '', 0, 500),
+            'device_name' => $deviceName,
+            'browser' => $browser,
+            'platform' => $platform,
+            'last_used_at' => now(),
+        ];
+        if (!empty($location)) {
+            $twoFaTokenData['location'] = $location;
+        }
+
         DB::table('personal_access_tokens')
             ->where('id', $tokenResult->accessToken->id)
-            ->update([
-                'ip_address' => $request->ip(),
-                'user_agent' => substr($request->userAgent() ?? '', 0, 500),
-                'device_name' => $deviceName,
-            ]);
+            ->update($twoFaTokenData);
 
         // Resolve workspace branding
         if ($user->tenant_id) {

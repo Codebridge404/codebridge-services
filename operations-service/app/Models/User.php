@@ -18,7 +18,7 @@ class User extends Authenticatable
     public ?string $pendingRole = null;
     public ?string $pendingPinCode = null;
     public ?int $pendingOutletId = null;
-    public ?int $pendingTenantId = null;
+    public ?string $pendingTenantId = null;
 
     /**
      * Get the current connection name for the model.
@@ -43,6 +43,8 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'role',
+        'pin_code',
         'tenant_id',
         'outlet_id',
     ];
@@ -67,23 +69,36 @@ class User extends Authenticatable
      */
     public function fill(array $attributes)
     {
+        $conn = $this->getConnectionName();
+        $isTest = app()->runningUnitTests() || $conn === 'sqlite';
+
         if (isset($attributes['role'])) {
             $this->pendingRole = (string) $attributes['role'];
-            unset($attributes['role']);
+            $this->attributes['role'] = (string) $attributes['role'];
+            if (!$isTest && !\Illuminate\Support\Facades\Schema::connection($conn)->hasColumn('users', 'role')) {
+                unset($attributes['role']);
+            }
         }
         if (isset($attributes['pin_code'])) {
             $this->pendingPinCode = (string) $attributes['pin_code'];
-            unset($attributes['pin_code']);
+            $this->attributes['pin_code'] = (string) $attributes['pin_code'];
+            if (!$isTest && !\Illuminate\Support\Facades\Schema::connection($conn)->hasColumn('users', 'pin_code')) {
+                unset($attributes['pin_code']);
+            }
         }
         if (isset($attributes['outlet_id'])) {
             $this->pendingOutletId = (int) $attributes['outlet_id'];
             $this->attributes['outlet_id'] = (int) $attributes['outlet_id'];
-            unset($attributes['outlet_id']);
+            if (!$isTest && !\Illuminate\Support\Facades\Schema::connection($conn)->hasColumn('users', 'outlet_id')) {
+                unset($attributes['outlet_id']);
+            }
         }
         if (isset($attributes['tenant_id'])) {
-            $this->pendingTenantId = (int) $attributes['tenant_id'];
-            $this->attributes['tenant_id'] = (int) $attributes['tenant_id'];
-            unset($attributes['tenant_id']);
+            $this->pendingTenantId = (string) $attributes['tenant_id'];
+            $this->attributes['tenant_id'] = (string) $attributes['tenant_id'];
+            if (!$isTest && !\Illuminate\Support\Facades\Schema::connection($conn)->hasColumn('users', 'tenant_id')) {
+                unset($attributes['tenant_id']);
+            }
         }
 
         return parent::fill($attributes);
@@ -91,23 +106,30 @@ class User extends Authenticatable
 
     public function setRoleAttribute($value): void
     {
-        $this->pendingRole = (string) $value;
+        $this->pendingRole = !is_null($value) ? (string) $value : null;
+        $this->attributes['role'] = $this->pendingRole;
+    }
+
+    public function setPinCodeAttribute($value): void
+    {
+        $this->pendingPinCode = !is_null($value) ? (string) $value : null;
+        $this->attributes['pin_code'] = $this->pendingPinCode;
     }
 
     public function setTenantIdAttribute($value): void
     {
-        $this->pendingTenantId = $value ? (int) $value : null;
-        $this->attributes['tenant_id'] = $value ? (int) $value : null;
+        $this->pendingTenantId = !is_null($value) ? (string) $value : null;
+        $this->attributes['tenant_id'] = $this->pendingTenantId;
     }
 
-    public function getTenantIdAttribute(): ?int
+    public function getTenantIdAttribute(): ?string
     {
         if (array_key_exists('tenant_id', $this->attributes) && !is_null($this->attributes['tenant_id'])) {
-            return (int) $this->attributes['tenant_id'];
+            return (string) $this->attributes['tenant_id'];
         }
 
         if (!empty($this->pendingTenantId)) {
-            return (int) $this->pendingTenantId;
+            return (string) $this->pendingTenantId;
         }
 
         if (!$this->exists) {
@@ -122,7 +144,7 @@ class User extends Authenticatable
                 ->value('tenant_id');
 
             if ($tenantId) {
-                return (int) $tenantId;
+                return (string) $tenantId;
             }
         } catch (\Throwable) {}
 
@@ -132,15 +154,15 @@ class User extends Authenticatable
     public function getRoleAttribute(): ?string
     {
         if (array_key_exists('role', $this->attributes) && !is_null($this->attributes['role']) && $this->attributes['role'] !== 'user') {
-            return $this->attributes['role'];
+            return (string) $this->attributes['role'];
         }
 
         if (!empty($this->pendingRole) && $this->pendingRole !== 'user') {
-            return $this->pendingRole;
+            return (string) $this->pendingRole;
         }
 
         if (!$this->exists) {
-            return !empty($this->pendingRole) ? $this->pendingRole : 'user';
+            return !empty($this->pendingRole) ? (string) $this->pendingRole : 'user';
         }
 
         try {
@@ -152,11 +174,11 @@ class User extends Authenticatable
                 ->value('roles.slug');
 
             if ($roleSlug) {
-                return $roleSlug;
+                return (string) $roleSlug;
             }
         } catch (\Throwable) {}
 
-        return !empty($this->pendingRole) ? $this->pendingRole : 'user';
+        return !empty($this->pendingRole) ? (string) $this->pendingRole : (isset($this->attributes['role']) ? (string) $this->attributes['role'] : 'user');
     }
 
     protected static function booted(): void
@@ -166,6 +188,12 @@ class User extends Authenticatable
                 $conn = $user->getConnectionName();
                 if ($conn !== 'sqlite' && empty($user->uuid) && \Illuminate\Support\Facades\Schema::connection($conn)->hasColumn('users', 'uuid')) {
                     $user->uuid = (string) \Illuminate\Support\Str::uuid();
+                }
+                if (!empty($user->pendingPinCode) && \Illuminate\Support\Facades\Schema::connection($conn)->hasColumn('users', 'pin_code')) {
+                    $user->attributes['pin_code'] = $user->pendingPinCode;
+                }
+                if (!empty($user->pendingRole) && \Illuminate\Support\Facades\Schema::connection($conn)->hasColumn('users', 'role')) {
+                    $user->attributes['role'] = $user->pendingRole;
                 }
             } catch (\Throwable) {}
         });

@@ -49,7 +49,7 @@ run_rule_check "1" "Unit Testing (Methods, Classes & Domain Models)" \
 # 2. Functional & API Testing
 # ------------------------------------------------------------------------------
 run_rule_check "2" "Functional & API Testing (Endpoints, Responses & Status Codes)" \
-    "php artisan test --filter=AuthTest,AdminTest,ApiKeysTest,TenantsTest,UsersTest"
+    "php artisan test --filter=AuthTest,AdminTest,ApiKeysTest,TenantsTest,UsersTest,UserInvitationTest"
 
 # ------------------------------------------------------------------------------
 # 3. Input Validation Testing

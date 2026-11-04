@@ -19,14 +19,6 @@ return [
         'version' => '1.0.2',
         'description' => 'Auth & Identity Microservice API Documentation',
     ],
-    'security_strategy' => [
-        \Dedoc\Scramble\SecurityDocumentation\MiddlewareAuthSecurityStrategy::class,
-        [
-            'middleware' => ['auth', 'auth:*'],
-            'scheme' => \Dedoc\Scramble\Support\Generator\SecurityScheme::http('bearer', 'JWT')
-                ->as('bearerAuth')
-                ->setDescription('Enter your Sanctum access_token or Bearer token'),
-        ],
-    ],
+    'security_strategy' => null,
 ];
 

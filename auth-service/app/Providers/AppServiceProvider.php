@@ -31,7 +31,28 @@ class AppServiceProvider extends ServiceProvider
             Gate::define('viewApiDocs', fn ($user = null) => true);
 
             Scramble::configure()
-                ->routes(fn ($route) => str_starts_with($route->uri(), 'api/'));
+                ->routes(fn ($route) => str_starts_with($route->uri(), 'api/'))
+                ->withOperationTransformers(function (\Dedoc\Scramble\Configuration\OperationTransformers $transformers) {
+                    $transformers->append(function (\Dedoc\Scramble\Support\Generator\Operation $operation, \Dedoc\Scramble\Support\RouteInfo $routeInfo) {
+                        $middlewares = collect($routeInfo->route->gatherMiddleware());
+                        $isAuthProtected = $middlewares->some(fn ($m) => \Illuminate\Support\Str::is(['auth', 'auth:*'], $m));
+
+                        if ($isAuthProtected) {
+                            $operation->security = [
+                                new \Dedoc\Scramble\Support\Generator\SecurityRequirement(['bearerAuth' => []]),
+                            ];
+                        } else {
+                            $operation->security = [];
+                        }
+                    });
+                })
+                ->afterOpenApiGenerated(function (\Dedoc\Scramble\Support\Generator\OpenApi $openApi) {
+                    $scheme = \Dedoc\Scramble\Support\Generator\SecurityScheme::http('bearer', 'JWT')
+                        ->as('bearerAuth')
+                        ->setDescription('Enter your Sanctum access_token or Bearer token');
+                    $openApi->components->addSecurityScheme('bearerAuth', $scheme);
+                    $openApi->security = null;
+                });
         }
     }
 }

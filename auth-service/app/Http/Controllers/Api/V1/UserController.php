@@ -80,24 +80,25 @@ class UserController extends Controller
 
         $users = $query->select(
             'u.id', 'u.uuid',
-            DB::raw('COALESCE(tu.tenant_id, u.tenant_id, NULL) as tenant_id'),
+            DB::raw('COALESCE(tu.tenant_id, NULL) as tenant_id'),
             'u.name', 'u.email', 'u.phone',
-            DB::raw('COALESCE(r.slug, u.role, "user") as role'),
+            'r.slug',
+            DB::raw('COALESCE(r.slug, "user") as role'),
             DB::raw('r.id as role_id'),
             DB::raw('r.name as role_name'),
-            DB::raw('COALESCE(r.slug, u.role, "user") as role_slug'),
-            DB::raw('COALESCE(o.id, u.outlet_id, NULL) as outlet_id'),
+            DB::raw('COALESCE(r.slug, "user") as role_slug'),
+            DB::raw('COALESCE(o.id, NULL) as outlet_id'),
             DB::raw('COALESCE(tuo.outlet_uuid, NULL) as outlet_uuid'),
             DB::raw('NULL as pin_code'),
             'u.is_active',
             'u.created_at', 'o.name as outlet_name'
         )->distinct()
         ->orderByRaw("CASE 
-            WHEN COALESCE(r.slug, u.role) = 'super_admin' THEN 1
-            WHEN COALESCE(r.slug, u.role) = 'organization' THEN 2
-            WHEN COALESCE(r.slug, u.role) = 'admin' THEN 3
-            WHEN COALESCE(r.slug, u.role) = 'outlet_manager' THEN 4
-            WHEN COALESCE(r.slug, u.role) = 'cashier' THEN 5
+            WHEN r.slug = 'super_admin' THEN 1
+            WHEN r.slug = 'organization' THEN 2
+            WHEN r.slug = 'admin' THEN 3
+            WHEN r.slug = 'outlet_manager' THEN 4
+            WHEN r.slug = 'cashier' THEN 5
             ELSE 6 END ASC")
         ->orderBy('u.created_at', 'desc')->get();
 
@@ -374,62 +375,7 @@ class UserController extends Controller
 
     public function invite(InviteUserRequest $request)
     {
-        $validated = $request->validated();
-
-        $currentUser = $request->user();
-        $tenantId = ($currentUser?->role === 'super_admin' && !empty($validated['tenant_id']))
-            ? $validated['tenant_id']
-            : $currentUser?->tenant_id;
-
-        $existing = DB::table('users')->where('email', $validated['email'])->first();
-        if ($existing && $tenantId) {
-            $isAlreadyMember = DB::table('tenant_users')
-                ->where('tenant_id', $tenantId)
-                ->where('user_id', $existing->id)
-                ->where('status', 'active')
-                ->exists();
-            if ($isAlreadyMember) {
-                return response()->json(['status' => 'error', 'message' => 'A user with this email already belongs to your workspace.'], 422);
-            }
-        }
-
-        if ($quotaErr = $this->checkQuota($currentUser, $tenantId)) {
-            return response()->json(['status' => 'error', 'code' => 'QUOTA_EXCEEDED', 'message' => $quotaErr], 403);
-        }
-
-        // Prevent non-super_admin from inviting super_admin role
-        $roleToInvite = $validated['role'];
-        if ($roleToInvite === 'super_admin' && (!$currentUser || $currentUser->role !== 'super_admin')) {
-            $roleToInvite = 'employee';
-        }
-
-        $inviteToken = Str::random(48);
-        DB::table('user_invitations')->where('email', $validated['email'])->whereNull('accepted_at')->delete();
-
-        $inviteId = DB::table('user_invitations')->insertGetId([
-            'tenant_id' => $tenantId,
-            'outlet_id' => $validated['outlet_id'] ?? null,
-            'email' => $validated['email'],
-            'role' => $roleToInvite,
-            'token' => $inviteToken,
-            'invited_by' => $currentUser?->id,
-            'expires_at' => now()->addDays(7),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
-
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Staff invitation link generated successfully.',
-            'data' => [
-                'id' => $inviteId,
-                'email' => $validated['email'],
-                'role' => $roleToInvite,
-                'token' => $inviteToken,
-                'invite_url' => "/accept-invite?token={$inviteToken}",
-                'expires_at' => now()->addDays(7)->toIso8601String(),
-            ],
-        ], 201);
+        return app(\App\Http\Controllers\Api\V1\UserInvitationController::class)->store($request);
     }
 
     public function update(UpdateUserRequest $request, $id)

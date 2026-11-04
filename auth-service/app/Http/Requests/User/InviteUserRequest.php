@@ -25,8 +25,11 @@ class InviteUserRequest extends FormRequest
     {
         return [
             'email' => ['required', 'email', 'max:255'],
-            'role' => ['required', 'string', Rule::in(UserController::getAllowedRoles())],
-            'outlet_id' => ['nullable', 'string'],
+            'role' => ['required_without:role_id', 'nullable', 'string'],
+            'role_id' => ['required_without:role', 'nullable', 'integer', 'exists:roles,id'],
+            'outlet_id' => ['nullable'],
+            'outlet_uuid' => ['nullable', 'string', 'size:36'],
+            'tenant_id' => ['nullable', 'integer', 'exists:tenants,id'],
         ];
     }
 }
