@@ -47,6 +47,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'two_factor_recovery_codes',
         'two_factor_confirmed_at',
         'two_factor_enabled',
+        'session_inactivity_days',
     ];
 
     /**
@@ -453,6 +454,7 @@ class User extends Authenticatable implements MustVerifyEmail
             'password' => 'hashed',
             'two_factor_enabled' => 'boolean',
             'is_active' => 'boolean',
+            'session_inactivity_days' => 'integer',
         ];
     }
 

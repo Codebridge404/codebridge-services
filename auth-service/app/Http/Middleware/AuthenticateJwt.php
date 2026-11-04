@@ -98,6 +98,24 @@ class AuthenticateJwt
                 if (!empty($payload['sid'])) {
                     $session = $this->jwtService->sessionForPayload($payload);
                     if (!$session) return response()->json(['status' => 'error', 'code' => 'TOKEN_REVOKED', 'message' => 'Session has been revoked.'], 401);
+
+                    // Enforce account inactivity timeout policy
+                    $inactivityDays = $user->session_inactivity_days ?: 180;
+                    $lastActive = $session->last_used_at ? \Illuminate\Support\Carbon::parse($session->last_used_at) : ($session->created_at ? \Illuminate\Support\Carbon::parse($session->created_at) : null);
+                    if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
+                        $session->delete();
+                        return response()->json([
+                            'status' => 'error',
+                            'code' => 'SESSION_EXPIRED',
+                            'message' => 'Session has expired due to inactivity.',
+                        ], 401);
+                    }
+
+                    // Throttle updating last_used_at to at most once every 60 seconds
+                    if (!$session->last_used_at || \Illuminate\Support\Carbon::parse($session->last_used_at)->diffInSeconds(now()) >= 60) {
+                        $session->forceFill(['last_used_at' => now()])->save();
+                    }
+
                     $user->withAccessToken($session);
                 }
                 $request->attributes->set('is_pos_session', !empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos');

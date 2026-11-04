@@ -172,7 +172,24 @@ class JwtService
             return null;
         }
 
-        if (!empty($payload['sid']) && !$this->sessionForPayload($payload)) return null;
+        if (!empty($payload['sid'])) {
+            $session = $this->sessionForPayload($payload);
+            if (!$session) return null;
+
+            // Enforce account inactivity timeout on token refresh
+            if (!empty($payload['sub'])) {
+                $user = User::find($payload['sub']);
+                if ($user) {
+                    $inactivityDays = $user->session_inactivity_days ?: 180;
+                    $lastActive = $session->last_used_at ? \Illuminate\Support\Carbon::parse($session->last_used_at) : ($session->created_at ? \Illuminate\Support\Carbon::parse($session->created_at) : null);
+                    if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
+                        $session->delete();
+                        return null;
+                    }
+                    $session->forceFill(['last_used_at' => now()])->save();
+                }
+            }
+        }
 
         // Must be explicitly marked as a refresh token
         if (($payload['token_use'] ?? null) !== 'refresh') {

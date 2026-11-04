@@ -80,24 +80,24 @@ class UserController extends Controller
 
         $users = $query->select(
             'u.id', 'u.uuid',
-            DB::raw('COALESCE(tu.tenant_id, u.tenant_id, NULL) as tenant_id'),
+            DB::raw('COALESCE(tu.tenant_id, NULL) as tenant_id'),
             'u.name', 'u.email', 'u.phone',
-            DB::raw('COALESCE(r.slug, u.role, "user") as role'),
+            DB::raw('COALESCE(r.slug, "user") as role'),
             DB::raw('r.id as role_id'),
             DB::raw('r.name as role_name'),
-            DB::raw('COALESCE(r.slug, u.role, "user") as role_slug'),
-            DB::raw('COALESCE(o.id, u.outlet_id, NULL) as outlet_id'),
+            DB::raw('COALESCE(r.slug, "user") as role_slug'),
+            DB::raw('COALESCE(o.id, NULL) as outlet_id'),
             DB::raw('COALESCE(tuo.outlet_uuid, NULL) as outlet_uuid'),
             DB::raw('NULL as pin_code'),
             'u.is_active',
             'u.created_at', 'o.name as outlet_name'
         )->distinct()
         ->orderByRaw("CASE 
-            WHEN COALESCE(r.slug, u.role) = 'super_admin' THEN 1
-            WHEN COALESCE(r.slug, u.role) = 'organization' THEN 2
-            WHEN COALESCE(r.slug, u.role) = 'admin' THEN 3
-            WHEN COALESCE(r.slug, u.role) = 'outlet_manager' THEN 4
-            WHEN COALESCE(r.slug, u.role) = 'cashier' THEN 5
+            WHEN r.slug = 'super_admin' THEN 1
+            WHEN r.slug = 'organization' THEN 2
+            WHEN r.slug = 'admin' THEN 3
+            WHEN r.slug = 'outlet_manager' THEN 4
+            WHEN r.slug = 'cashier' THEN 5
             ELSE 6 END ASC")
         ->orderBy('u.created_at', 'desc')->get();
 

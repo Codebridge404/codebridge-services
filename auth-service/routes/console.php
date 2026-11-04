@@ -14,3 +14,6 @@ Schedule::command('meetings:send-reminders')->everyMinute()->withoutOverlapping(
 
 // Customer Store Credit & Digital Voucher Daily Expiration Sweep
 Schedule::command('store-credit:expire')->dailyAt('00:05')->withoutOverlapping();
+
+// Inactive & Expired Sessions Periodic Cleanup Sweep
+Schedule::command('sessions:cleanup-inactive')->hourly()->withoutOverlapping();

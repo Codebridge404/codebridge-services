@@ -17,6 +17,20 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // [BD-0040] Preserve visitor real-IP across Nginx -> Kubernetes -> Laravel proxy chain
+        $trustedProxies = env('TRUSTED_PROXIES', '*');
+        if ($trustedProxies === '*' || $trustedProxies === '**') {
+            $middleware->trustProxies(at: '*');
+        } else {
+            $middleware->trustProxies(at: array_map('trim', explode(',', (string) $trustedProxies)));
+        }
+        $middleware->trustProxies(headers: \Illuminate\Http\Request::HEADER_X_FORWARDED_FOR |
+            \Illuminate\Http\Request::HEADER_X_FORWARDED_HOST |
+            \Illuminate\Http\Request::HEADER_X_FORWARDED_PORT |
+            \Illuminate\Http\Request::HEADER_X_FORWARDED_PROTO |
+            \Illuminate\Http\Request::HEADER_X_FORWARDED_AWS_ELB
+        );
+
         $middleware->redirectGuestsTo(fn () => null);
         $middleware->api(prepend: [\App\Http\Middleware\AuthenticateJwt::class]);
         $middleware->append(LogRequestActivity::class);
