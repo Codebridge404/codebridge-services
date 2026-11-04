@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-04
+ * Task: Internal Packaging Expense & FEFO Batch Drawer (BD-0134)
+ */
+
 use App\Http\Controllers\Api\V1\InventoryController;
 use App\Http\Controllers\Api\V1\PurchaseController;
 use App\Http\Controllers\Api\V1\TransferController;
@@ -16,6 +22,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/inventory/cross-outlet-stock', [InventoryController::class, 'crossOutletStock']);
     Route::get('/inventory/movements', [InventoryController::class, 'movements']);
     Route::get('/inventory/expired', [InventoryController::class, 'expired']);
+    Route::get('/inventory/batches', [InventoryController::class, 'batches']);
     Route::get('/inventory/transfers', [TransferController::class, 'index']);
     Route::get('/inventory/transfers/{id}', [TransferController::class, 'show']);
     Route::get('/purchases', [PurchaseController::class, 'purchases']);
@@ -26,6 +33,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('role:organization,admin,super_admin,outlet_manager,inventory_clerk')->group(function () {
         Route::post('/inventory/receive', [InventoryController::class, 'receive']);
         Route::post('/inventory/adjust', [InventoryController::class, 'adjust']);
+        Route::post('/inventory/internal-consumption', [InventoryController::class, 'internalConsumption']);
         Route::post('/inventory/transfers', [TransferController::class, 'store']);
         Route::post('/inventory/transfers/{id}/receive', [TransferController::class, 'receive']);
         Route::patch('/inventory/transfers/{id}/dispute', [TransferController::class, 'dispute']);

@@ -1831,6 +1831,142 @@ Step 4 (Automated User Role Elevation on Tenant Creation): Resolved session role
 Step 5 (Backend Tenant User Association Fallback): Enhanced TenantController::store() to inspect Sanctum session user as well as lookup user by email fallback, cleanly binding the tenant to the authenticated registrant and promoting their role directly to "organization" without duplicate records.
 Step 6 (Role Sorting & Stale Role Display Fix): Updated UserController::index() to order records by role priority hierarchy (super_admin > organization > admin > outlet_manager > cashier > user) and resolve effective role via COALESCE(r.slug, u.role, "user").
 
-================================================================================
+--------------------------------------------------------------------------------
+TICKET: BD-0131 - Complete Project & Agent Harness Setup, Safety Guardrails, Post-Edit Formatter & Collaborative Team Desks
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0131
+Component / Service:    Workspace Architecture & Antigravity Harness
+File Path:              AGENTS.md, GEMINI.md, .agents/hooks.json, .agents/rules/safety.md, .agents/rules/file-header.md, .agents/rules/formatter.md, scripts/format.js, scripts/format.ps1, team/README.md, team/dev/README.md, team/QA/README.md, team/review/README.md, team/advisor/README.md, team/docs/README.md, tasks/README.md, tasks/template.md, tasks/0001_harness_setup.md
+Related Model / Service:Antigravity Harness, Team Desks, Slash Commands, Post-Edit Formatter
+Method / Entry Point:   /task, /dev, /qa, /review, /advisor, /doc
+Command / API Route:    node scripts/format.js, npm run build, php -l
+Date & Time:            2026-11-04T09:15:00+07:00
+Status:                 Completed & Approved (100% Master)
+
+Process Steps in Code:
+Step 1 (Authoritative Agent Manual): Authored AGENTS.md specifying project overview, architectural breakdown, startup procedures, testing protocols, safety rules, code quality standards, and team desks.
+Step 2 (Workspace Harmonization & Direct Linking): Updated GEMINI.md to link directly to AGENTS.md, standardizing safety policies (allow tests, ask before git push or installing packages, never read .env or secrets).
+Step 3 (Post-Edit Formatter Automation): Built scripts/format.js and scripts/format.ps1 with cross-platform ESLint (frontend) and Laravel Pint (backend) execution. Integrated post-tool use lifecycle hook via .agents/hooks.json.
+Step 4 (Collaborative Team Desks): Established the team/ directory with dedicated desks for dev, QA, review, advisor, and docs, defining clear responsibilities and runbooks for each role.
+Step 5 (Structured Task Management): Created tasks/ directory with template.md and initial task 0001_harness_setup.md enforcing the mandatory file header format (Author, Date, Task).
+Step 6 (Slash Command Workflows): Configured slash commands /task, /dev, /qa, /review, /advisor, and /doc using Antigravity skills and workflows for instant IDE invocation.
+
+============================================================================--------------------------------------------------------------------------------
+TICKET: BD-0132 - Priority Missing UI Integration: Cross-Outlet Stock Lookup, EOD Z-Report Dispatch, and Meeting iCalendar & Live RSVP
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0132
+Component / Service:    codebridgesfront & operations-service & auth-service
+File Path:              services/operations-service/app/Http/Controllers/Api/V1/InventoryController.php, codebridgesfront/lib/api/inventory.ts, codebridgesfront/components/pos/terminal/PosCrossOutletStockModal.tsx, codebridgesfront/components/pos/terminal/PosTerminalView.tsx, codebridgesfront/components/pos/terminal/index.ts, codebridgesfront/lib/api/shifts.ts, codebridgesfront/components/pos/shifts/PosEodDispatchModal.tsx, codebridgesfront/components/pos/shifts/PosShiftsManagementView.tsx, codebridgesfront/components/pos/shifts/index.ts, codebridgesfront/lib/api/meetings.ts, codebridgesfront/components/meetings/CalendarSyncDropdown.tsx, codebridgesfront/components/meetings/MeetingDashboardView.tsx
+Related Model / Service:InventoryController, ShiftController, MeetingController, PosTerminal, PosShiftsManagementView, MeetingDashboardView
+Method / Entry Point:   InventoryController::crossOutletStock(), ShiftController::zReport(), eodDispatch(), MeetingController::exportIcs(), rsvp()
+Command / API Route:    GET /api/v1/inventory/cross-outlet-stock, POST /api/v1/pos/reports/z-report, POST /api/v1/pos/shifts/eod-dispatch, GET /api/v1/meetings/{id}/ics, PATCH /api/v1/meetings/{id}/rsvp
+Date & Time:            2026-11-04T11:25:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Cross-Outlet Inventory Multi-Tenant Scoping): Strengthened InventoryController::crossOutletStock() to strictly scope both product search queries and branch inventory lookups by the authenticated tenant_id, preventing cross-tenant inventory balance leakage.
+Step 2 (POS Terminal Cross-Branch Stock Modal & Button): Upgraded PosCrossOutletStockModal to render via React Portals (createPortal(..., document.body)) with a fixed full-screen backdrop-blur-md scrim. Unlocked the "Branch Stock" button in PosTerminalView so cashiers can instantly search on-hand and available balances across network branch outlets directly from the register.
+Step 3 (End-of-Day Z-Report Reconciliation API & Modal): Added getZReportApi and dispatchEodZReportApi in lib/api/shifts.ts. Built PosEodDispatchModal with financial breakdown preview (gross sales, net sales, taxes, discounts, tender methods, drawer expected vs counted variance, registers closed count) and nightly email dispatch to store management.
+Step 4 (Shifts Management EOD Dispatch Integration): Integrated the "End-of-Day Z-Report" action button into PosShiftsManagementView header, linking modal execution with automated register close, thermal report printing, and real-time shift table refresh.
+Step 5 (Meeting Authenticated iCalendar Export): Added downloadMeetingIcsApi in lib/api/meetings.ts to fetch and download meeting .ics files with Bearer token authentication, and upgraded CalendarSyncDropdown to trigger seamless single-click .ics file export.
+Step 6 (Interactive Meeting RSVP Actions): Wired live RSVP buttons (Accept, Tentative, Decline) into MeetingDashboardView agenda items, dispatching PATCH /api/v1/meetings/{id}/rsvp with real-time UI state updates and success notifications.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0133 - 2FA Emergency Recovery Codes Modal, Email OTP Verification, NBC Currency Rate Sync & Cash Drawer Shift Variance Controls
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0133
+Component / Service:    codebridgesfront & auth-service & operations-service
+File Path:              services/auth-service/app/Http/Controllers/Api/V1/TwoFactorController.php, services/auth-service/routes/api/auth.php, codebridgesfront/lib/api/auth.ts, codebridgesfront/lib/api/shifts.ts, codebridgesfront/lib/api/payments.ts, codebridgesfront/components/profile/TwoFactorRecoveryCodesModal.tsx, codebridgesfront/components/profile/EmailVerificationOtpModal.tsx, codebridgesfront/components/profile/UserProfileView.tsx, codebridgesfront/components/profile/index.ts, codebridgesfront/components/pos/settings/PosPolicySettingsTab.tsx
+Related Model / Service:TwoFactorController, TwoFactorService, AuthController, UserProfileView, PosPolicySettingsTab, ExchangeRateController, ShiftController
+Method / Entry Point:   TwoFactorController::recoveryCodes(), regenerateRecoveryCodes(), AuthController::sendVerificationNotification(), verifyEmailCode(), ExchangeRateController::syncNbc(), ShiftController::varianceConfig(), testVarianceAlert()
+Command / API Route:    GET/POST /api/v1/auth/2fa/recovery-codes, POST /api/v1/auth/email/verification-notification, POST /api/v1/auth/email/verify-code, POST /api/v1/currencies/exchange-rate/sync-nbc, GET /api/v1/shifts/variance-config, POST /api/v1/shifts/test-variance-alert
+Date & Time:            2026-11-04T13:12:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (2FA Recovery Codes Retrieval & Regeneration APIs): Implemented recoveryCodes() and regenerateRecoveryCodes() in TwoFactorController to allow authenticated users to securely retrieve decrypted emergency recovery codes or discard old codes and generate 8 fresh one-time backup keys with audit logging.
+Step 2 (2FA Emergency Recovery Codes Modal): Created TwoFactorRecoveryCodesModal with full-screen React Portal backdrop (createPortal(..., document.body)). Implemented 8-code mono grid display, one-click copy to clipboard, downloadable .txt keyfile, and confirmation warning dialog for code regeneration.
+Step 3 (Email OTP Verification Modal & Status Badges): Created EmailVerificationOtpModal with 6-digit auto-advancing input cells, paste support, and a 60-second resend cooldown timer. Added dynamic "Verified" vs "Unverified" status pills in UserProfileView and an unverified email advisory banner with instant verification trigger.
+Step 4 (Profile View Security Integration): Embedded the "Recovery Codes" action button in the 2FA protection card and wired automated recovery code presentation immediately following initial 2FA confirmation.
+Step 5 (Live NBC Currency Exchange Rate 1-Click Sync): Added syncNbcExchangeRateApi() to payments API and added a "Sync NBC Rate" action button in PosPolicySettingsTab to immediately pull live daily USD/KHR exchange rates from the National Bank of Cambodia into active register settings.
+Step 6 (Cash Drawer Shift Variance Alerting Controls): Added variance tolerance threshold input ($ USD) and a "Send Test Variance Alert" trigger in PosPolicySettingsTab calling POST /api/v1/shifts/test-variance-alert to verify automated Telegram bot and manager email dispatch.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0134 - Internal Supplies & Packaging Expense Modal & FEFO Expiration Batch Drawer
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0134
+Component / Service:    codebridgesfront & operations-service
+File Path:              services/operations-service/app/Http/Controllers/Api/V1/InventoryController.php, services/operations-service/routes/api/inventory.php, codebridgesfront/lib/api/inventory.ts, codebridgesfront/components/inventory/InternalSuppliesExpenseModal.tsx, codebridgesfront/components/inventory/ProductBatchLotDrawer.tsx, codebridgesfront/components/inventory/products/ProductCatalogTable.tsx, codebridgesfront/components/inventory/products/ProductsCatalogView.tsx, codebridgesfront/components/inventory/index.ts
+Related Model / Service:InventoryController, InternalSuppliesExpenseModal, ProductBatchLotDrawer, ProductCatalogTable, ProductsCatalogView
+Method / Entry Point:   InventoryController::internalConsumption(), InventoryController::batches(), recordInternalConsumptionApi(), getInventoryBatchesApi()
+Command / API Route:    POST /api/v1/inventory/internal-consumption, GET /api/v1/inventory/batches
+Date & Time:            2026-11-04T15:52:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Internal Packaging & Supplies Consumption API): Implemented internalConsumption() in InventoryController to debit consumable balances (takeaway coffee cups, lids, food packaging, straws, napkins) directly to inventory_movements with movement_type "internal_consumption", preventing phantom stock balances without generating sales revenue or charging VAT.
+Step 2 (FEFO Batch & Lot Tracking API): Implemented batches() in InventoryController to aggregate stock lots ordered by expiry_date ASC. Dynamically computes FEFO prioritization categories: Urgent Clearance (<= 7 days), FEFO Priority 1 (<= 30 days), Fresh / Standard Stock, and Quarantined.
+Step 3 (Internal Supplies Expense Modal): Built InternalSuppliesExpenseModal using React Portals (createPortal(..., document.body)) with category filter pills, stock-on-hand guards, reason codes (Counter Dispenser Refill, Floor Replenish, Defective Batch), and auto-calculated cost impacts.
+Step 4 (FEFO Batch & Quarantine Slide-Over Drawer): Built ProductBatchLotDrawer with lot code search, expiry date urgency badges, batch status filters, and instant lot code copy to clipboard.
+Step 5 (Product Catalog Table & View Integration): Added action buttons ("Packaging Expense" and "FEFO Batches") to ProductCatalogTable and wired both modals into ProductsCatalogView with automatic inventory revalidation upon expense logging.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0135 - Meeting Facilities & Spatial Navigation 2D Architectural Floor Plan Locator
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0135
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/components/meetings/MeetingFloorPlanView.tsx, codebridgesfront/components/meetings/MeetingRoomsView.tsx
+Related Model / Service:MeetingRoomsView, MeetingFloorPlanView, MeetingBookingModal
+Method / Entry Point:   MeetingRoomsView, MeetingFloorPlanView
+Command / API Route:    GET /api/v1/meetings/rooms
+Date & Time:            2026-11-04T15:56:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Architectural 2D Vector CAD Canvas): Built MeetingFloorPlanView with high-precision vector blueprint geometry (viewBox 0 0 960 540) depicting exterior boundary walls, concourses, lifts, rest rooms, and barista lounges.
+Step 2 (Spatial Room Polygonal Zones & Live Glow): Mapped meeting room zones with dynamic live sensor heatmaps: translucent emerald pulse for free rooms, rose glow for in-session rooms, capacity badges, and animated status dots.
+Step 3 (Multi-Level Floor Navigation & Filter Chips): Integrated Level 01 (Main Boardrooms & Hall) and Level 02 (Tech Labs & Huddle Pods) tabs with filter chips for All Rooms, Available Now, 12+ Pax Boardrooms, and Video Conference Suites.
+Step 4 (Spatial Inspector & One-Click Booking): Built interactive side inspector card displaying room hardware facilities, active meeting countdown timer, and direct "Book Now" trigger calling MeetingBookingModal with room_id pre-populated.
+Step 5 (Dual View Toggle Integration): Integrated [Fleet Grid] | [Floor Plan Locator] pill switcher in MeetingRoomsView header to allow staff and visitors to alternate between standard cards and spatial navigation.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0136 - MinIO S3 Object Storage Platform & Infrastructure Health Probes
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0136
+Component / Service:    codebridgesfront & auth-service
+File Path:              services/auth-service/app/Http/Controllers/Api/V1/TelemetryController.php, services/auth-service/routes/api/super_admin.php, codebridgesfront/lib/api/infrastructure.ts, codebridgesfront/components/infrastructure/MinioStorageGovernanceView.tsx, codebridgesfront/components/infrastructure/SuperAdminInfrastructureView.tsx
+Related Model / Service:TelemetryController, MinioStorageGovernanceView, SuperAdminInfrastructureView
+Method / Entry Point:   TelemetryController::storageConfig(), TelemetryController::testStorageConnection(), getStorageConfigApi(), testStorageConnectionApi()
+Command / API Route:    GET /api/v1/super-admin/infrastructure/storage, POST /api/v1/super-admin/infrastructure/storage/test
+Date & Time:            2026-11-04T15:59:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (MinIO / S3 Storage Telemetry & Test APIs): Implemented storageConfig() and testStorageConnection() in TelemetryController to securely report cluster endpoints, region, capacity usage (GB), and dispatch live socket probes with round-trip ping measurements without leaking credentials.
+Step 2 (Three-Tier Bucket Governance Architecture): Designed governance policies separating primary operational assets (codebridge-operations), public CDN media (codebridge-public-media), and encrypted vaults (codebridge-secure-vault).
+Step 3 (MinIO Storage Governance View): Created MinioStorageGovernanceView with storage provider switcher (MinIO vs AWS S3), real-time capacity progress meter (48.2 GB / 500 GB), and masked credentials vault with reveal toggle.
+Step 4 (Live Storage Probe Action): Added "Test Storage Connection" trigger calling testStorageConnectionApi() with round-trip latency display, read/write test validation, and timestamped probe confirmation.
+Step 5 (Super Admin Infrastructure Integration): Embedded "MinIO / S3 Object Storage" tab in SuperAdminInfrastructureView alongside microservices and dual databases.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0137 - Customer Store Credit Prepayment Tax Invoicing & Voucher Code Redemption
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0137
+Component / Service:    codebridgesfront & auth-service & operations-service
+File Path:              services/auth-service/app/Http/Controllers/Api/V1/StoreCreditInvoiceController.php, services/auth-service/routes/api/organization.php, codebridgesfront/lib/api/tenants.ts, codebridgesfront/components/crm/customers/CustomerCreditTopupModal.tsx, codebridgesfront/components/crm/customers/VoucherRedeemModal.tsx, codebridgesfront/components/crm/customers/CustomerCardGrid.tsx, codebridgesfront/components/crm/customers/SuperAdminCustomersView.tsx, codebridgesfront/components/crm/customers/index.ts, codebridgesfront/components/pos/terminal/PosTerminalView.tsx
+Related Model / Service:StoreCreditInvoiceController, StoreCreditService, CouponController, CustomerCreditTopupModal, VoucherRedeemModal, CustomerCardGrid, SuperAdminCustomersView, PosTerminalView
+Method / Entry Point:   StoreCreditInvoiceController::topUp(), StoreCreditInvoiceController::redeemVoucher(), topupCustomerCreditInvoiceApi(), redeemDigitalVoucherApi()
+Command / API Route:    POST /api/v1/customers/{id}/credit/topup-invoice, POST /api/v1/vouchers/redeem, POST /api/v1/coupons/validate
+Date & Time:            2026-11-04T16:07:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Store Credit Invoicing & Voucher Backend Endpoints): Integrated StoreCreditInvoiceController::topUp() and redeemVoucher() with multi-tenant scoping and atomic ledger balancing in customer_credit_ledgers.
+Step 2 (Customer Store Credit Prepayment Tax Invoice Modal): Built CustomerCreditTopupModal with prepayment preset chips ($20-$500), tender method selector (Cash, KHQR, Card, Bank), customer TIN/VAT number input, automated 10% VAT tax itemization, and printable thermal tax receipt preview with official sequence numbering.
+Step 3 (Digital Voucher Redemption Modal): Built VoucherRedeemModal with uppercase code formatting, customer wallet binding, and instant balance crediting via POST /api/v1/vouchers/redeem.
+Step 4 (CRM Customers Grid Integration): Added "Top-Up" and "Voucher" action buttons to customer cards in CustomerCardGrid with real-time wallet balance pills ($0.00), and added a global "Redeem Voucher" trigger in SuperAdminCustomersView header.
+Step 5 (POS Terminal Voucher Quick Action): Added a "Voucher" redemption button to PosTerminalView quick actions so cashiers can redeem gift vouchers directly at the register before finalizing tenders.
+
+====
 END OF CODEBRIDGE SYSTEM MASTER TICKETS SPECIFICATION
 ================================================================================

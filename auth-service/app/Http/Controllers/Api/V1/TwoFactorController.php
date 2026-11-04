@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-04
+ * Task: 2FA Recovery Codes & Email OTP UI (BD-0133)
+ */
+
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
@@ -396,6 +402,89 @@ class TwoFactorController extends Controller
     /**
      * Resolve device name from user-agent header.
      */
+
+    /**
+     * Get active 2FA emergency recovery codes for the authenticated user.
+     * GET /api/v1/auth/2fa/recovery-codes
+     */
+    public function recoveryCodes(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return $this->unauthorizedResponse('Unauthenticated.');
+        }
+
+        if (!$user->two_factor_enabled) {
+            return $this->errorResponse(
+                'Two-factor authentication is not enabled for this account.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::VALIDATION_ERROR
+            );
+        }
+
+        $codes = $this->twoFactorService->getRecoveryCodes($user);
+        if (empty($codes)) {
+            $codes = $this->twoFactorService->generateRecoveryCodes(8);
+            $this->twoFactorService->storeRecoveryCodes($user, $codes);
+        }
+
+        return $this->successResponse(
+            message: 'Two-factor recovery codes retrieved successfully.',
+            headers: [
+                'Cache-Control' => 'no-store',
+                'Pragma' => 'no-cache',
+            ],
+            extra: [
+                'recovery_codes' => $codes,
+            ]
+        );
+    }
+
+    /**
+     * Regenerate 8 new 2FA emergency recovery codes for the authenticated user.
+     * POST /api/v1/auth/2fa/recovery-codes
+     */
+    public function regenerateRecoveryCodes(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return $this->unauthorizedResponse('Unauthenticated.');
+        }
+
+        if (!$user->two_factor_enabled) {
+            return $this->errorResponse(
+                'Two-factor authentication is not enabled for this account.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::VALIDATION_ERROR
+            );
+        }
+
+        $codes = $this->twoFactorService->generateRecoveryCodes(8);
+        $this->twoFactorService->storeRecoveryCodes($user, $codes);
+
+        $this->recordAuditLog(
+            action: 'auth.2fa_recovery_codes_regenerated',
+            module: 'auth',
+            entityType: 'user',
+            entityId: (string) $user->id,
+            details: "User {$user->email} regenerated 2FA emergency recovery codes",
+            userId: $user->id,
+            userName: $user->name,
+            tenantId: $user->tenant_id
+        );
+
+        return $this->successResponse(
+            message: 'New two-factor recovery codes generated successfully. Store your recovery codes in a secure location.',
+            headers: [
+                'Cache-Control' => 'no-store',
+                'Pragma' => 'no-cache',
+            ],
+            extra: [
+                'recovery_codes' => $codes,
+            ]
+        );
+    }
+
     private function parseDeviceName(?string $userAgent): string
     {
         if (empty($userAgent)) return 'Web Client';

@@ -21,8 +21,10 @@ Route::middleware('role:super_admin')->prefix('super-admin')->group(function () 
     Route::post('/tenants/{id}/suspend', [TenantController::class, 'suspend']);
     Route::delete('/tenants/{id}', [TenantController::class, 'destroy']);
 
-    // Infrastructure Telemetry
+    // Infrastructure Telemetry & Object Storage Governance (BD-0136)
     Route::get('/infrastructure/telemetry', [TelemetryController::class, 'index']);
+    Route::get('/infrastructure/storage', [TelemetryController::class, 'storageConfig']);
+    Route::post('/infrastructure/storage/test', [TelemetryController::class, 'testStorageConnection']);
 
     // Platform Support Desk & Broadcast Announcements
     Route::get('/support/tickets', [SupportController::class, 'tickets']);

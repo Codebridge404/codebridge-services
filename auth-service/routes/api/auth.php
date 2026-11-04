@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-04
+ * Task: 2FA Recovery Codes & Email OTP UI (BD-0133)
+ */
+
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\TwoFactorController;
 use Illuminate\Support\Facades\Route;
@@ -54,4 +60,6 @@ Route::middleware(['auth:sanctum', 'pos_scope'])->group(function () {
     Route::post('/auth/2fa/confirm', [TwoFactorController::class, 'confirm']);
     Route::post('/auth/2fa/disable', [TwoFactorController::class, 'disable']);
     Route::post('/auth/2fa/toggle', [TwoFactorController::class, 'toggle']);
+    Route::get('/auth/2fa/recovery-codes', [TwoFactorController::class, 'recoveryCodes']);
+    Route::post('/auth/2fa/recovery-codes', [TwoFactorController::class, 'regenerateRecoveryCodes']);
 });
