@@ -744,7 +744,15 @@ class AuthController extends Controller
     #[OpenApiResponse(status: 422, description: 'Missing invitation token', type: 'array{status: string, code: string, message: string}')]
     public function verifyInvite(Request $request)
     {
-        $token = $request->query('token');
+        $token = $request->query('token')
+            ?: $request->header('token')
+            ?: $request->header('Token')
+            ?: $request->header('x-token')
+            ?: $request->input('token');
+
+        if ($token && str_starts_with($token, 'Bearer ')) {
+            $token = trim(substr($token, 7));
+        }
 
         if (!$token) {
             return $this->errorResponse(
@@ -753,8 +761,9 @@ class AuthController extends Controller
             );
         }
 
+        $tokenHash = hash('sha256', $token);
         $invitation = DB::table('user_invitations')
-            ->where('token', $token)
+            ->where('token_hash', $tokenHash)
             ->whereNull('accepted_at')
             ->where('expires_at', '>', now())
             ->first();
@@ -765,15 +774,54 @@ class AuthController extends Controller
             );
         }
 
+        // Validate that role belongs to the invited tenant
+        $role = null;
+        if (!empty($invitation->role_id)) {
+            $role = DB::table('roles')->where('id', $invitation->role_id)->first();
+        }
+
+        if (!$role) {
+            return $this->errorResponse(
+                'Role configured for this invitation was not found.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::ROLE_NOT_FOUND
+            );
+        }
+
+        if ($role->tenant_id && (int) $role->tenant_id !== (int) $invitation->tenant_id) {
+            return $this->errorResponse(
+                'Role configured for this invitation does not belong to the invited tenant.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::FORBIDDEN
+            );
+        }
+
+        // Validate that outlet belongs to the invited tenant
+        $outlet = null;
+        if (!empty($invitation->outlet_uuid)) {
+            $outlet = DB::table('outlets')->where('uuid', $invitation->outlet_uuid)->first();
+        } elseif (!empty($invitation->outlet_id)) {
+            $outlet = DB::table('outlets')->where('id', $invitation->outlet_id)->first();
+        }
+
+        if ($outlet && $outlet->tenant_id && (int) $outlet->tenant_id !== (int) $invitation->tenant_id) {
+            return $this->errorResponse(
+                'Outlet configured for this invitation does not belong to the invited tenant.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::FORBIDDEN
+            );
+        }
+
         $tenant = $invitation->tenant_id ? DB::table('tenants')->where('id', $invitation->tenant_id)->first() : null;
-        $outlet = !empty($invitation->outlet_uuid) ? DB::table('outlets')->where('uuid', $invitation->outlet_uuid)->first() : null;
 
         return $this->successResponse(
             data: [
                 'email' => $invitation->email,
-                'role' => $invitation->role,
+                'role' => $role->slug,
+                'role_id' => $role->id,
                 'tenant_name' => $tenant->name ?? 'CodeBridges Store Organization',
                 'outlet_name' => $outlet->name ?? 'Primary Store',
+                'outlet_uuid' => $outlet?->uuid ?? ($invitation->outlet_uuid ?? null),
                 'expires_at' => $invitation->expires_at,
             ],
             message: 'Invitation is valid.'
@@ -793,8 +841,9 @@ class AuthController extends Controller
         $validated = $request->validated();
 
         return DB::transaction(function () use ($validated, $request) {
+            $tokenHash = hash('sha256', $validated['token']);
             $invitation = DB::table('user_invitations')
-                ->where('token', $validated['token'])
+                ->where('token_hash', $tokenHash)
                 ->whereNull('accepted_at')
                 ->where('expires_at', '>', now())
                 ->lockForUpdate()
@@ -804,6 +853,15 @@ class AuthController extends Controller
                 return $this->errorResponse(
                     'Invalid or expired invitation link.',
                     HttpStatus::UNPROCESSABLE_ENTITY
+                );
+            }
+
+            // Validate matching email if explicitly provided
+            if (!empty($validated['email']) && strtolower(trim($invitation->email)) !== strtolower(trim($validated['email']))) {
+                return $this->errorResponse(
+                    'The provided email address does not match this invitation.',
+                    HttpStatus::UNPROCESSABLE_ENTITY,
+                    ResponseCode::INVALID_CREDENTIALS
                 );
             }
 
@@ -830,10 +888,14 @@ class AuthController extends Controller
                     }
                 }
 
-                DB::table('users')->where('id', $existingUser->id)->update([
+                $userUpdates = [
                     'name' => $validated['name'] ?? $existingUser->name,
                     'updated_at' => now(),
-                ]);
+                ];
+                if (!empty($validated['phone'])) {
+                    $userUpdates['phone'] = $validated['phone'];
+                }
+                DB::table('users')->where('id', $existingUser->id)->update($userUpdates);
                 $user = User::find($existingUser->id);
             } else {
                 $user = User::create([
@@ -847,18 +909,25 @@ class AuthController extends Controller
             }
 
             // Resolve role within tenant or global scope; reject if not found
-            $roleQuery = DB::table('roles')->where('slug', $invitation->role);
-            if (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'tenant_id')) {
-                $roleQuery->where(function ($q) use ($invitation) {
-                    $q->where('tenant_id', $invitation->tenant_id)->orWhereNull('tenant_id');
-                });
+            $role = null;
+            if (!empty($invitation->role_id)) {
+                $role = DB::table('roles')->where('id', $invitation->role_id)->first();
             }
-            $role = $roleQuery->first();
+
             if (!$role) {
                 return $this->errorResponse(
                     'Configured role for this invitation was not found.',
                     HttpStatus::UNPROCESSABLE_ENTITY,
                     ResponseCode::ROLE_NOT_FOUND
+                );
+            }
+
+            // Enforce: Role must belong to the invited tenant (or global system role)
+            if ($role->tenant_id && (int) $role->tenant_id !== (int) $invitation->tenant_id) {
+                return $this->errorResponse(
+                    'Configured role does not belong to the invited tenant.',
+                    HttpStatus::UNPROCESSABLE_ENTITY,
+                    ResponseCode::FORBIDDEN
                 );
             }
             $roleId = $role->id;
@@ -878,12 +947,28 @@ class AuthController extends Controller
                 ]
             );
 
+            // Enforce: Outlet must belong to the invited tenant
             $outletUuid = $invitation->outlet_uuid ?? null;
-            if ($outletUuid && $tenantUser) {
-                TenantUserOutlet::firstOrCreate(
-                    ['tenant_user_id' => $tenantUser->id, 'outlet_uuid' => $outletUuid],
-                    ['is_primary' => true, 'is_active' => true]
-                );
+            if (!$outletUuid && !empty($invitation->outlet_id)) {
+                $outletUuid = DB::table('outlets')->where('id', $invitation->outlet_id)->value('uuid');
+            }
+
+            if ($outletUuid) {
+                $outlet = DB::table('outlets')->where('uuid', $outletUuid)->first();
+                if ($outlet && $outlet->tenant_id && (int) $outlet->tenant_id !== (int) $invitation->tenant_id) {
+                    return $this->errorResponse(
+                        'Configured outlet does not belong to the invited tenant.',
+                        HttpStatus::UNPROCESSABLE_ENTITY,
+                        ResponseCode::FORBIDDEN
+                    );
+                }
+
+                if ($tenantUser) {
+                    TenantUserOutlet::firstOrCreate(
+                        ['tenant_user_id' => $tenantUser->id, 'outlet_uuid' => $outletUuid],
+                        ['is_active' => true]
+                    );
+                }
             }
 
             if (!empty($validated['pin_code'])) {

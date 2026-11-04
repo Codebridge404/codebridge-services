@@ -53,6 +53,10 @@
             "@php artisan config:clear --ansi",
             "@php artisan test"
         ],
+        "db:reset": [
+            "@php artisan migrate:fresh --ansi",
+            "@php artisan db:seed --ansi"
+        ],
         "check-rules": "bash ./check_rules.sh",
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",

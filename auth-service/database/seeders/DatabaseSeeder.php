@@ -14,15 +14,17 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // 0. Seed Granular Permissions, System Roles, Role-Permission Mappings, and Platform Modules
+        // 0. Seed Granular Permissions, System Roles, Role-Permission Mappings, Platform Modules, Plans, and Payment Providers
         $this->call([
             PermissionSeeder::class,
             RoleSeeder::class,
             RolePermissionSeeder::class,
             PlatformModuleSeeder::class,
+            SubscriptionPlanSeeder::class,
+            PaymentProviderAccountSeeder::class,
         ]);
 
-        // 1. Seed ONLY the Platform Super Admin account
+        // 1. Seed Platform Super Admin account
         $roleMap = DB::table('roles')->pluck('id', 'slug')->toArray();
 
         $users = [
@@ -50,6 +52,9 @@ class DatabaseSeeder extends Seeder
             );
         }
 
-        // Demo tenants and demo meetings removed for clean production VPS deployment
+        // 2. Seed Workspaces, Memberships, Subscriptions, Outlets & POS Cashier PINs
+        $this->call([
+            TenantSeeder::class,
+        ]);
     }
 }

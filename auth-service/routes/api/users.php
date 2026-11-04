@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\V1\UserController;
+use App\Http\Controllers\Api\V1\UserInvitationController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -17,4 +18,15 @@ Route::middleware('role:organization,admin,super_admin,outlet_manager')->group(f
     Route::put('/users/{id}', [UserController::class, 'update']);
     Route::post('/users/{id}/reset-password', [UserController::class, 'resetPassword']);
     Route::delete('/users/{id}', [UserController::class, 'destroy']);
+
+    /*
+    |--------------------------------------------------------------------------
+    | Staff Invitations Management
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/invitations', [UserInvitationController::class, 'index']);
+    Route::post('/invitations', [UserInvitationController::class, 'store'])->middleware('quota:users');
+    Route::get('/invitations/{id}', [UserInvitationController::class, 'show']);
+    Route::post('/invitations/{id}/resend', [UserInvitationController::class, 'resend']);
+    Route::delete('/invitations/{id}', [UserInvitationController::class, 'destroy']);
 });

@@ -37,7 +37,9 @@ class JwtService
             );
         }
 
-        $this->algo = (string) config('jwt.algo', 'HS256');
+        $configuredAlgo = strtoupper(trim((string) config('jwt.algo', 'HS256')));
+        $supportedAlgos = ['HS256', 'HS384', 'HS512', 'RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'];
+        $this->algo = in_array($configuredAlgo, $supportedAlgos, true) ? $configuredAlgo : 'HS256';
         $configuredTtl = (int) config('jwt.ttl', 1440);
         // Ensure access token TTL has a safe floor of at least 1440 minutes (24 hours) to prevent unintended auto-logout
         $this->ttl = $configuredTtl >= 1440 ? $configuredTtl : 1440;

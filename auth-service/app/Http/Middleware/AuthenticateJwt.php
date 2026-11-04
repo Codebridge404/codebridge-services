@@ -31,7 +31,15 @@ class AuthenticateJwt
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $token = $request->bearerToken();
+        $token = $request->bearerToken()
+            ?: $request->header('token')
+            ?: $request->header('Token')
+            ?: $request->header('x-token')
+            ?: $request->header('X-Token');
+
+        if ($token && str_starts_with($token, 'Bearer ')) {
+            $token = trim(substr($token, 7));
+        }
 
         if ($request->is('api/v1/auth/refresh')) return $next($request);
 

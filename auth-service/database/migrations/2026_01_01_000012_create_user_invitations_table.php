@@ -16,11 +16,9 @@ return new class extends Migration
             $table->foreignId('tenant_id')->constrained('tenants')->cascadeOnDelete();
             $table->string('email', 255);
             $table->unsignedBigInteger('role_id')->nullable();
-            $table->string('role', 50)->nullable();
             $table->char('outlet_uuid', 36)->nullable();
             $table->foreignId('invited_by')->constrained('users')->cascadeOnDelete();
             $table->char('token_hash', 64)->unique();
-            $table->string('token', 100)->nullable();
             $table->timestamp('expires_at');
             $table->timestamp('accepted_at')->nullable();
             $table->timestamps();
