@@ -40,7 +40,8 @@ echo -e "${GREEN}✔ Environment files verified.${NC}\n"
 
 # 2. Build or Pull Container Images
 echo -e "${YELLOW}[Step 2/6] Building Staging Container Images...${NC}"
-compose build --pull auth-service operations-service gateway
+compose config --quiet
+compose build --pull auth-service operations-service auth-horizon operations-horizon auth-scheduler gateway
 echo -e "${GREEN}✔ Images built successfully.${NC}\n"
 
 # 3. Start Data Layer (Databases, Cache, S3 Storage, Mailpit)
@@ -48,12 +49,10 @@ echo -e "${YELLOW}[Step 3/6] Starting Staging Databases, Cache, and Storage...${
 compose up -d auth-mysql operations-mysql auth-redis operations-redis minio minio-init mailpit
 
 echo -e "  Waiting for Auth & Operations databases to become healthy..."
-AUTH_PASS="$(grep '^AUTH_MYSQL_ROOT_PASSWORD=' "${COMPOSE_ENV}" | cut -d '=' -f2-)"
-OPS_PASS="$(grep '^OPERATIONS_MYSQL_ROOT_PASSWORD=' "${COMPOSE_ENV}" | cut -d '=' -f2-)"
 
 for i in {1..30}; do
-    if docker exec codebridge-staging-auth-mysql mysqladmin ping -h 127.0.0.1 -u root -p"${AUTH_PASS}" --silent 2>/dev/null && \
-       docker exec codebridge-staging-operations-mysql mysqladmin ping -h 127.0.0.1 -u root -p"${OPS_PASS}" --silent 2>/dev/null; then
+    if docker exec codebridge-staging-auth-mysql sh -c 'mysqladmin ping -h 127.0.0.1 -u root -p"$MYSQL_ROOT_PASSWORD" --silent' >/dev/null 2>&1 && \
+       docker exec codebridge-staging-operations-mysql sh -c 'mysqladmin ping -h 127.0.0.1 -u root -p"$MYSQL_ROOT_PASSWORD" --silent' >/dev/null 2>&1; then
         echo -e "${GREEN}  ✔ Both MySQL databases are ready.${NC}"
         break
     fi
@@ -64,19 +63,25 @@ for i in {1..30}; do
     sleep 2
 done
 
-# Wait for MinIO
+# Wait for MinIO; fail the deployment if readiness never succeeds.
+MINIO_READY=false
 for i in {1..20}; do
     if docker exec codebridge-staging-minio curl -f http://localhost:9000/minio/health/live >/dev/null 2>&1; then
         echo -e "${GREEN}  ✔ MinIO S3 object storage is ready.${NC}"
+        MINIO_READY=true
         break
     fi
     sleep 1
 done
+if [ "$MINIO_READY" != true ]; then
+    echo "MinIO readiness timed out."
+    exit 1
+fi
 echo -e ""
 
 # 4. Start Microservices, Horizon Workers, Task Scheduler
 echo -e "${YELLOW}[Step 4/6] Starting Staging Microservices and Workers...${NC}"
-compose up -d auth-service operations-service auth-horizon operations-horizon auth-scheduler
+compose up -d --force-recreate auth-service operations-service auth-horizon operations-horizon auth-scheduler
 echo -e "${GREEN}✔ Microservices started.${NC}\n"
 
 # 5. Execute Database Migrations
@@ -89,26 +94,48 @@ echo -e "${GREEN}✔ All database migrations completed.${NC}\n"
 
 # 6. Start API Gateway & Nginx Proxy Manager
 echo -e "${YELLOW}[Step 6/6] Starting Ingress API Gateway and Nginx Proxy Manager...${NC}"
-compose up -d gateway
+compose up -d --force-recreate gateway
 
 # If a shared NPM container (codebridge-nginx-proxy-manager) is already running, ensure network connectivity
 if docker ps --format '{{.Names}}' | grep -Eq 'nginx-proxy-manager'; then
-    NPM_RUNNING=$(docker ps --format '{{.Names}}' | grep -E 'nginx-proxy-manager' | head -n1)
+    NPM_RUNNING=$(docker ps --format '{{.Names}}' | awk '/nginx-proxy-manager/ && !found { print; found=1 }')
     echo -e "  Connecting existing NPM (${NPM_RUNNING}) to staging network..."
-    docker network connect codebridge-staging-network "${NPM_RUNNING}" 2>/dev/null || true
+    if [ -z "$(docker inspect --format '{{with index .NetworkSettings.Networks "codebridge-staging-network"}}connected{{end}}' "${NPM_RUNNING}")" ]; then
+        docker network connect codebridge-staging-network "${NPM_RUNNING}"
+    fi
 else
-    compose up -d nginx-proxy-manager || echo "NPM already running or port 80 in use by host proxy."
+    compose up -d nginx-proxy-manager
 fi
 
-# Verify Gateway Response
+# Verify Gateway Response; a failed probe must fail CI/CD.
+GATEWAY_READY=false
 echo -e "  Verifying internal API Gateway routing..."
 for i in {1..15}; do
     if docker exec codebridge-staging-gateway wget -q -O /dev/null http://127.0.0.1/api/v1/health >/dev/null 2>&1 || \
        docker exec codebridge-staging-gateway curl -s -f http://127.0.0.1/api/v1/health >/dev/null 2>&1; then
         echo -e "${GREEN}  ✔ Gateway routed /api/v1/health successfully.${NC}"
+        GATEWAY_READY=true
         break
     fi
     sleep 2
+done
+if [ "$GATEWAY_READY" != true ]; then
+    echo "Gateway health check timed out."
+    exit 1
+fi
+
+# Confirm APIs, workers and scheduler use their freshly built local images.
+for service in auth-service operations-service auth-horizon operations-horizon auth-scheduler gateway; do
+    container_id="$(compose ps -q "$service")"
+    test -n "$container_id"
+    running_image="$(docker inspect --format '{{.Image}}' "$container_id")"
+    image_name="$(docker inspect --format '{{.Config.Image}}' "$container_id")"
+    built_image="$(docker image inspect --format '{{.Id}}' "$image_name")"
+    if [ "$running_image" != "$built_image" ]; then
+        echo "Container $service is using an older image."
+        exit 1
+    fi
+    echo "Verified current image: $service"
 done
 
 echo -e "\n${GREEN}${BOLD}==============================================================================${NC}"
@@ -123,5 +150,4 @@ echo -e "  • API:       https://staging-codebridge-api.servicefixit.me"
 echo -e "  • Docs:      https://staging-codebridge-docs.servicefixit.me"
 echo -e "  • Images:    https://staging-codebridge-cdn.servicefixit.me"
 echo -e "  • Events:    https://staging-codebridge-events.servicefixit.me"
-echo -e "  • NPM Admin: http://<VPS_IP>:81 (Default: admin@example.com / changeme)\n"
-
+echo -e "  • NPM Admin: http://<VPS_IP>:81\n"

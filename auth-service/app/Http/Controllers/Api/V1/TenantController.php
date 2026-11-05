@@ -922,6 +922,9 @@ class TenantController extends Controller
                     $tenantId = $requestedId;
                 }
             }
+            if ($request->filled('tenant_id')) {
+                abort_unless((int) $request->tenant_id === (int) $tenantId, 403, 'Unauthorized tenant access.');
+            }
             abort_unless($tenantId, 403, 'An active workspace membership is required.');
             return DB::table('tenants')->where('id', $tenantId)->first();
         }

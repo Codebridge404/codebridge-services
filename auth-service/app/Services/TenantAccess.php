@@ -25,9 +25,18 @@ class TenantAccess
         }
 
         if (!empty($user->id)) {
-            $isOwnerOrTenantAdmin = DB::table('tenants')->where('owner_user_id', $user->id)->exists()
-                || DB::table('tenant_users')->where('user_id', $user->id)->where('status', 'active')->exists();
-            if ($isOwnerOrTenantAdmin) {
+            $isOwner = DB::table('tenants')->where('owner_user_id', $user->id)->exists();
+            if ($isOwner) {
+                return true;
+            }
+
+            $hasAdminRole = DB::table('user_roles as ur')
+                ->join('roles as r', 'ur.role_id', '=', 'r.id')
+                ->where('ur.user_id', $user->id)
+                ->where('ur.is_active', true)
+                ->whereIn('r.slug', ['super_admin', 'organization', 'admin', 'administrator', 'owner', 'tenant_admin'])
+                ->exists();
+            if ($hasAdminRole) {
                 return true;
             }
         }
