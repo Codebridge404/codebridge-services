@@ -6,7 +6,7 @@ use App\Http\Controllers\Api\V1\MeetingController;
 use Illuminate\Console\Command;
 
 /**
- * [BD-0082] Scheduled Auto-Release for Unclaimed Meeting Rooms Command
+ * [BD-0082] Scheduled Auto-Release for Unclaimed Meeting Rooms Command 664600 
  *
  * @ticket BD-0082
  * @component auth-service
