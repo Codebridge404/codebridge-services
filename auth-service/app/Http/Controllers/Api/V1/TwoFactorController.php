@@ -2,8 +2,8 @@
 
 /**
  * Author: Antigravity Team
- * Date: 2026-11-04
- * Task: 2FA Recovery Codes & Email OTP UI (BD-0133)
+ * Date: 2026-11-05
+ * Task: BD-0139
  */
 
 namespace App\Http\Controllers\Api\V1;
@@ -250,17 +250,34 @@ class TwoFactorController extends Controller
             'ip_address' => $request->ip(),
             'user_agent' => substr($request->userAgent() ?? '', 0, 500),
             'device_name' => $deviceName,
-            'browser' => $browser,
-            'platform' => $platform,
             'last_used_at' => now(),
         ];
-        if (!empty($location)) {
+        if (\Illuminate\Support\Facades\Schema::hasColumn('personal_access_tokens', 'browser')) {
+            $twoFaTokenData['browser'] = $browser;
+        }
+        if (\Illuminate\Support\Facades\Schema::hasColumn('personal_access_tokens', 'platform')) {
+            $twoFaTokenData['platform'] = $platform;
+        }
+        if (\Illuminate\Support\Facades\Schema::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
             $twoFaTokenData['location'] = $location;
         }
 
-        DB::table('personal_access_tokens')
-            ->where('id', $tokenResult->accessToken->id)
-            ->update($twoFaTokenData);
+        try {
+            DB::table('personal_access_tokens')
+                ->where('id', $tokenResult->accessToken->id)
+                ->update($twoFaTokenData);
+        } catch (\Throwable $e) {
+            try {
+                DB::table('personal_access_tokens')
+                    ->where('id', $tokenResult->accessToken->id)
+                    ->update([
+                        'ip_address' => $request->ip(),
+                        'user_agent' => substr($request->userAgent() ?? '', 0, 500),
+                        'device_name' => $deviceName,
+                        'last_used_at' => now(),
+                    ]);
+            } catch (\Throwable $ignored) {}
+        }
 
         // Resolve workspace branding
         if ($user->tenant_id) {

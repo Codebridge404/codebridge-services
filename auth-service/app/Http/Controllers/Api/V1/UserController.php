@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-05
+ * Task: BD-0138
+ */
+
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
@@ -10,21 +16,31 @@ use App\Http\Requests\User\StoreUserRequest;
 use App\Http\Requests\User\UpdateUserRequest;
 use App\Http\Requests\User\VerifyPinRequest;
 use App\Http\Resources\User\UserResource;
+use App\Models\Outlet;
 use App\Models\User;
+use App\Models\UserPosPin;
+use App\Services\JwtService;
+use App\Services\PinService;
+use App\Services\TenantAccess;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
-use Illuminate\Validation\Rule;
 
 /**
  * [BD-0002] Multi-Tenant User Management & Role Assignment Controller.
  *
  * @ticket BD-0002
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/UserController.php
+ *
  * @related-model App\Models\User, App\Models\UserRole, App\Models\Outlet
+ *
  * @entry-point GET /api/v1/users, POST /api/v1/users, PUT /api/v1/users/{id}
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -59,20 +75,20 @@ class UserController extends Controller
                 $join->on('ur.role_id', '=', 'r.id');
             });
 
-        if ($currentUser && $currentUser->role !== 'super_admin' && !empty($currentUser->tenant_id)) {
+        if ($currentUser && $currentUser->role !== 'super_admin' && ! empty($currentUser->tenant_id)) {
             $query->where('tu.tenant_id', $currentUser->tenant_id);
         }
-        if (!empty($role) && $role !== 'all') {
+        if (! empty($role) && $role !== 'all') {
             $query->where(function ($rq) use ($role) {
                 $rq->where('r.slug', $role);
             });
         }
-        if ($scope !== 'all' && !$request->has('include_customers')) {
+        if ($scope !== 'all' && ! $request->has('include_customers')) {
             $query->where(function ($q) {
                 $q->whereNull('r.slug')->orWhereNotIn('r.slug', ['customer', 'client', 'guest']);
             });
         }
-        if (!empty($search)) {
+        if (! empty($search)) {
             $query->where(function ($q) use ($search) {
                 $q->where('u.name', 'like', "%{$search}%")->orWhere('u.email', 'like', "%{$search}%");
             });
@@ -81,26 +97,26 @@ class UserController extends Controller
         $users = $query->select(
             'u.id', 'u.uuid',
             DB::raw('COALESCE(tu.tenant_id, NULL) as tenant_id'),
-            'u.name', 'u.email', 'u.phone',
+            'u.name', 'u.email', 'u.phone', 'u.avatar_url',
             'r.slug',
-            DB::raw('COALESCE(r.slug, "user") as role'),
+            DB::raw("COALESCE(r.slug, 'user') as role"),
             DB::raw('r.id as role_id'),
             DB::raw('r.name as role_name'),
-            DB::raw('COALESCE(r.slug, "user") as role_slug'),
+            DB::raw("COALESCE(r.slug, 'user') as role_slug"),
             DB::raw('COALESCE(o.id, NULL) as outlet_id'),
             DB::raw('COALESCE(tuo.outlet_uuid, NULL) as outlet_uuid'),
             DB::raw('NULL as pin_code'),
             'u.is_active',
             'u.created_at', 'o.name as outlet_name'
         )->distinct()
-        ->orderByRaw("CASE 
+            ->orderByRaw("CASE 
             WHEN r.slug = 'super_admin' THEN 1
             WHEN r.slug = 'organization' THEN 2
             WHEN r.slug = 'admin' THEN 3
             WHEN r.slug = 'outlet_manager' THEN 4
             WHEN r.slug = 'cashier' THEN 5
             ELSE 6 END ASC")
-        ->orderBy('u.created_at', 'desc')->get();
+            ->orderBy('u.created_at', 'desc')->get();
 
         $dedupedUsers = $users->unique('id')->values();
 
@@ -128,15 +144,18 @@ class UserController extends Controller
         } catch (\Throwable $e) {
             $dynamic = [];
         }
+
         return array_unique(array_merge([
             'super_admin', 'organization', 'employee', 'admin', 'administrator', 'outlet_manager',
-            'cashier', 'inventory_clerk', 'accountant', 'meeting_organizer', 'supervisor', 'user'
+            'cashier', 'inventory_clerk', 'accountant', 'meeting_organizer', 'supervisor', 'user',
         ], $dynamic));
     }
 
     private function resolveRoleAndId($role, $roleId = null, $currentUser = null): array
     {
-        if ($currentUser?->role !== 'super_admin' && $role === 'super_admin') abort(403);
+        if ($currentUser?->role !== 'super_admin' && $role === 'super_admin') {
+            abort(403);
+        }
         $record = $roleId ? DB::table('roles')->where('id', $roleId)->first()
             : DB::table('roles')->where('slug', $role)->first();
         abort_unless($record, 422, 'The selected role does not exist.');
@@ -144,10 +163,11 @@ class UserController extends Controller
             abort_if($record->slug === 'super_admin', 403, 'Only a super administrator may assign this role.');
             $tenant = $record->tenant_id ?? $record->company_id ?? null;
             abort_if($tenant && (int) $tenant !== $currentUser?->tenant_id, 403);
-            if (!\App\Services\TenantAccess::isAdmin($currentUser)) {
+            if (! TenantAccess::isAdmin($currentUser)) {
                 abort_unless(in_array($record->slug, ['cashier', 'employee', 'user'], true), 403);
             }
         }
+
         return [$record->slug, $record->id];
     }
 
@@ -161,13 +181,16 @@ class UserController extends Controller
                 return "User limit reached ({$count}/{$maxUsers}) for your subscription tier.";
             }
         }
+
         return null;
     }
 
     public function lookup(Request $request)
     {
         $q = trim($request->query('q', ''));
-        if (strlen($q) < 2) return response()->json(['status' => 'success', 'data' => []]);
+        if (strlen($q) < 2) {
+            return response()->json(['status' => 'success', 'data' => []]);
+        }
 
         $currentUser = $request->user();
         $currentTenantId = $currentUser?->tenant_id;
@@ -180,13 +203,14 @@ class UserController extends Controller
             ->where(function ($w) use ($q) {
                 $w->where('u.email', 'like', "%{$q}%")->orWhere('u.name', 'like', "%{$q}%");
             })
-            ->select('u.id', 'u.name', 'u.email', DB::raw('COALESCE(tu.tenant_id, NULL) as tenant_id'), 't.name as tenant_name')
+            ->select('u.id', 'u.name', 'u.email', 'u.avatar_url', DB::raw('COALESCE(tu.tenant_id, NULL) as tenant_id'), 't.name as tenant_name')
             ->limit(10)->get()
             ->map(function ($u) use ($currentTenantId) {
                 return [
                     'id' => $u->id,
                     'name' => $u->name,
                     'email' => $u->email,
+                    'avatar_url' => $u->avatar_url,
                     'role' => 'employee',
                     'is_already_member' => ($u->tenant_id && $u->tenant_id == $currentTenantId),
                     'tenant_name' => $u->tenant_name,
@@ -201,19 +225,21 @@ class UserController extends Controller
         $validated = $request->validated();
 
         $query = DB::table('users');
-        if (!empty($validated['user_id'])) {
+        if (! empty($validated['user_id'])) {
             $query->where('id', $validated['user_id']);
-        } elseif (!empty($validated['email'])) {
+        } elseif (! empty($validated['email'])) {
             $query->where('email', $validated['email']);
         } else {
             return response()->json(['status' => 'error', 'message' => 'User ID or email is required.'], 422);
         }
 
         $targetUser = $query->first();
-        if (!$targetUser) return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
+        if (! $targetUser) {
+            return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
+        }
 
         $currentUser = $request->user();
-        $tenantId = ($currentUser?->role === 'super_admin' && !empty($validated['tenant_id']))
+        $tenantId = ($currentUser?->role === 'super_admin' && ! empty($validated['tenant_id']))
             ? $validated['tenant_id']
             : $currentUser?->tenant_id;
 
@@ -232,8 +258,8 @@ class UserController extends Controller
         [$parentRole, $subRoleId] = $this->resolveRoleAndId($validated['role'], $validated['role_id'] ?? null, $currentUser);
 
         $outletUuid = null;
-        if (!empty($validated['outlet_id'])) {
-            $outlet = \App\Models\Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
+        if (! empty($validated['outlet_id'])) {
+            $outlet = Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
             abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
             $outletUuid = $outlet->uuid;
         }
@@ -261,7 +287,7 @@ class UserController extends Controller
             );
         }
 
-        if (!empty($validated['pin_code'])) {
+        if (! empty($validated['pin_code'])) {
             DB::table('user_pos_pins')->updateOrInsert(
                 ['tenant_id' => $tenantId, 'user_id' => $targetUser->id],
                 [
@@ -296,7 +322,7 @@ class UserController extends Controller
         $validated = $request->validated();
 
         $currentUser = $request->user();
-        $tenantId = ($currentUser?->role === 'super_admin' && !empty($validated['tenant_id']))
+        $tenantId = ($currentUser?->role === 'super_admin' && ! empty($validated['tenant_id']))
             ? $validated['tenant_id']
             : $currentUser?->tenant_id;
 
@@ -307,17 +333,18 @@ class UserController extends Controller
         [$parentRole, $subRoleId] = $this->resolveRoleAndId($validated['role'], $validated['role_id'] ?? null, $currentUser);
 
         $outletUuid = null;
-        if (!empty($validated['outlet_id'])) {
-            $outlet = \App\Models\Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
+        if (! empty($validated['outlet_id'])) {
+            $outlet = Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
             abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
             $outletUuid = $outlet->uuid;
         }
 
         $userId = DB::table('users')->insertGetId([
-            'uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'uuid' => (string) Str::uuid(),
             'name' => $validated['name'],
             'email' => $validated['email'],
             'phone' => $validated['phone'] ?? null,
+            'avatar_url' => $validated['avatar_url'] ?? null,
             'password' => Hash::make($validated['password']),
             'is_active' => true,
             'created_at' => now(),
@@ -346,7 +373,7 @@ class UserController extends Controller
                 ]);
             }
 
-            if (!empty($validated['pin_code'])) {
+            if (! empty($validated['pin_code'])) {
                 DB::table('user_pos_pins')->insert([
                     'tenant_id' => $tenantId,
                     'user_id' => $userId,
@@ -375,14 +402,14 @@ class UserController extends Controller
 
     public function invite(InviteUserRequest $request)
     {
-        return app(\App\Http\Controllers\Api\V1\UserInvitationController::class)->store($request);
+        return app(UserInvitationController::class)->store($request);
     }
 
     public function update(UpdateUserRequest $request, $id)
     {
         $currentUser = $request->user();
         $targetUser = User::find($id);
-        if (!$targetUser) {
+        if (! $targetUser) {
             return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
         }
 
@@ -396,7 +423,7 @@ class UserController extends Controller
         $validated = $request->validated();
 
         // Prevent self-suspension (active -> inactive)
-        if ($currentUser && (int) $currentUser->id === (int) $id && array_key_exists('is_active', $validated) && !$validated['is_active']) {
+        if ($currentUser && (int) $currentUser->id === (int) $id && array_key_exists('is_active', $validated) && ! $validated['is_active']) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'You cannot suspend your own active account.',
@@ -404,9 +431,9 @@ class UserController extends Controller
         }
 
         // Prevent self-demotion if sole administrator
-        if ($currentUser && (int) $currentUser->id === (int) $id && !empty($validated['role']) && $currentUser->role !== 'super_admin') {
+        if ($currentUser && (int) $currentUser->id === (int) $id && ! empty($validated['role']) && $currentUser->role !== 'super_admin') {
             $newRole = $validated['role'];
-            if (!in_array($newRole, ['organization', 'admin', 'owner'], true)) {
+            if (! in_array($newRole, ['organization', 'admin', 'owner'], true)) {
                 $otherAdminsCount = DB::table('tenant_users as tu')
                     ->join('user_roles as ur', 'tu.user_id', '=', 'ur.user_id')
                     ->join('roles as r', 'ur.role_id', '=', 'r.id')
@@ -440,8 +467,10 @@ class UserController extends Controller
         }
 
         $updateData = [];
-        foreach (['name', 'email', 'phone', 'is_active'] as $field) {
-            if (array_key_exists($field, $validated)) $updateData[$field] = $validated[$field];
+        foreach (['name', 'email', 'phone', 'is_active', 'avatar_url'] as $field) {
+            if (array_key_exists($field, $validated)) {
+                $updateData[$field] = $validated[$field];
+            }
         }
 
         if (array_key_exists('pin_code', $validated)) {
@@ -457,8 +486,8 @@ class UserController extends Controller
             );
         }
 
-        if (!empty($validated['outlet_id'])) {
-            $outlet = \App\Models\Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
+        if (! empty($validated['outlet_id'])) {
+            $outlet = Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
             abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
             $outletUuid = $outlet->uuid;
             if ($outletUuid && $effectiveTenantId) {
@@ -472,7 +501,7 @@ class UserController extends Controller
             }
         }
 
-        if (!empty($validated['role']) || !empty($validated['role_id'])) {
+        if (! empty($validated['role']) || ! empty($validated['role_id'])) {
             [$pRole, $rId] = $this->resolveRoleAndId($validated['role'] ?? 'employee', $validated['role_id'] ?? null, $currentUser);
             if ($rId) {
                 DB::table('user_roles')->where('user_id', $id)->update(['is_active' => false]);
@@ -487,14 +516,15 @@ class UserController extends Controller
             }
         }
 
-        if (!empty($validated['password'])) {
+        if (! empty($validated['password'])) {
             $updateData['password'] = Hash::make($validated['password']);
             $targetUser->tokens()->delete();
-            app(\App\Services\JwtService::class)->revokeAllUserTokens($id);
+            app(JwtService::class)->revokeAllUserTokens($id);
         }
         $updateData['updated_at'] = now();
 
         DB::table('users')->where('id', $id)->update($updateData);
+
         return response()->json(['status' => 'success', 'message' => 'User account updated successfully.']);
     }
 
@@ -502,7 +532,7 @@ class UserController extends Controller
     {
         $currentUser = $request->user();
         $targetUser = User::find($id);
-        if (!$targetUser) {
+        if (! $targetUser) {
             return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
         }
 
@@ -515,7 +545,8 @@ class UserController extends Controller
         $validated = $request->validated();
         DB::table('users')->where('id', $id)->update(['password' => Hash::make($validated['new_password']), 'updated_at' => now()]);
         $targetUser->tokens()->delete();
-        app(\App\Services\JwtService::class)->revokeAllUserTokens($id);
+        app(JwtService::class)->revokeAllUserTokens($id);
+
         return response()->json(['status' => 'success', 'message' => 'User password reset successfully.']);
     }
 
@@ -525,19 +556,23 @@ class UserController extends Controller
         $currentUser = $request->user();
 
         $supervisor = null;
-        $pins = \App\Models\UserPosPin::where('tenant_id', $currentUser->tenant_id)
+        $pins = UserPosPin::where('tenant_id', $currentUser->tenant_id)
             ->where('is_active', true)->with('user')->get();
         foreach ($pins as $candidate) {
             $staff = $candidate->user;
-            if (!$staff || !$staff->is_active || $staff->isLockedOut() || $candidate->isLockedOut()) continue;
-            if (!$staff->activeRoles()->whereIn('slug', ['super_admin', 'organization', 'admin', 'outlet_manager', 'supervisor'])->exists()) continue;
-            if (\App\Services\PinService::matches($validated['pin_code'], $candidate->pin_hash)) {
+            if (! $staff || ! $staff->is_active || $staff->isLockedOut() || $candidate->isLockedOut()) {
+                continue;
+            }
+            if (! $staff->activeRoles()->whereIn('slug', ['super_admin', 'organization', 'admin', 'outlet_manager', 'supervisor'])->exists()) {
+                continue;
+            }
+            if (PinService::matches($validated['pin_code'], $candidate->pin_hash)) {
                 $supervisor = $staff;
                 break;
             }
         }
 
-        if (!$supervisor) {
+        if (! $supervisor) {
             return response()->json(['status' => 'error', 'message' => 'Invalid authorization PIN code or unauthorized role.'], 403);
         }
 
@@ -552,7 +587,7 @@ class UserController extends Controller
     {
         $currentUser = $request->user();
         $targetUser = User::find($id);
-        if (!$targetUser) {
+        if (! $targetUser) {
             return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
         }
 
@@ -602,7 +637,104 @@ class UserController extends Controller
             }
         }
 
-        DB::table('users')->where('id', $id)->update(['is_active' => false, 'updated_at' => now()]);
-        return response()->json(['status' => 'success', 'message' => 'User account deactivated.']);
+        DB::beginTransaction();
+        try {
+            if ($currentUser && $currentUser->role !== 'super_admin') {
+                // Tenant Admin scope: Detach user from this specific tenant workspace
+                $tenantId = $currentUser->tenant_id;
+                $tu = DB::table('tenant_users')->where('tenant_id', $tenantId)->where('user_id', $id)->first();
+                if ($tu) {
+                    DB::table('tenant_user_outlets')->where('tenant_user_id', $tu->id)->delete();
+                    DB::table('tenant_users')->where('id', $tu->id)->delete();
+                }
+                DB::table('user_roles')->where('tenant_id', $tenantId)->where('user_id', $id)->delete();
+                DB::table('user_pos_pins')->where('tenant_id', $tenantId)->where('user_id', $id)->delete();
+
+                // If user no longer belongs to any tenant and isn't super admin, clean up completely
+                $hasOtherTenants = DB::table('tenant_users')->where('user_id', $id)->exists();
+                if (! $hasOtherTenants && $targetUser->role !== 'super_admin') {
+                    $targetUser->tokens()->delete();
+                    try {
+                        app(JwtService::class)->revokeAllUserTokens($id);
+                    } catch (\Throwable $e) {
+                    }
+
+                    DB::table('api_keys')->where('user_id', $id)->delete();
+                    DB::table('support_tickets')->where('user_id', $id)->delete();
+                    DB::table('meeting_notifications')->where('user_id', $id)->delete();
+                    if (Schema::hasTable('employees')) {
+                        DB::table('employees')->where('user_id', $id)->update(['user_id' => null]);
+                    }
+                    if (Schema::hasTable('tenants')) {
+                        DB::table('tenants')->where('owner_user_id', $id)->update(['owner_user_id' => null]);
+                    }
+                    if (Schema::hasTable('attendances')) {
+                        DB::table('attendances')->where('user_id', $id)->update(['user_id' => null]);
+                    }
+                    if (Schema::hasTable('audit_logs')) {
+                        DB::table('audit_logs')->where('user_id', $id)->update(['user_id' => null]);
+                    }
+                    if (Schema::hasTable('api_request_logs')) {
+                        DB::table('api_request_logs')->where('user_id', $id)->update(['user_id' => null]);
+                    }
+                    if (Schema::hasTable('meeting_attendees')) {
+                        DB::table('meeting_attendees')->where('user_id', $id)->update(['user_id' => null]);
+                    }
+
+                    DB::table('users')->where('id', $id)->delete();
+                }
+
+                DB::commit();
+
+                return response()->json(['status' => 'success', 'message' => 'User account removed from workspace.']);
+            }
+
+            // Super Admin scope: Complete platform deletion of the user
+            $targetUser->tokens()->delete();
+            try {
+                app(JwtService::class)->revokeAllUserTokens($id);
+            } catch (\Throwable $e) {
+            }
+
+            $tuIds = DB::table('tenant_users')->where('user_id', $id)->pluck('id');
+            if ($tuIds->isNotEmpty()) {
+                DB::table('tenant_user_outlets')->whereIn('tenant_user_id', $tuIds)->delete();
+            }
+            DB::table('tenant_users')->where('user_id', $id)->delete();
+            DB::table('user_roles')->where('user_id', $id)->delete();
+            DB::table('user_pos_pins')->where('user_id', $id)->delete();
+            DB::table('api_keys')->where('user_id', $id)->delete();
+            DB::table('support_tickets')->where('user_id', $id)->delete();
+            DB::table('meeting_notifications')->where('user_id', $id)->delete();
+
+            if (Schema::hasTable('employees')) {
+                DB::table('employees')->where('user_id', $id)->update(['user_id' => null]);
+            }
+            if (Schema::hasTable('tenants')) {
+                DB::table('tenants')->where('owner_user_id', $id)->update(['owner_user_id' => null]);
+            }
+            if (Schema::hasTable('attendances')) {
+                DB::table('attendances')->where('user_id', $id)->update(['user_id' => null]);
+            }
+            if (Schema::hasTable('audit_logs')) {
+                DB::table('audit_logs')->where('user_id', $id)->update(['user_id' => null]);
+            }
+            if (Schema::hasTable('api_request_logs')) {
+                DB::table('api_request_logs')->where('user_id', $id)->update(['user_id' => null]);
+            }
+            if (Schema::hasTable('meeting_attendees')) {
+                DB::table('meeting_attendees')->where('user_id', $id)->update(['user_id' => null]);
+            }
+
+            DB::table('users')->where('id', $id)->delete();
+
+            DB::commit();
+
+            return response()->json(['status' => 'success', 'message' => 'User account permanently deleted from the platform.']);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            return response()->json(['status' => 'error', 'message' => 'Failed to delete user account: '.$e->getMessage()], 500);
+        }
     }
 }

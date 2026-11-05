@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-05
+ * Task: BD-0138
+ */
+
 namespace App\Models;
 
 use Database\Factories\UserFactory;
@@ -321,6 +327,14 @@ class User extends Authenticatable implements MustVerifyEmail
         $activeRole = $this->activeRoles()->first();
         if ($activeRole) {
             return $activeRole->slug;
+        }
+
+        // Dynamically resolve organization role if user owns a tenant
+        if ($this->exists && !empty($this->id)) {
+            $isTenantOwner = \Illuminate\Support\Facades\DB::table('tenants')->where('owner_user_id', $this->id)->exists();
+            if ($isTenantOwner) {
+                return 'organization';
+            }
         }
 
         return 'user';

@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-05
+ * Task: BD-0138
+ */
+
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
@@ -140,7 +146,7 @@ class AdminController extends Controller
                 $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $tenantId);
             })
             ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-            ->select('u.id', 'u.uuid', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "employee") as role'), 'tu.joined_at', 'tu.status')
+            ->select('u.id', 'u.uuid', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'employee') as role"), 'tu.joined_at', 'tu.status')
             ->orderBy('tu.joined_at', 'desc')
             ->limit(5)
             ->get() : [];
@@ -282,7 +288,7 @@ class AdminController extends Controller
         $users = $query->select(
             'u.id', 'u.uuid', 'u.name', 'u.email', 'u.phone', 'u.avatar_url', 'u.is_active',
             'tu.tenant_id', 't.name as tenant_name',
-            DB::raw('COALESCE(r.slug, "user") as role'),
+            DB::raw("COALESCE(r.slug, 'user') as role"),
             DB::raw('r.name as role_name'),
             DB::raw('COALESCE(o.id, NULL) as outlet_id'),
             DB::raw('COALESCE(tuo.outlet_uuid, NULL) as outlet_uuid'),

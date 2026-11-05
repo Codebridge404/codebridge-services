@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-05
+ * Task: BD-0138
+ */
+
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
@@ -162,13 +168,26 @@ class TenantController extends Controller
             // 3. Link user role in user_roles pivot (role: organization = admin)
             if (Schema::hasTable('user_roles')) {
                 $roleId = DB::table('roles')->where('slug', 'organization')->value('id');
-                if ($roleId) {
-                    DB::table('user_roles')->where('user_id', $authUser->id)->update(['is_active' => false]);
-                    DB::table('user_roles')->updateOrInsert(
-                        ['user_id' => $authUser->id, 'role_id' => $roleId],
-                        ['tenant_id' => $id, 'is_active' => true, 'updated_at' => now()]
-                    );
+                if (!$roleId) {
+                    $roleId = DB::table('roles')->whereIn('slug', ['admin', 'owner', 'tenant_admin'])->value('id');
                 }
+                if (!$roleId) {
+                    $roleId = DB::table('roles')->insertGetId([
+                        'uuid' => (string) Str::uuid(),
+                        'name' => 'Organization Owner',
+                        'slug' => 'organization',
+                        'parent_role' => 'organization',
+                        'description' => 'Primary Tenant Organization Profile and Legal Account Holder with full workspace authority.',
+                        'is_system' => true,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ]);
+                }
+                DB::table('user_roles')->where('user_id', $authUser->id)->update(['is_active' => false]);
+                DB::table('user_roles')->updateOrInsert(
+                    ['user_id' => $authUser->id, 'role_id' => $roleId],
+                    ['tenant_id' => $id, 'is_active' => true, 'updated_at' => now()]
+                );
             }
 
             // 4. Update legacy users table if columns exist
@@ -256,7 +275,7 @@ class TenantController extends Controller
                     })
                     ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
                     ->where('u.id', $tenant->owner_user_id)
-                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
                     ->first();
             }
 
@@ -272,7 +291,7 @@ class TenantController extends Controller
                     ->where(function ($q) {
                         $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
                     })
-                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
                     ->first();
             }
 
@@ -285,7 +304,7 @@ class TenantController extends Controller
                         $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
                     })
                     ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
                     ->orderBy('u.created_at', 'asc')
                     ->first();
             }
@@ -359,7 +378,7 @@ class TenantController extends Controller
                 })
                 ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
                 ->where('u.id', $tenant->owner_user_id)
-                ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
                 ->first();
         }
 
@@ -375,7 +394,7 @@ class TenantController extends Controller
                 ->where(function ($q) {
                     $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
                 })
-                ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
                 ->first()
                 ?? DB::table('users as u')
                     ->join('tenant_users as tu', function ($j) use ($id) {
@@ -385,7 +404,7 @@ class TenantController extends Controller
                         $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
                     })
                     ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw('COALESCE(r.slug, "organization") as role'), 'u.is_active', 'u.created_at')
+                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
                     ->first();
         }
 
@@ -886,10 +905,25 @@ class TenantController extends Controller
      */
     protected function resolveTenant(Request $request)
     {
-        if ($request->user()?->role !== 'super_admin') {
-            abort_unless($request->user()?->tenant_id, 403);
-            if ($request->filled('tenant_id')) abort_unless((int) $request->tenant_id === $request->user()->tenant_id, 403);
-            return DB::table('tenants')->where('id', $request->user()->tenant_id)->first();
+        $user = $request->user();
+        if ($user && $user->role !== 'super_admin') {
+            $tenantId = $user->tenant_id;
+            if (!$tenantId) {
+                // If user doesn't have tenant_id directly on their model, resolve from owned tenants or active tenant_users
+                $tenantId = DB::table('tenants')->where('owner_user_id', $user->id)->value('id')
+                    ?? DB::table('tenant_users')->where('user_id', $user->id)->where('status', 'active')->value('tenant_id')
+                    ?? DB::table('tenant_users')->where('user_id', $user->id)->value('tenant_id');
+            }
+            if (!$tenantId && $request->filled('tenant_id')) {
+                $requestedId = (int) $request->tenant_id;
+                $isPermitted = DB::table('tenants')->where('id', $requestedId)->where('owner_user_id', $user->id)->exists()
+                    || DB::table('tenant_users')->where('tenant_id', $requestedId)->where('user_id', $user->id)->exists();
+                if ($isPermitted) {
+                    $tenantId = $requestedId;
+                }
+            }
+            abort_unless($tenantId, 403, 'An active workspace membership is required.');
+            return DB::table('tenants')->where('id', $tenantId)->first();
         }
 
         // 1. By direct tenant_id parameter

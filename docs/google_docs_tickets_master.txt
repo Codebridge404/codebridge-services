@@ -1967,6 +1967,119 @@ Step 3 (Digital Voucher Redemption Modal): Built VoucherRedeemModal with upperca
 Step 4 (CRM Customers Grid Integration): Added "Top-Up" and "Voucher" action buttons to customer cards in CustomerCardGrid with real-time wallet balance pills ($0.00), and added a global "Redeem Voucher" trigger in SuperAdminCustomersView header.
 Step 5 (POS Terminal Voucher Quick Action): Added a "Voucher" redemption button to PosTerminalView quick actions so cashiers can redeem gift vouchers directly at the register before finalizing tenders.
 
-====
+--------------------------------------------------------------------------------
+TICKET: BD-0138 - Super Admin & Organization Workspace Consistency, User Theme Preferences Modal, Cross-Tenant User Management & PostgreSQL Database Reliability
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0138
+Component / Service:    codebridgesfront & auth-service
+File Path:              services/auth-service/app/Http/Controllers/Api/V1/TenantController.php, services/auth-service/app/Http/Controllers/Api/V1/UserController.php, services/auth-service/app/Http/Controllers/Api/V1/AdminController.php, services/auth-service/app/Services/TenantAccess.php, services/auth-service/app/Models/User.php, codebridgesfront/components/settings/UserSettingsModal.tsx, codebridgesfront/components/header/AppHeader.tsx, codebridgesfront/components/module-shell/ModuleSuiteHeader.tsx, codebridgesfront/components/sidebars/OrganizationSidebar.tsx, codebridgesfront/app/organization/profile/page.tsx, codebridgesfront/app/profile/page.tsx, codebridgesfront/app/layout.tsx, codebridgesfront/app/globals.css, codebridgesfront/components/platform/users/CrossTenantUsersTable.tsx, codebridgesfront/components/platform/users/SuperAdminPlatformUsersView.tsx, codebridgesfront/components/tenant/CreateOrgModal.tsx, codebridgesfront/components/profile/UserProfileView.tsx
+Related Model / Service:TenantController, UserController, AdminController, TenantAccess, User, UserSettingsModal, AppHeader, ModuleSuiteHeader, OrganizationSidebar, CrossTenantUsersTable, SuperAdminPlatformUsersView
+Method / Entry Point:   TenantController::index(), TenantController::show(), TenantController::register(), TenantController::updateProfile(), UserController::index(), UserSettingsModal, SuperAdminPlatformUsersView
+Command / API Route:    GET /api/v1/super-admin/tenants, GET /api/v1/users, PUT /api/v1/tenants/profile, POST /api/v1/tenants/register
+Date & Time:            2026-11-05T09:55:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (PostgreSQL Double-Quote Identifier SQL Bug Fix): Fixed raw SQL syntax in TenantController, UserController, and AdminController where double quotes ('"organization"', '"user"', '"employee"') inside DB::raw() were parsed by PostgreSQL as table column identifiers, causing fatal 500 "Server Error" on Client Tenant Management and "Tenant Error Failed to load tenants list" on Platform Modules Catalog. Replaced with single-quoted literals.
+Step 2 (Display & Experience Preferences Modal): Built UserSettingsModal component with Light/Dark/System theme switcher, 3-tier font size scaling (Compact, Standard, Large), 6-palette brand accent color selector, canvas background surface styling (Aurora Mesh, Flat, Grid), sound chimes toggle, and high-contrast outline mode with instantaneous zero-flash localStorage persistence.
+Step 3 (Profile Dropdown Streamlining & Navigation Unification): Removed redundant launchpad and console links from AppHeader and ModuleSuiteHeader profile dropdowns, retaining strictly "My Profile", "Setting" (which opens UserSettingsModal), and "Sign Out". Unified "My Profile" navigation to route directly to /super-admin/security/profile for Super Admins and /organization/profile for Organization users.
+Step 4 (Organization Profile View & Sidebar Alignment): Created /organization/profile page embedding UserProfileView within the organization layout shell, added "My Profile" to OrganizationSidebar under Workspace Governance, and configured /profile to intelligently auto-redirect based on active workspace context.
+Step 5 (Organization Profile Update 403 & Dynamic Role Elevation): Updated TenantAccess::isAdmin() and TenantController::resolveTenant() to recognize tenant owners and active tenant memberships, preventing 403 Forbidden errors when updating organization profiles. Enhanced User::getRoleAttribute() and CreateOrgModal to automatically elevate user role to "organization" upon successful workspace creation/registration.
+Step 6 (Cross-Tenant Users Search, Sort, Filter & Multi-Select Hub): Upgraded CrossTenantUsersTable and SuperAdminPlatformUsersView with instant search, interactive column sorting (Name, Role, Tenant, Status, Date), multi-criteria filters (Role, Status, Tenant), row and master checkboxes, and a sticky floating bulk action bar with Bulk Activate, Bulk Suspend, and CSV export.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0139 - Multi-Environment Personal Access Tokens Telemetry Column Resilience
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0139
+Component / Service:    auth-service
+File Path:              services/auth-service/app/Http/Controllers/Api/V1/AuthController.php, services/auth-service/app/Http/Controllers/Api/V1/TwoFactorController.php
+Related Model / Service:AuthController, TwoFactorController, DeviceDetectorService
+Method / Entry Point:   AuthController::login(), AuthController::posPinLogin(), TwoFactorController::verifyLogin()
+Command / API Route:    POST /api/v1/auth/login, POST /api/v1/auth/pos-pin-login, POST /api/v1/auth/2fa/challenge
+Date & Time:            2026-11-05T10:05:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Schema Column Check on Telemetry Attributes): Added dynamic Schema::hasColumn('personal_access_tokens', ...) validation for 'browser', 'platform', and 'location' in AuthController and TwoFactorController before constructing the token update payload.
+Step 2 (Defensive Dual-Try Update Fallback): Wrapped personal_access_tokens metadata updates in nested exception handlers. If any custom telemetry column is missing in older database environments (e.g. unmigrated Docker MySQL container), the system gracefully falls back to updating standard core columns (ip_address, user_agent, device_name, last_used_at) without throwing SQLSTATE[42S22] column not found errors.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0140 - Platform Startup Launchpad Route Preservation & Post-Authentication Redirection Flow
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0140
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/client.ts, codebridgesfront/components/header/AppHeader.tsx, codebridgesfront/components/module-shell/ModuleSuiteHeader.tsx, codebridgesfront/components/auth/LoginForm.tsx, codebridgesfront/components/auth/RegisterForm.tsx, codebridgesfront/components/auth/RegisterTenantForm.tsx, codebridgesfront/app/page.tsx, codebridgesfront/app/launchpad/page.tsx
+Related Model / Service:apiFetch, handleSessionExpired, AppHeader, ModuleSuiteHeader, LoginForm, RegisterForm, RegisterTenantForm
+Method / Entry Point:   RootPage, LaunchpadPage, apiFetch(), handleSessionExpired(), loadNotificationsCount(), LoginForm::handleSubmit(), RegisterForm::handleSubmit(), RegisterTenantForm::handleRegister()
+Command / API Route:    GET /, GET /launchpad, GET /login, POST /api/v1/auth/login, POST /api/v1/auth/register, POST /api/v1/tenants/register
+Date & Time:            2026-11-05T10:25:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Root Route Startup to Launchpad): Configured root route app/page.tsx to redirect immediately to /launchpad so that visitors and developers starting the platform are greeted by the full multi-system onboarding and application launchpad without requiring prior authentication.
+Step 2 (Defensive Public Route & Session Expiration Guards): Added strict session presence guards to handleSessionExpired() in lib/api/client.ts (ensuring it only executes if an active access or refresh token actually exists) and verified PUBLIC_ROUTES (['/', '/launchpad', '/login', '/register', '/register-tenant', '/shop']), preventing unauthenticated launchpad visitors from being kicked to /login?redirect=/launchpad.
+Step 3 (Anonymous Polling Suppression in Application Headers): Updated AppHeader and ModuleSuiteHeader so notification polling (loadNotificationsCount) and recurring intervals only execute when getAuthToken() is present, eliminating 401 Unauthorized API noise on public launchpad pages.
+Step 4 (Deterministic Post-Sign-In Launchpad Redirection): Configured LoginForm to route directly to /launchpad upon successful credential authentication, and suppressed the redundant "Sign in to access: /launchpad" banner when redirectUrl points to the launchpad or root.
+Step 5 (Post-Registration & Tenant Onboarding Flow Alignment): Confirmed RegisterForm and updated RegisterTenantForm (onLaunchHub and onEnterAdmin) to navigate directly to /launchpad upon account or organization registration, ensuring a smooth, consistent entry point into the workspace catalog.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0141 - Universal User Profile Preview Across Directory Lists & Glassmorphism Transparent Auth Cards
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0141
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/components/security/users/UserDetailModal.tsx, codebridgesfront/components/platform/users/CrossTenantUsersTable.tsx, codebridgesfront/components/platform/users/SuperAdminPlatformUsersView.tsx, codebridgesfront/components/launchpad/staff/WorkspaceStaffDirectory.tsx, codebridgesfront/components/security/users/UserTable.tsx, codebridgesfront/components/hrm/employees/EmployeeCardGrid.tsx, codebridgesfront/components/hrm/employees/SuperAdminEmployeesView.tsx, codebridgesfront/components/hrm/dashboard/StaffRosterTable.tsx, codebridgesfront/components/pos/access/PosAccessStaffTable.tsx, codebridgesfront/components/auth/LoginForm.tsx, codebridgesfront/components/auth/RegisterForm.tsx, codebridgesfront/components/tenant/TenantRegistrationForm.tsx, codebridgesfront/components/platform/users/types.ts
+Related Model / Service:UserDetailModal, CrossTenantUsersTable, WorkspaceStaffDirectory, UserTable, EmployeeCardGrid, StaffRosterTable, PosAccessStaffTable, LoginForm, RegisterForm
+Method / Entry Point:   UserDetailModal, CrossTenantUsersTable::onViewUser, WorkspaceStaffDirectory::setViewingProfileMember, EmployeeCardGrid::onView, StaffRosterTable::setViewingProfile, PosAccessStaffTable::setViewingStaff, LoginForm, RegisterForm
+Command / API Route:    GET /super-admin/platform/users, GET /organization/staff, GET /hrm/employees, GET /super-admin/security/users, GET /login, GET /register
+Date & Time:            2026-11-05T10:48:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Universal User Profile Preview Modal): Upgraded UserDetailModal with support for avatar photo rendering, dynamic multi-metadata displays (User ID, UUID, Name, Email, Phone, Role, Organization, Outlet, POS PIN status, HRM department/designation, and employment type/salary), quick-copy clipboard buttons, and dual-mode behavior (displaying read-only preview mode when the current viewer lacks CRUD update permissions, and interactive edit/suspend buttons when privileged).
+Step 2 (Cross-Tenant & Super Admin User Directory Integration): Wired avatar image rendering and dedicated "Profile" action button into CrossTenantUsersTable, enabling click-to-preview profile modal in SuperAdminPlatformUsersView on both row click and action trigger.
+Step 3 (Organization Staff Roster & Roles Profile Preview): Enhanced WorkspaceStaffDirectory with avatar photo support and clickable staff identity rows in both Detailed Table View and Grid View, enabling all workspace roles to view complete staff profiles regardless of their CRUD editing permissions.
+Step 4 (HRM Employees Directory & Staff Roster Preview): Updated EmployeeCardGrid, SuperAdminEmployeesView, and StaffRosterTable with photo avatars, clickable employee names, and "Profile" action buttons wired to UserDetailModal.
+Step 5 (Frontline POS Access Operators Table Profile Preview): Added avatar image display and dedicated "Profile" button to PosAccessStaffTable in Cashier/Terminal management.
+Step 6 (Glassmorphism Transparent Sign-In & Sign-Up Cards): Transformed LoginForm, RegisterForm, and TenantRegistrationForm cards from near-opaque backgrounds (bg-white/90) into frosted-glass transparent containers (bg-white/40 dark:bg-slate-900/40 backdrop-blur-2xl border-white/60 ring-1 ring-white/30) with translucent inputs and tab switchers, letting the underlying AuthTechBackground (animated particles, illuminated matrix grid, and glowing cursor spotlight) shine through.
+
+--------------------------------------------------------------------------------
+TICKET: BD-0142 - Light Apple Glassmorphism Multi-Select Dock & Permanent User Deletion Architecture
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0142
+Component / Service:    codebridgesfront, codebridge-auth-service
+File Path:              services/auth-service/app/Http/Controllers/Api/V1/UserController.php, codebridgesfront/components/security/users/UserTable.tsx, codebridgesfront/components/security/users/SuperAdminUsersView.tsx, codebridgesfront/components/platform/users/SuperAdminPlatformUsersView.tsx
+Related Model / Service:UserController, UserTable, SuperAdminUsersView, SuperAdminPlatformUsersView
+Method / Entry Point:   UserController::destroy(), UserTable floating bulk actions dock, SuperAdminUsersView::handleDeleteUser(), SuperAdminUsersView::handleBulkDelete(), SuperAdminPlatformUsersView bulk actions bar
+Command / API Route:    DELETE /api/v1/users/{id}, GET /super-admin/users, GET /super-admin/platform/users
+Date & Time:            2026-11-05T11:18:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Light Frosted-Glass Multi-Select Dock): Completely replaced the pitch black (bg-slate-900) floating bulk action popups in UserTable and SuperAdminPlatformUsersView with an elegant Apple-style light frosted glass container (bg-white/95 backdrop-blur-2xl border border-slate-200/90 text-slate-800 shadow-[0_20px_50px_rgba(0,0,0,0.12)] ring-1 ring-slate-900/5) with brand badge indicator and pastel action buttons (emerald activate, amber suspend, rose delete, slate export/deselect).
+Step 2 (Database-Level Permanent User Deletion in Auth-Service): Fixed critical defect in UserController::destroy() which previously only performed an is_active = false update instead of removing user records. Replaced with atomic database transaction: revoking personal access tokens and JWT sessions, deleting linked user_roles and user_pos_pins, detaching/deleting tenant_users and tenant_user_outlets, safely nullifying foreign relations on employees, tenants, attendances, audit_logs, api_request_logs, and meeting_attendees, and permanently deleting the user record from the users table.
+Step 3 (Immediate Local State Removal on User Delete): Updated SuperAdminUsersView::handleDeleteUser() and handleBulkDelete() to immediately filter deleted accounts out of local state (setUsers) alongside confirmation modals clearly specifying permanent removal, ensuring users vanish instantly from the view without requiring manual reload.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0143 - POS Terminal Current Order Live Receipt Customization Template Integration
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0143
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/components/pos/terminal/PosCartPanel.tsx, codebridgesfront/components/pos/terminal/PosTerminalView.tsx, codebridgesfront/lib/posReceiptUtils.ts, codebridgesfront/components/receipt/ThermalReceiptPaper.tsx
+Related Model / Service:PosCartPanel, PosTerminalView, getPosReceiptSettings, PosReceiptSettings, ThermalReceiptPaper
+Method / Entry Point:   PosCartPanel::viewMode, PosCartPanel::handlePrintSlip(), PosTerminalView props wiring
+Command / API Route:    GET /pos-terminal
+Date & Time:            2026-11-05T11:45:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Organization Receipt Settings Reactive Binding): Bound PosCartPanel directly to getPosReceiptSettings(), dynamically resolving the organization's customized store name, address, phone, receipt logo, VAT/TIN number, custom receipt header slogan, and return policy footer, with live event listeners for cb_terminal_settings_updated and local storage updates.
+Step 2 (Dual View Switcher - Cart Mode vs Thermal Receipt Slip): Implemented a segmented control toggle in the Current Order header allowing cashiers to seamlessly switch between the interactive line item cart and a pixel-accurate live thermal receipt slip (ThermalReceiptPaper) formatted to the organization's 80mm/58mm template specifications.
+Step 3 (Store Branding & Header Slogan Display): Integrated the organization store logo and custom receipt slogan directly into the Current Order header bar, displaying live store branding at the point of sale.
+Step 4 (Organization Return Policy in Order Summary): Displayed the organization's custom receipt return policy (receiptSettings.receiptFooter) directly inside the order summary footer above checkout tender triggers, providing cashiers and customers full visibility into store policy before payment.
+Step 5 (Pre-Bill Slip Printing): Added an instant bill print trigger (Print Bill Slip) with print-optimized CSS rules targeting #printable-thermal-receipt, enabling dining establishments and retail cashiers to print table check slips before final checkout.
+
+
+================================================================================
 END OF CODEBRIDGE SYSTEM MASTER TICKETS SPECIFICATION
 ================================================================================

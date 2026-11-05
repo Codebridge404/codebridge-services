@@ -2,8 +2,9 @@
 
 namespace App\Http\Requests\User;
 
-use Illuminate\Foundation\Http\FormRequest;
 use App\Http\Controllers\Api\V1\UserController;
+use Illuminate\Contracts\Validation\ValidationRule;
+use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class UpdateUserRequest extends FormRequest
@@ -19,7 +20,7 @@ class UpdateUserRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
@@ -32,6 +33,7 @@ class UpdateUserRequest extends FormRequest
             'role_id' => ['sometimes', 'nullable', 'integer'],
             'outlet_id' => ['sometimes', 'nullable', 'string'],
             'pin_code' => ['sometimes', 'nullable', 'string', 'max:10'],
+            'avatar_url' => ['sometimes', 'nullable', 'string', 'max:2048'],
             'is_active' => ['sometimes', 'boolean'],
             'tenant_id' => ['sometimes', 'nullable'],
         ];

@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-05
+ * Task: BD-0138
+ */
+
 namespace App\Services;
 
 use Illuminate\Database\Query\Builder;
@@ -10,7 +16,23 @@ class TenantAccess
 {
     public static function isAdmin($user): bool
     {
-        return $user && in_array($user->role, ['super_admin', 'organization', 'admin', 'administrator', 'owner'], true);
+        if (!$user) {
+            return false;
+        }
+
+        if (in_array($user->role, ['super_admin', 'organization', 'admin', 'administrator', 'owner', 'tenant_admin'], true)) {
+            return true;
+        }
+
+        if (!empty($user->id)) {
+            $isOwnerOrTenantAdmin = DB::table('tenants')->where('owner_user_id', $user->id)->exists()
+                || DB::table('tenant_users')->where('user_id', $user->id)->where('status', 'active')->exists();
+            if ($isOwnerOrTenantAdmin) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public static function scope(Builder $query, Request $request, string $column = 'tenant_id'): Builder

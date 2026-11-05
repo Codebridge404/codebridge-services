@@ -1,5 +1,11 @@
 <?php
 
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-05
+ * Task: BD-0139
+ */
+
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
@@ -220,17 +226,34 @@ class AuthController extends Controller
             'ip_address' => $request->ip(),
             'user_agent' => substr($request->userAgent() ?? '', 0, 500),
             'device_name' => $deviceName,
-            'browser' => $browser,
-            'platform' => $platform,
             'last_used_at' => now(),
         ];
-        if (!empty($location)) {
+        if (Schema::hasColumn('personal_access_tokens', 'browser')) {
+            $tokenMetadata['browser'] = $browser;
+        }
+        if (Schema::hasColumn('personal_access_tokens', 'platform')) {
+            $tokenMetadata['platform'] = $platform;
+        }
+        if (Schema::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
             $tokenMetadata['location'] = $location;
         }
 
-        DB::table('personal_access_tokens')
-            ->where('id', $tokenResult->accessToken->id)
-            ->update($tokenMetadata);
+        try {
+            DB::table('personal_access_tokens')
+                ->where('id', $tokenResult->accessToken->id)
+                ->update($tokenMetadata);
+        } catch (\Throwable $e) {
+            try {
+                DB::table('personal_access_tokens')
+                    ->where('id', $tokenResult->accessToken->id)
+                    ->update([
+                        'ip_address' => $request->ip(),
+                        'user_agent' => substr($request->userAgent() ?? '', 0, 500),
+                        'device_name' => $deviceName,
+                        'last_used_at' => now(),
+                    ]);
+            } catch (\Throwable $ignored) {}
+        }
 
         // Resolve workspace branding
         if ($user->tenant_id) {
@@ -397,17 +420,34 @@ class AuthController extends Controller
             'ip_address' => $request->ip(),
             'user_agent' => substr($request->userAgent() ?? '', 0, 500),
             'device_name' => $deviceName,
-            'browser' => $browser,
-            'platform' => $platform,
             'last_used_at' => now(),
         ];
-        if (!empty($location)) {
+        if (Schema::hasColumn('personal_access_tokens', 'browser')) {
+            $posTokenMetadata['browser'] = $browser;
+        }
+        if (Schema::hasColumn('personal_access_tokens', 'platform')) {
+            $posTokenMetadata['platform'] = $platform;
+        }
+        if (Schema::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
             $posTokenMetadata['location'] = $location;
         }
 
-        DB::table('personal_access_tokens')
-            ->where('id', $tokenResult->accessToken->id)
-            ->update($posTokenMetadata);
+        try {
+            DB::table('personal_access_tokens')
+                ->where('id', $tokenResult->accessToken->id)
+                ->update($posTokenMetadata);
+        } catch (\Throwable $e) {
+            try {
+                DB::table('personal_access_tokens')
+                    ->where('id', $tokenResult->accessToken->id)
+                    ->update([
+                        'ip_address' => $request->ip(),
+                        'user_agent' => substr($request->userAgent() ?? '', 0, 500),
+                        'device_name' => $deviceName,
+                        'last_used_at' => now(),
+                    ]);
+            } catch (\Throwable $ignored) {}
+        }
 
         if ($user->tenant_id) {
             $tenant = DB::table('tenants')->where('id', $user->tenant_id)->first();
