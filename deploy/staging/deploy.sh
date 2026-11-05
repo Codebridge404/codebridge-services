@@ -41,7 +41,7 @@ echo -e "${GREEN}✔ Environment files verified.${NC}\n"
 # 2. Build or Pull Container Images
 echo -e "${YELLOW}[Step 2/6] Building Staging Container Images...${NC}"
 compose config --quiet
-compose build --pull auth-service operations-service auth-horizon operations-horizon auth-scheduler gateway
+compose build auth-service operations-service auth-horizon operations-horizon auth-scheduler gateway
 echo -e "${GREEN}✔ Images built successfully.${NC}\n"
 
 # 3. Start Data Layer (Databases, Cache, S3 Storage, Mailpit)
@@ -94,6 +94,7 @@ echo -e "${GREEN}✔ All database migrations completed.${NC}\n"
 
 # 6. Start API Gateway & Nginx Proxy Manager
 echo -e "${YELLOW}[Step 6/6] Starting Ingress API Gateway and Nginx Proxy Manager...${NC}"
+docker stop -t 5 codebridge-staging-gateway 2>/dev/null || true
 compose up -d --force-recreate gateway
 
 # If a shared NPM container (codebridge-nginx-proxy-manager) is already running, ensure network connectivity

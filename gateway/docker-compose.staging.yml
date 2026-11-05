@@ -5,6 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: codebridge-staging-gateway
     restart: unless-stopped
+    stop_signal: SIGTERM
+    stop_grace_period: 5s
     expose:
       - "80"
     volumes:
