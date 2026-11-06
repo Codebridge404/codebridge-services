@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\User\InviteUserRequest;
 use App\Http\Resources\UserInvitation\UserInvitationResource;
 use App\Models\UserInvitation;
+use App\Services\UserAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -131,13 +132,6 @@ class UserInvitationController extends Controller
             ], 422);
         }
 
-        if ($roleRecord->slug === 'super_admin' && (!$currentUser || $currentUser->role !== 'super_admin')) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Only a super administrator may invite users with the super_admin role.',
-            ], 403);
-        }
-
         // 2. Resolve outlet and ensure outlet belongs to the invited tenant
         $outletUuid = null;
         $outletIdentifier = $validated['outlet_uuid'] ?? ($validated['outlet_id'] ?? null);
@@ -166,6 +160,21 @@ class UserInvitationController extends Controller
             }
 
             $outletUuid = $outlet->uuid;
+        }
+
+        // 3. Enforce unified role and outlet scope authorization policy
+        [$isAuthorized, $authMessage, $authCode] = UserAuthorizationService::authorizeInvitation(
+            $currentUser,
+            $roleRecord->slug,
+            $outletUuid,
+            $tenantId
+        );
+
+        if (!$isAuthorized) {
+            return response()->json([
+                'status' => 'error',
+                'message' => $authMessage,
+            ], $authCode);
         }
 
         $inviteToken = Str::random(48);

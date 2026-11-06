@@ -131,6 +131,38 @@ class AuthenticateJwt
                 Auth::guard('sanctum')->setUser($user);
                 $request->setUserResolver(fn () => $user);
             }
+        } elseif ($token && substr_count($token, '.') !== 2) {
+            $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+            if ($accessToken) {
+                $user = $accessToken->tokenable;
+                if (! $user) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'USER_NOT_FOUND',
+                        'message' => 'User account does not exist or has been deleted.',
+                    ], 401);
+                }
+
+                if (! $user->is_active) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'ACCOUNT_DEACTIVATED',
+                        'message' => 'User account is deactivated.',
+                    ], 401);
+                }
+
+                if ($user->isLockedOut()) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'ACCOUNT_LOCKED_OUT',
+                        'message' => 'User account is temporarily locked out.',
+                    ], 401);
+                }
+
+                Auth::setUser($user);
+                Auth::guard('sanctum')->setUser($user);
+                $request->setUserResolver(fn () => $user);
+            }
         }
 
         return $next($request);

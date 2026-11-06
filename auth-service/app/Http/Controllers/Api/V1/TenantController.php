@@ -311,30 +311,6 @@ class TenantController extends Controller
                     ->first();
             }
 
-            if (!$tenant->owner && !empty($tenant->email)) {
-                try {
-                    $matchedUser = DB::table('users')->where('email', $tenant->email)->first();
-                    if ($matchedUser) {
-                        DB::table('tenant_users')->updateOrInsert(
-                            ['tenant_id' => $tenant->id, 'user_id' => $matchedUser->id],
-                            ['status' => 'active', 'updated_at' => now()]
-                        );
-                        DB::table('tenants')->where('id', $tenant->id)->update(['owner_user_id' => $matchedUser->id]);
-                        $tenant->owner = (object)[
-                            'id' => $matchedUser->id,
-                            'name' => $matchedUser->name,
-                            'email' => $matchedUser->email,
-                            'phone' => $matchedUser->phone,
-                            'role' => 'organization',
-                            'is_active' => (bool)$matchedUser->is_active,
-                            'created_at' => $matchedUser->created_at,
-                        ];
-                    }
-                } catch (\Throwable $e) {
-                    // Safe guard against write errors during GET
-                }
-            }
-
             try {
                 $tenant->users_count = DB::table('tenant_users')->where('tenant_id', $tenant->id)->where('status', 'active')->count();
             } catch (\Throwable $e) {
@@ -536,6 +512,17 @@ class TenantController extends Controller
                 }
             }
         }
+
+        $this->recordAuditLog(
+            action: 'tenant.updated',
+            module: 'tenant',
+            entityType: 'tenant',
+            entityId: (string) $id,
+            details: "Super admin updated tenant {$id} organization details" . ($request->filled('owner_id') || $request->filled('owner_email') ? ' and assigned owner' : ''),
+            userId: $request->user()?->id,
+            userName: $request->user()?->name,
+            tenantId: (int) $id
+        );
 
         return response()->json([
             'success' => true,

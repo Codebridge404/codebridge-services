@@ -22,6 +22,7 @@ use App\Models\UserPosPin;
 use App\Services\JwtService;
 use App\Services\PinService;
 use App\Services\TenantAccess;
+use App\Services\UserAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -238,7 +239,25 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
         }
 
+        $userModel = User::find($targetUser->id);
+        $targetRole = $userModel?->role ?? ($targetUser->role ?? null);
+        $isUserActive = (bool) ($targetUser->is_active ?? $userModel?->is_active);
+
         $currentUser = $request->user();
+
+        // Protect platform super_admin accounts from tenant hijacking
+        if ($targetRole === 'super_admin' && $currentUser?->role !== 'super_admin') {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized to attach platform administrator accounts.'], 403);
+        }
+
+        // Global account reactivation is reserved for platform administrators
+        if (! $isUserActive && $currentUser?->role !== 'super_admin') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot attach a suspended user. Global account reactivation requires platform administrator approval.',
+            ], 403);
+        }
+
         $tenantId = ($currentUser?->role === 'super_admin' && ! empty($validated['tenant_id']))
             ? $validated['tenant_id']
             : $currentUser?->tenant_id;
@@ -255,8 +274,6 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'code' => 'QUOTA_EXCEEDED', 'message' => $quotaErr], 403);
         }
 
-        [$parentRole, $subRoleId] = $this->resolveRoleAndId($validated['role'], $validated['role_id'] ?? null, $currentUser);
-
         $outletUuid = null;
         if (! empty($validated['outlet_id'])) {
             $outlet = Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
@@ -264,10 +281,15 @@ class UserController extends Controller
             $outletUuid = $outlet->uuid;
         }
 
-        DB::table('users')->where('id', $targetUser->id)->update([
-            'is_active' => true,
-            'updated_at' => now(),
-        ]);
+        // Enforce unified authorization policy on role and outlet scope
+        [$isAuth, $authMsg, $authStatus] = UserAuthorizationService::authorizeInvitation($currentUser, $validated['role'], $outletUuid, $tenantId);
+        if (! $isAuth) {
+            return response()->json(['status' => 'error', 'message' => $authMsg], $authStatus);
+        }
+
+        [$parentRole, $subRoleId] = $this->resolveRoleAndId($validated['role'], $validated['role_id'] ?? null, $currentUser);
+
+        // Limit attach strictly to tenant membership changes; do NOT mutate users.is_active globally
 
         DB::table('tenant_users')->updateOrInsert(
             ['tenant_id' => $tenantId, 'user_id' => $targetUser->id],
@@ -337,6 +359,12 @@ class UserController extends Controller
             $outlet = Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
             abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
             $outletUuid = $outlet->uuid;
+        }
+
+        // Enforce unified authorization policy on role and outlet scope
+        [$canCreate, $createMsg, $createCode] = UserAuthorizationService::authorizeInvitation($currentUser, $validated['role'], $outletUuid, $tenantId);
+        if (! $canCreate) {
+            return response()->json(['status' => 'error', 'message' => $createMsg], $createCode);
         }
 
         $userId = DB::table('users')->insertGetId([
@@ -413,11 +441,22 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
         }
 
-        // Enforce tenant boundary & protect super admin accounts
-        if ($currentUser && $currentUser->role !== 'super_admin') {
-            if ($targetUser->tenant_id != $currentUser->tenant_id || $targetUser->role === 'super_admin') {
-                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to user account.'], 403);
-            }
+        // Enforce unified user management authorization policy
+        $requestedRole = $request->input('role');
+        $requestedOutletUuid = null;
+        if ($request->filled('outlet_id')) {
+            $outlet = Outlet::where(fn ($q) => $q->where('id', $request->input('outlet_id'))->orWhere('uuid', $request->input('outlet_id')))->first();
+            $requestedOutletUuid = $outlet?->uuid;
+        }
+
+        [$canManage, $manageMsg, $manageCode] = UserAuthorizationService::authorizeUserManagement(
+            $currentUser,
+            $targetUser,
+            $requestedRole,
+            $requestedOutletUuid
+        );
+        if (! $canManage) {
+            return response()->json(['status' => 'error', 'message' => $manageMsg], $manageCode);
         }
 
         $validated = $request->validated();
@@ -536,10 +575,12 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
         }
 
-        if ($currentUser && $currentUser->role !== 'super_admin') {
-            if ($targetUser->tenant_id != $currentUser->tenant_id || $targetUser->role === 'super_admin') {
-                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to user account.'], 403);
-            }
+        [$canReset, $resetMsg, $resetCode] = UserAuthorizationService::authorizePasswordReset(
+            $currentUser,
+            $targetUser
+        );
+        if (! $canReset) {
+            return response()->json(['status' => 'error', 'message' => $resetMsg], $resetCode);
         }
 
         $validated = $request->validated();

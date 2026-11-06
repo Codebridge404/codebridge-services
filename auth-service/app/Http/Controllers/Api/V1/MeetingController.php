@@ -688,11 +688,53 @@ class MeetingController extends Controller
      * Kiosk Door Display Feed for a specific room.
      * GET /api/v1/meetings/room-display/{roomId}
      */
-    public function roomDisplay($roomId)
+    public function roomDisplay(Request $request, $roomId)
     {
         $room = DB::table('meeting_rooms')->where('id', $roomId)->first();
         if (!$room) {
             return response()->json(['status' => 'error', 'message' => 'Room not found.'], 404);
+        }
+
+        // Authenticate the kiosk device against its assigned room
+        $kioskToken = $request->header('X-Kiosk-Token')
+            ?: $request->header('X-Device-Token')
+            ?: $request->bearerToken()
+            ?: $request->query('kiosk_token');
+
+        $isAuthorizedKiosk = false;
+        if ($kioskToken) {
+            $tokenHash = hash('sha256', $kioskToken);
+            $display = DB::table('meeting_room_displays')
+                ->where('room_id', $roomId)
+                ->where('status', 'active')
+                ->where(function ($q) use ($tokenHash, $kioskToken) {
+                    $q->where('device_token_hash', $tokenHash)
+                      ->orWhere('device_token_hash', $kioskToken);
+                })
+                ->first();
+
+            if ($display) {
+                $isAuthorizedKiosk = true;
+                DB::table('meeting_room_displays')->where('id', $display->id)->update(['last_ping_at' => now()]);
+            }
+        }
+
+        // Also permit signed URL or authenticated user belonging to the room's tenant
+        if (!$isAuthorizedKiosk) {
+            if ($request->hasValidSignature()) {
+                $isAuthorizedKiosk = true;
+            } elseif ($user = $request->user()) {
+                if ($user->role === 'super_admin' || (int) $user->tenant_id === (int) $room->tenant_id) {
+                    $isAuthorizedKiosk = true;
+                }
+            }
+        }
+
+        if (!$isAuthorizedKiosk) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unauthorized kiosk display device. Valid room kiosk authentication is required.',
+            ], 401);
         }
 
         // Run opportunistic auto-release
@@ -700,13 +742,22 @@ class MeetingController extends Controller
 
         $now = now();
 
+        $meetingColumns = [
+            'm.id',
+            'm.title',
+            'm.start_time',
+            'm.end_time',
+            'm.status',
+            'u.name as organizer_name',
+        ];
+
         $currentMeeting = DB::table('meetings as m')
             ->leftJoin('users as u', 'm.organizer_id', '=', 'u.id')
             ->where('m.room_id', $roomId)
             ->whereNotIn('m.status', ['cancelled', 'rejected'])
             ->where('m.start_time', '<=', $now)
             ->where('m.end_time', '>=', $now)
-            ->select('m.*', 'u.name as organizer_name')
+            ->select($meetingColumns)
             ->first();
 
         $nextMeeting = DB::table('meetings as m')
@@ -715,13 +766,23 @@ class MeetingController extends Controller
             ->whereNotIn('m.status', ['cancelled', 'rejected'])
             ->where('m.start_time', '>', $now)
             ->orderBy('m.start_time', 'asc')
-            ->select('m.*', 'u.name as organizer_name')
+            ->select($meetingColumns)
             ->first();
+
+        $displayRoom = [
+            'id' => $room->id,
+            'name' => $room->name,
+            'room_number' => $room->room_number ?? null,
+            'capacity' => $room->capacity ?? null,
+            'floor' => $room->floor ?? null,
+            'location' => $room->location ?? null,
+            'status' => $room->status ?? 'active',
+        ];
 
         return response()->json([
             'status' => 'success',
             'data' => [
-                'room' => $room,
+                'room' => $displayRoom,
                 'current_meeting' => $currentMeeting,
                 'next_meeting' => $nextMeeting,
                 'is_occupied' => !empty($currentMeeting),

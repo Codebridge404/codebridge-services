@@ -50,6 +50,8 @@ class TenantAccess
         abort_unless($user, 401);
         if ($user->role !== 'super_admin') {
             abort_unless($user->tenant_id, 403, 'An active workspace membership is required.');
+            $tenant = DB::table('tenants')->where('id', $user->tenant_id)->first();
+            abort_unless($tenant && in_array($tenant->status, ['active', 'trial'], true), 403, 'Workspace tenant is suspended or inactive.');
             $query->where($column, $user->tenant_id);
         }
         return $query;

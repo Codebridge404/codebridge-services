@@ -23,6 +23,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\RateLimiter;
 
 /**
  * Two-Factor Authentication (2FA) Controller.
@@ -206,6 +207,22 @@ class TwoFactorController extends Controller
             );
         }
 
+        $accountKey = '2fa_attempts:' . $user->id;
+        $challengeKey = '2fa_challenge_attempts:' . sha1($challengeToken);
+
+        if (RateLimiter::tooManyAttempts($accountKey, 5) || RateLimiter::tooManyAttempts($challengeKey, 5)) {
+            $seconds = max(RateLimiter::availableIn($accountKey), RateLimiter::availableIn($challengeKey), 1);
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ACCOUNT_LOCKED_OUT',
+                'message' => 'Too many 2FA verification attempts. Please try again later.',
+                'retry_after_seconds' => $seconds,
+            ], 429, [
+                'Retry-After' => (string) $seconds,
+                'Cache-Control' => 'no-store',
+            ]);
+        }
+
         $secret = $this->twoFactorService->getDecryptedSecret($user);
         $isCodeValid = false;
 
@@ -219,12 +236,31 @@ class TwoFactorController extends Controller
         }
 
         if (!$isCodeValid) {
+            RateLimiter::hit($accountKey, 15 * 60);
+            RateLimiter::hit($challengeKey, 15 * 60);
+
+            if (RateLimiter::tooManyAttempts($accountKey, 5) || RateLimiter::tooManyAttempts($challengeKey, 5)) {
+                $seconds = max(RateLimiter::availableIn($accountKey), RateLimiter::availableIn($challengeKey), 1);
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'ACCOUNT_LOCKED_OUT',
+                    'message' => 'Too many 2FA verification attempts. Please try again later.',
+                    'retry_after_seconds' => $seconds,
+                ], 429, [
+                    'Retry-After' => (string) $seconds,
+                    'Cache-Control' => 'no-store',
+                ]);
+            }
+
             return $this->errorResponse(
                 'The provided authentication code or recovery code is incorrect.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
                 ResponseCode::VALIDATION_ERROR
             );
         }
+
+        RateLimiter::clear($accountKey);
+        RateLimiter::clear($challengeKey);
 
         // Invalidate challenge token once verified
         $this->twoFactorService->consumeChallengeToken($challengeToken);
@@ -453,6 +489,28 @@ class TwoFactorController extends Controller
             );
         }
 
+        // Reauthentication is strictly required to view recovery codes
+        $password = $request->input('password') ?? $request->header('X-Reauth-Password');
+        $code = $request->input('code') ?? $request->input('totp_code') ?? $request->header('X-2FA-Code');
+
+        $reauthenticated = false;
+        if (!empty($password) && Hash::check((string) $password, $user->password)) {
+            $reauthenticated = true;
+        } elseif (!empty($code)) {
+            $secret = $this->twoFactorService->getDecryptedSecret($user);
+            if ($secret && $this->twoFactorService->verifyCode($secret, (string) $code)) {
+                $reauthenticated = true;
+            }
+        }
+
+        if (!$reauthenticated) {
+            return $this->errorResponse(
+                'Reauthentication required. Provide current password or fresh 2FA authenticator code to view recovery codes.',
+                HttpStatus::FORBIDDEN,
+                ResponseCode::FORBIDDEN
+            );
+        }
+
         $codes = $this->twoFactorService->getRecoveryCodes($user);
         if (empty($codes)) {
             $codes = $this->twoFactorService->generateRecoveryCodes(8);
@@ -490,6 +548,28 @@ class TwoFactorController extends Controller
             );
         }
 
+        // Fresh 2FA verification or account password is required to regenerate recovery codes
+        $code = $request->input('code') ?? $request->input('totp_code') ?? $request->header('X-2FA-Code');
+        $password = $request->input('password') ?? $request->header('X-Reauth-Password');
+
+        $reauthenticated = false;
+        if (!empty($code)) {
+            $secret = $this->twoFactorService->getDecryptedSecret($user);
+            if ($secret && $this->twoFactorService->verifyCode($secret, (string) $code)) {
+                $reauthenticated = true;
+            }
+        } elseif (!empty($password) && Hash::check((string) $password, $user->password)) {
+            $reauthenticated = true;
+        }
+
+        if (!$reauthenticated) {
+            return $this->errorResponse(
+                'Fresh 2FA verification required. Provide a valid TOTP authenticator code or account password to regenerate recovery codes.',
+                HttpStatus::FORBIDDEN,
+                ResponseCode::FORBIDDEN
+            );
+        }
+
         $codes = $this->twoFactorService->generateRecoveryCodes(8);
         $this->twoFactorService->storeRecoveryCodes($user, $codes);
 
@@ -505,9 +585,9 @@ class TwoFactorController extends Controller
         );
 
         return $this->successResponse(
-            message: 'New two-factor recovery codes generated successfully. Store your recovery codes in a secure location.',
+            message: 'New two-factor recovery codes generated successfully. Store your recovery codes in a secure location; these codes are only displayed once.',
             headers: [
-                'Cache-Control' => 'no-store',
+                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
                 'Pragma' => 'no-cache',
             ],
             extra: [

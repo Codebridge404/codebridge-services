@@ -38,10 +38,18 @@ class RateLimitAuthMiddleware
     public function handle(Request $request, Closure $next, int $maxAttempts = 5, int $decayMinutes = 15): Response
     {
         $ip = $request->ip();
-        $identifier = $request->input('email') ?? $request->input('phone') ?? $request->input('login') ?? $request->input('pin_code') ?? 'guest';
+        $challengeToken = $request->input('challenge_token');
+        $identifier = $request->input('email')
+            ?? $request->input('phone')
+            ?? $request->input('login')
+            ?? $request->input('pin_code')
+            ?? ($challengeToken ? 'challenge:' . sha1($challengeToken) : null)
+            ?? ($request->user()?->email)
+            ?? 'guest';
+
         $throttleKey = 'auth_attempt:' . sha1($ip . '|' . $identifier);
 
-        if (RateLimiter::tooManyAttempts($throttleKey, $maxAttempts)) {
+        if (RateLimiter::tooManyAttempts($throttleKey, $maxAttempts) || ($challengeToken && RateLimiter::tooManyAttempts('2fa_attempts:' . sha1($challengeToken), $maxAttempts))) {
             $seconds = max(1, RateLimiter::availableIn($throttleKey));
 
             return response()->json([
@@ -58,11 +66,26 @@ class RateLimitAuthMiddleware
         $response = $next($request);
 
         // If response indicates a 401, 403, or 422 authentication error, record the hit
+        $isAuthRoute = $request->is(
+            '*/auth/login',
+            '*/auth/quick-switch',
+            '*/auth/verify-pin',
+            '*/auth/2fa/*',
+            'api/v1/auth/2fa/*'
+        );
+
         if ($response->getStatusCode() === 401 
-            || (($response->getStatusCode() === 422 || $response->getStatusCode() === 403) && $request->is('*/auth/login', '*/auth/quick-switch', '*/auth/verify-pin'))) {
+            || (($response->getStatusCode() === 422 || $response->getStatusCode() === 403) && $isAuthRoute)) {
             RateLimiter::hit($throttleKey, $decayMinutes * 60);
+
+            if ($challengeToken) {
+                RateLimiter::hit('2fa_attempts:' . sha1($challengeToken), $decayMinutes * 60);
+            }
         } elseif ($response->isSuccessful()) {
             RateLimiter::clear($throttleKey);
+            if ($challengeToken) {
+                RateLimiter::clear('2fa_attempts:' . sha1($challengeToken));
+            }
         }
 
         return $response;
