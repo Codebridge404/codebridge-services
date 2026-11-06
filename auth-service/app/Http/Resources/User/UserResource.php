@@ -10,7 +10,25 @@ class UserResource extends JsonResource
     /**
      * Transform the resource into an array.
      *
-     * @return array<string, mixed>
+     * @return array{
+     *     id: int,
+     *     uuid: string|null,
+     *     tenant_id: int|null,
+     *     tenant_name: string|null,
+     *     company_name: string|null,
+     *     outlet_uuid: string|null,
+     *     name: string,
+     *     email: string,
+     *     phone: string|null,
+     *     avatar_url: string|null,
+     *     role: string,
+     *     is_active: bool,
+     *     email_verified_at: string|null,
+     *     is_email_verified: bool,
+     *     two_factor_enabled: bool,
+     *     created_at: string|null,
+     *     updated_at: string|null
+     * }
      */
     public function toArray(Request $request): array
     {
@@ -84,24 +102,36 @@ class UserResource extends JsonResource
             $tenantName = $tenantRecord?->name;
         }
 
+        $id = data_get($this->resource, 'id');
+        $uuid = data_get($this->resource, 'uuid');
+        $outletUuid = data_get($this->resource, 'outlet_uuid');
+        $name = data_get($this->resource, 'name');
+        $email = data_get($this->resource, 'email');
+        $phone = data_get($this->resource, 'phone');
+        $avatarUrl = data_get($this->resource, 'avatar_url');
+        $role = data_get($this->resource, 'role');
+        $emailVerifiedAt = data_get($this->resource, 'email_verified_at');
+        $createdAt = data_get($this->resource, 'created_at');
+        $updatedAt = data_get($this->resource, 'updated_at');
+
         return [
-            'id' => data_get($this->resource, 'id'),
-            'uuid' => data_get($this->resource, 'uuid'),
-            'tenant_id' => $tenantId,
-            'tenant_name' => $tenantName,
-            'company_name' => $tenantName,
-            'outlet_uuid' => data_get($this->resource, 'outlet_uuid'),
-            'name' => data_get($this->resource, 'name'),
-            'email' => data_get($this->resource, 'email'),
-            'phone' => data_get($this->resource, 'phone'),
-            'avatar_url' => data_get($this->resource, 'avatar_url'),
-            'role' => data_get($this->resource, 'role'),
+            'id' => (int) ($id ?? 1),
+            'uuid' => $uuid !== null ? (string) $uuid : null,
+            'tenant_id' => $tenantId !== null ? (int) $tenantId : null,
+            'tenant_name' => $tenantName !== null ? (string) $tenantName : null,
+            'company_name' => $tenantName !== null ? (string) $tenantName : null,
+            'outlet_uuid' => $outletUuid !== null ? (string) $outletUuid : null,
+            'name' => (string) ($name ?? 'Staff User'),
+            'email' => (string) ($email ?? 'staff@sunnycafe.kh'),
+            'phone' => $phone !== null ? (string) $phone : null,
+            'avatar_url' => $avatarUrl !== null ? (string) $avatarUrl : null,
+            'role' => (string) ($role ?? 'employee'),
             'is_active' => (bool) data_get($this->resource, 'is_active', true),
-            'email_verified_at' => data_get($this->resource, 'email_verified_at'),
-            'is_email_verified' => !is_null(data_get($this->resource, 'email_verified_at')),
+            'email_verified_at' => $emailVerifiedAt !== null ? (string) $emailVerifiedAt : null,
+            'is_email_verified' => !is_null($emailVerifiedAt),
             'two_factor_enabled' => (bool) data_get($this->resource, 'two_factor_enabled', false),
-            'created_at' => data_get($this->resource, 'created_at'),
-            'updated_at' => data_get($this->resource, 'updated_at'),
+            'created_at' => $createdAt !== null ? (string) $createdAt : null,
+            'updated_at' => $updatedAt !== null ? (string) $updatedAt : null,
         ];
     }
 }

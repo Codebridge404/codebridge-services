@@ -10,7 +10,24 @@ class UserInvitationResource extends JsonResource
     /**
      * Transform the resource into an array.
      *
-     * @return array<string, mixed>
+     * @return array{
+     *     id: int,
+     *     tenant_id: int,
+     *     email: string,
+     *     role_id: int|null,
+     *     role: string|null,
+     *     role_name: string|null,
+     *     outlet_uuid: string|null,
+     *     outlet_name: string|null,
+     *     invited_by: int|null,
+     *     invited_by_name: string|null,
+     *     token_hash: string,
+     *     status: string,
+     *     expires_at: string,
+     *     accepted_at: string|null,
+     *     created_at: string,
+     *     updated_at: string
+     * }
      */
     public function toArray(Request $request): array
     {

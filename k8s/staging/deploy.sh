@@ -34,6 +34,12 @@ if ! docker ps --filter "name=registry" --format '{{.Names}}' | grep -q "^regist
   docker start registry 2>/dev/null || docker run -d -p 5000:5000 --restart=always --name registry registry:2
 fi
 
+echo "▶ Building and pushing Kubernetes staging images to 127.0.0.1:5000..."
+docker build -t 127.0.0.1:5000/codebridge-auth-service:staging "${SCRIPT_DIR}/../../auth-service"
+docker push 127.0.0.1:5000/codebridge-auth-service:staging
+docker build -t 127.0.0.1:5000/codebridge-operations-service:staging "${SCRIPT_DIR}/../../operations-service"
+docker push 127.0.0.1:5000/codebridge-operations-service:staging
+
 # 2. Namespace
 echo "▶ 2. Ensuring namespace [${NAMESPACE}] exists..."
 kubectl apply -f "${SCRIPT_DIR}/namespace.yaml"
