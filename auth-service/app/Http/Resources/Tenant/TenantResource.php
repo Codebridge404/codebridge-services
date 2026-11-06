@@ -54,7 +54,7 @@ class TenantResource extends JsonResource
             'users_count' => data_get($this->resource, 'users_count', 1),
             'owner' => data_get($this->resource, 'owner'),
             'subscription' => data_get($this->resource, 'subscription'),
-            'subscriptions' => data_get($this->resource, 'subscriptions'),
+            'subscriptions' => data_get($this->resource, 'subscriptions') ?? (data_get($this->resource, 'subscription') ? [data_get($this->resource, 'subscription')] : []),
             'created_at' => data_get($this->resource, 'created_at'),
             'updated_at' => data_get($this->resource, 'updated_at'),
         ];

@@ -262,10 +262,12 @@ class TenantController extends Controller
 
         // Attach subscription and owner info
         foreach ($tenants as $tenant) {
+            $tenant->owner = null;
             $tenant->subscription = DB::table('tenant_subscriptions')
                 ->where('tenant_id', $tenant->id)
                 ->orderBy('created_at', 'desc')
                 ->first();
+            $tenant->subscriptions = $tenant->subscription ? [$tenant->subscription] : [];
 
             // Try finding owner via owner_user_id (ERD standard)
             if (!empty($tenant->owner_user_id)) {
@@ -310,26 +312,34 @@ class TenantController extends Controller
             }
 
             if (!$tenant->owner && !empty($tenant->email)) {
-                $matchedUser = DB::table('users')->where('email', $tenant->email)->first();
-                if ($matchedUser) {
-                    DB::table('tenant_users')->updateOrInsert(
-                        ['tenant_id' => $tenant->id, 'user_id' => $matchedUser->id],
-                        ['status' => 'active', 'updated_at' => now()]
-                    );
-                    DB::table('tenants')->where('id', $tenant->id)->update(['owner_user_id' => $matchedUser->id]);
-                    $tenant->owner = (object)[
-                        'id' => $matchedUser->id,
-                        'name' => $matchedUser->name,
-                        'email' => $matchedUser->email,
-                        'phone' => $matchedUser->phone,
-                        'role' => 'organization',
-                        'is_active' => (bool)$matchedUser->is_active,
-                        'created_at' => $matchedUser->created_at,
-                    ];
+                try {
+                    $matchedUser = DB::table('users')->where('email', $tenant->email)->first();
+                    if ($matchedUser) {
+                        DB::table('tenant_users')->updateOrInsert(
+                            ['tenant_id' => $tenant->id, 'user_id' => $matchedUser->id],
+                            ['status' => 'active', 'updated_at' => now()]
+                        );
+                        DB::table('tenants')->where('id', $tenant->id)->update(['owner_user_id' => $matchedUser->id]);
+                        $tenant->owner = (object)[
+                            'id' => $matchedUser->id,
+                            'name' => $matchedUser->name,
+                            'email' => $matchedUser->email,
+                            'phone' => $matchedUser->phone,
+                            'role' => 'organization',
+                            'is_active' => (bool)$matchedUser->is_active,
+                            'created_at' => $matchedUser->created_at,
+                        ];
+                    }
+                } catch (\Throwable $e) {
+                    // Safe guard against write errors during GET
                 }
             }
 
-            $tenant->users_count = DB::table('tenant_users')->where('tenant_id', $tenant->id)->where('status', 'active')->count();
+            try {
+                $tenant->users_count = DB::table('tenant_users')->where('tenant_id', $tenant->id)->where('status', 'active')->count();
+            } catch (\Throwable $e) {
+                $tenant->users_count = 1;
+            }
             try {
                 $tenant->outlets_count = DB::table('outlets')->where('tenant_id', $tenant->id)->count();
             } catch (\Throwable $e) {
