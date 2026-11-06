@@ -2080,6 +2080,62 @@ Step 4 (Organization Return Policy in Order Summary): Displayed the organization
 Step 5 (Pre-Bill Slip Printing): Added an instant bill print trigger (Print Bill Slip) with print-optimized CSS rules targeting #printable-thermal-receipt, enabling dining establishments and retail cashiers to print table check slips before final checkout.
 
 
+--------------------------------------------------------------------------------
+TICKET: BD-0151 - Super Admin Dynamic Platform Settings Studio & Tier Blueprint Suite
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0151
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/platformSettings.ts, codebridgesfront/components/settings/SuperAdminPlatformSettingsView.tsx, codebridgesfront/components/settings/PlatformSettingsSubSidebar.tsx, codebridgesfront/components/settings/GeneralMaintenanceSettingsTab.tsx, codebridgesfront/components/settings/CurrencyTaxSettingsTab.tsx, codebridgesfront/components/settings/TierQuotasSettingsTab.tsx, codebridgesfront/components/settings/EmailSmtpSettingsTab.tsx, codebridgesfront/components/settings/AlertsWebhooksSettingsTab.tsx, codebridgesfront/components/settings/DataRetentionSettingsTab.tsx, codebridgesfront/components/settings/IntegrationsSettingsTab.tsx, codebridgesfront/components/settings/SecuritySettingsTab.tsx, codebridgesfront/components/tenant/TenantQuotaManagerView.tsx, codebridgesfront/components/common/GlobalMaintenanceBanner.tsx
+Related Model / Service:PlatformSettings, getPlatformSettings, savePlatformSettings, getTierDefaultQuotas, roundKhrCash, GlobalMaintenanceBanner
+Method / Entry Point:   /super-admin/settings, /super-admin/platform/quotas
+Command / API Route:    POST /tenants/profile (Dynamic client sync)
+Date & Time:            2026-11-06T10:30:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Dynamic Platform Settings Utility Engine): Created lib/platformSettings.ts establishing reactive, type-safe persistence (cb_platform_settings) with window event broadcasting (cb_platform_settings_updated) and tenant profile API synchronization.
+Step 2 (Removal of Hardcoded Tier Blueprint Quotas): Refactored TenantQuotaManagerView to replace static 50/200/500, 5/15/50, and 1/2/5 numbers across statistics cards, filtering, modal editing, and grid views with dynamic getTierDefaultQuotas() resolved directly from Super Admin settings.
+Step 3 (Dual-Currency & NBC Riel Cash Rounding Engine): Built CurrencyTaxSettingsTab and posTaxUtils bindings supporting live NBC daily exchange rate synchronization (1 USD = X KHR), base currency toggling (USD vs KHR), and physical cash rounding policies (Round down to 100 Riel, Round up to 100 Riel, Nearest 500 Riel, Exact Riel) with live simulated calculations.
+Step 4 (Global Maintenance Mode & Emergency Lock): Implemented GeneralMaintenanceSettingsTab with 1-click platform lock, scheduled maintenance countdown timers, Super Admin bypass, and mounted GlobalMaintenanceBanner across the application root in AppProviders.
+Step 5 (Transactional Email / SMTP & Alerting Webhooks): Built EmailSmtpSettingsTab with live handshake testing diagnostic, and AlertsWebhooksSettingsTab routing incident alarms (MinIO storage capacity >90%, high error spikes, brute-force logins) to Telegram bots and Slack webhooks.
+Step 6 (Data Lifecycle & Audit Purging): Built DataRetentionSettingsTab providing configurable audit log retention periods (30 to 365 days, indefinite), automated daily prune toggles, and manual purge confirmation gates.
+Step 7 (Strict Frontend Boundary): Executed 100% inside codebridgesfront with zero backend modifications. Passed full Turbopack production build (122/122 routes, 0 errors).
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0152 - Super Admin Sidebar & Page Title 1-to-1 Harmonization
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0152
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/components/sidebars/SuperAdminSidebar.tsx, codebridgesfront/components/dashboards/SuperAdminDashboard.tsx, codebridgesfront/components/analytics/SuperAdminAnalyticsView.tsx, codebridgesfront/components/tenant/TenantFilterBar.tsx, codebridgesfront/components/platform/users/SuperAdminPlatformUsersView.tsx, codebridgesfront/components/platform/modules/SuperAdminModulesView.tsx, codebridgesfront/components/finance/billing/SuperAdminBillingView.tsx, codebridgesfront/components/finance/reports/SuperAdminReportsView.tsx, codebridgesfront/components/finance/reconciliation/SuperAdminReconciliationView.tsx, codebridgesfront/components/api-keys/SuperAdminApiKeysView.tsx, codebridgesfront/components/settings/SuperAdminPlatformSettingsView.tsx, codebridgesfront/components/security/roles/SuperAdminRolesView.tsx, codebridgesfront/components/security/audit-logs/SuperAdminAuditLogsView.tsx, codebridgesfront/app/super-admin/security/profile/page.tsx
+Related Model / Service:SuperAdminSidebar, platformNavGroups
+Method / Entry Point:   /super-admin/*
+Command / API Route:    All Super Admin routes
+Date & Time:            2026-11-06T11:00:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Comprehensive Audit of Super Admin Sidebar vs Page Titles): Conducted a rigorous audit comparing every item in platformNavGroups inside SuperAdminSidebar against its corresponding rendered page <h1> and header components.
+Step 2 (Exact 1-to-1 Title Harmonization): Updated all disparate page headers so that clicking any sidebar item displays the exact same title at the top of the destination page:
+  - Executive Dashboard (/super-admin/dashboard)
+  - Cross-Tenant Analytics (/super-admin/analytics)
+  - Client Organizations (/super-admin/platform/tenants)
+  - Cross-Tenant Users (/super-admin/platform/users)
+  - Platform Modules Catalog (/super-admin/platform/modules)
+  - Tenant Quotas & Limits (/super-admin/platform/quotas)
+  - Subscription Plans & Tiers (/super-admin/finance/billing - fixed previous "Bill-Subscription" defect)
+  - SaaS Revenue Reports (/super-admin/finance/reports)
+  - Payment Gateways & Invoices (/super-admin/finance/reconciliation)
+  - Server Health & Telemetry (/super-admin/infrastructure)
+  - Developer API Keys (/super-admin/api-keys)
+  - User Management (/super-admin/users)
+  - Platform Settings (/super-admin/settings)
+  - Dynamic Roles & RBAC (/super-admin/security/roles)
+  - Immutable Audit Trail (/super-admin/security/audit-logs)
+  - Admin Profile (/super-admin/security/profile)
+Step 3 (Compilation & Build Verification): Successfully executed full Next.js Turbopack production build verifying 122/122 routes with 0 errors.
+
+
 ================================================================================
 END OF CODEBRIDGE SYSTEM MASTER TICKETS SPECIFICATION
 ================================================================================
