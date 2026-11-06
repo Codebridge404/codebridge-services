@@ -132,6 +132,10 @@ jobs:
               fi
             done
 
+            echo "Stopping conflicting legacy non-namespaced containers..."
+            docker stop codebridge-api-gateway codebridge-auth-service codebridge-operations-service codebridge-auth-horizon codebridge-auth-scheduler 2>/dev/null || true
+            docker rm codebridge-api-gateway codebridge-auth-service codebridge-operations-service codebridge-auth-horizon codebridge-auth-scheduler 2>/dev/null || true
+
             echo "Running staging deployment..."
             chmod +x deploy/staging/deploy.sh deploy/staging/status.sh
             ./deploy/staging/deploy.sh

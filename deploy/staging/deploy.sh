@@ -40,6 +40,9 @@ echo -e "${GREEN}✔ Environment files verified.${NC}\n"
 
 # 2. Build or Pull Container Images
 echo -e "${YELLOW}[Step 2/6] Building Staging Container Images...${NC}"
+# Stop and remove any conflicting legacy unnamespaced containers from old non-staging compose projects
+docker stop codebridge-api-gateway codebridge-auth-service codebridge-operations-service codebridge-auth-horizon codebridge-auth-scheduler 2>/dev/null || true
+docker rm codebridge-api-gateway codebridge-auth-service codebridge-operations-service codebridge-auth-horizon codebridge-auth-scheduler 2>/dev/null || true
 compose config --quiet
 compose build auth-service operations-service auth-horizon operations-horizon auth-scheduler gateway
 echo -e "${GREEN}✔ Images built successfully.${NC}\n"
@@ -84,13 +87,17 @@ echo -e "${YELLOW}[Step 4/6] Starting Staging Microservices and Workers...${NC}"
 compose up -d --force-recreate auth-service operations-service auth-horizon operations-horizon auth-scheduler
 echo -e "${GREEN}✔ Microservices started.${NC}\n"
 
-# 5. Execute Database Migrations
-echo -e "${YELLOW}[Step 5/6] Executing Laravel Database Migrations...${NC}"
-echo -e "  Running Auth Service migrations..."
+# 5. Execute Database Migrations & Clear Spec/Route Caches
+echo -e "${YELLOW}[Step 5/6] Executing Laravel Database Migrations & Clearing Caches...${NC}"
+echo -e "  Running Auth Service migrations & cache reset..."
 docker exec codebridge-staging-auth-service php artisan migrate --force
-echo -e "  Running Operations Service migrations..."
+docker exec codebridge-staging-auth-service php artisan optimize:clear
+docker exec codebridge-staging-auth-service php artisan scramble:clear 2>/dev/null || true
+echo -e "  Running Operations Service migrations & cache reset..."
 docker exec codebridge-staging-operations-service php artisan migrate --force
-echo -e "${GREEN}✔ All database migrations completed.${NC}\n"
+docker exec codebridge-staging-operations-service php artisan optimize:clear
+docker exec codebridge-staging-operations-service php artisan scramble:clear 2>/dev/null || true
+echo -e "${GREEN}✔ All database migrations and cache resets completed.${NC}\n"
 
 # 6. Start API Gateway & Nginx Proxy Manager
 echo -e "${YELLOW}[Step 6/6] Starting Ingress API Gateway and Nginx Proxy Manager...${NC}"
