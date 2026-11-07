@@ -304,6 +304,9 @@ class AuditP1RemediationTest extends TestCase
         $authRecovery = $this->bearer($user)->getJson('/api/v1/auth/2fa/recovery-codes?password=Password123!');
         $authRecovery->assertStatus(200);
         $this->assertNotEmpty($authRecovery->json('recovery_codes'));
+
+        \Illuminate\Support\Facades\RateLimiter::clear('2fa_attempts:' . $user->id);
+        \Illuminate\Support\Facades\RateLimiter::clear('2fa_challenge_attempts:' . sha1($challengeToken));
     }
 
     /**
