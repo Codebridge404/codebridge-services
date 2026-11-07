@@ -49,6 +49,11 @@ class LogRequestActivity
         'card_number',
         'cvv',
         'authorization',
+        'credentials',
+        'credential',
+        'api_key',
+        'webhook_url',
+        'private_key',
     ];
 
     /**

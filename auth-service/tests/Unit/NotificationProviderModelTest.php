@@ -142,3 +142,4 @@ class NotificationProviderModelTest extends TestCase
         $this->assertEquals($updater->id, $provider->updater->id);
     }
 }
+
