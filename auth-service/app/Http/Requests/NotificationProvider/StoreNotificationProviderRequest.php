@@ -33,3 +33,4 @@ class StoreNotificationProviderRequest extends FormRequest
         ];
     }
 }
+

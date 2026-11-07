@@ -70,3 +70,4 @@ class NotificationProviderResource extends JsonResource
         ];
     }
 }
+

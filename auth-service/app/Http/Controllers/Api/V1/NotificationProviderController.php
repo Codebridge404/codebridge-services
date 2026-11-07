@@ -406,3 +406,4 @@ class NotificationProviderController extends Controller
         return $query->first();
     }
 }
+

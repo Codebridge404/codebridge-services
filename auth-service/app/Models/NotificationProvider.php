@@ -14,6 +14,12 @@ class NotificationProvider extends Model
 
     protected $table = 'notification_providers';
 
+    protected $attributes = [
+        'settings' => '[]',
+        'is_enabled' => false,
+        'config_version' => 1,
+    ];
+
     protected $fillable = [
         'uuid',
         'tenant_id',
@@ -212,3 +218,4 @@ class NotificationProvider extends Model
         return $query->where('is_enabled', true);
     }
 }
+

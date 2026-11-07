@@ -303,4 +303,378 @@ class NotificationProviderTest extends TestCase
 
         $this->assertNull(NotificationProvider::find($provider->id));
     }
+
+    public function test_validation_errors_on_invalid_payload(): void
+    {
+        $tenant = $this->createTenant('Validation Org');
+        $admin = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenant->id,
+        ]);
+
+        Sanctum::actingAs($admin, ['*']);
+
+        // Empty payload
+        $this->postJson('/api/v1/notification-providers', [])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['name', 'channel', 'provider', 'environment', 'credentials']);
+
+        // Invalid channel and environment enum values
+        $this->postJson('/api/v1/notification-providers', [
+            'name' => 'Bad Provider',
+            'channel' => 'carrier_pigeon',
+            'provider' => 'avian_service',
+            'environment' => 'outer_space',
+            'credentials' => ['key' => 'secret'],
+        ])->assertStatus(422)
+          ->assertJsonValidationErrors(['channel', 'environment']);
+    }
+
+    public function test_tenant_admin_cannot_spoof_tenant_id_on_create(): void
+    {
+        $tenantA = $this->createTenant('Tenant A');
+        $tenantB = $this->createTenant('Tenant B');
+
+        $adminA = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenantA->id,
+        ]);
+
+        Sanctum::actingAs($adminA, ['*']);
+
+        // Admin A tries to pass tenant_id of Tenant B
+        $res = $this->postJson('/api/v1/notification-providers', [
+            'tenant_id' => $tenantB->id,
+            'name' => 'Spoof Attempt SMTP',
+            'channel' => 'email',
+            'provider' => 'smtp',
+            'environment' => 'production',
+            'credentials' => ['host' => 'smtp.test.com'],
+        ])->assertStatus(201);
+
+        // Must be bound to Tenant A, NOT Tenant B
+        $this->assertEquals($tenantA->id, $res->json('data.tenant_id'));
+    }
+
+    public function test_show_provider_by_numeric_id_and_by_uuid(): void
+    {
+        $tenant = $this->createTenant('Show Org');
+        $admin = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenant->id,
+        ]);
+
+        $provider = NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Lookup Provider',
+            'channel' => 'telegram',
+            'provider' => 'telegram_bot',
+            'environment' => 'staging',
+            'credentials' => ['bot_token' => '123:ABC'],
+            'settings' => [],
+            'is_enabled' => true,
+            'config_version' => 1,
+            'created_by' => $admin->id,
+        ]);
+
+        Sanctum::actingAs($admin, ['*']);
+
+        // Lookup by integer ID
+        $this->getJson("/api/v1/notification-providers/{$provider->id}")
+            ->assertStatus(200)
+            ->assertJsonPath('data.id', $provider->id)
+            ->assertJsonPath('data.uuid', $provider->uuid);
+
+        // Lookup by UUID
+        $this->getJson("/api/v1/notification-providers/{$provider->uuid}")
+            ->assertStatus(200)
+            ->assertJsonPath('data.id', $provider->id)
+            ->assertJsonPath('data.uuid', $provider->uuid);
+    }
+
+    public function test_index_filtering_by_channel_environment_enabled_and_search_q(): void
+    {
+        $tenant = $this->createTenant('Filtering Org');
+        $admin = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenant->id,
+        ]);
+
+        NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Production Emailer',
+            'channel' => 'email',
+            'provider' => 'smtp',
+            'environment' => 'production',
+            'credentials' => ['host' => 'smtp.prod.com'],
+            'is_enabled' => true,
+            'created_by' => $admin->id,
+        ]);
+
+        NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Staging Telegram Dispatcher',
+            'channel' => 'telegram',
+            'provider' => 'telegram_bot',
+            'environment' => 'staging',
+            'credentials' => ['bot_token' => '123'],
+            'is_enabled' => false,
+            'created_by' => $admin->id,
+        ]);
+
+        Sanctum::actingAs($admin, ['*']);
+
+        // Filter channel=email
+        $resEmail = $this->getJson('/api/v1/notification-providers?channel=email')->assertStatus(200);
+        $this->assertCount(1, $resEmail->json('data'));
+        $this->assertEquals('Production Emailer', $resEmail->json('data.0.name'));
+
+        // Filter environment=staging
+        $resStaging = $this->getJson('/api/v1/notification-providers?environment=staging')->assertStatus(200);
+        $this->assertCount(1, $resStaging->json('data'));
+        $this->assertEquals('Staging Telegram Dispatcher', $resStaging->json('data.0.name'));
+
+        // Filter is_enabled=true
+        $resEnabled = $this->getJson('/api/v1/notification-providers?is_enabled=true')->assertStatus(200);
+        $this->assertCount(1, $resEnabled->json('data'));
+        $this->assertEquals('Production Emailer', $resEnabled->json('data.0.name'));
+
+        // Search q=Telegram
+        $resSearch = $this->getJson('/api/v1/notification-providers?q=Telegram')->assertStatus(200);
+        $this->assertCount(1, $resSearch->json('data'));
+        $this->assertEquals('Staging Telegram Dispatcher', $resSearch->json('data.0.name'));
+    }
+
+    public function test_super_admin_index_filtering_by_tenant_id_and_global(): void
+    {
+        $tenantA = $this->createTenant('Tenant Alpha');
+        $superAdmin = User::factory()->inWorkspace()->create(['role' => 'super_admin']);
+
+        // Global provider
+        NotificationProvider::create([
+            'tenant_id' => null,
+            'name' => 'Platform Wide Alert',
+            'channel' => 'webhook',
+            'provider' => 'custom_webhook',
+            'environment' => 'all',
+            'credentials' => ['url' => 'https://example.com'],
+            'is_enabled' => true,
+            'created_by' => $superAdmin->id,
+        ]);
+
+        // Tenant A provider
+        NotificationProvider::create([
+            'tenant_id' => $tenantA->id,
+            'name' => 'Alpha Slack Alerts',
+            'channel' => 'slack',
+            'provider' => 'slack_webhook',
+            'environment' => 'production',
+            'credentials' => ['url' => 'https://slack.com'],
+            'is_enabled' => true,
+            'created_by' => $superAdmin->id,
+        ]);
+
+        Sanctum::actingAs($superAdmin, ['*']);
+
+        // Filter tenant_id=global
+        $resGlobal = $this->getJson('/api/v1/notification-providers?tenant_id=global')->assertStatus(200);
+        $this->assertCount(1, $resGlobal->json('data'));
+        $this->assertEquals('Platform Wide Alert', $resGlobal->json('data.0.name'));
+
+        // Filter tenant_id={id}
+        $resTenant = $this->getJson("/api/v1/notification-providers?tenant_id={$tenantA->id}")->assertStatus(200);
+        $this->assertCount(1, $resTenant->json('data'));
+        $this->assertEquals('Alpha Slack Alerts', $resTenant->json('data.0.name'));
+    }
+
+    public function test_updating_non_credential_attributes_does_not_increment_config_version(): void
+    {
+        $tenant = $this->createTenant('Version Org');
+        $admin = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenant->id,
+        ]);
+
+        $provider = NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Initial Name',
+            'channel' => 'email',
+            'provider' => 'smtp',
+            'environment' => 'production',
+            'credentials' => ['host' => 'smtp.test.com'],
+            'settings' => ['encryption' => 'tls'],
+            'config_version' => 1,
+            'created_by' => $admin->id,
+        ]);
+
+        Sanctum::actingAs($admin, ['*']);
+
+        // Updating only name does not change config_version
+        $res = $this->putJson("/api/v1/notification-providers/{$provider->id}", [
+            'name' => 'Updated Friendly Name',
+        ])->assertStatus(200);
+
+        $this->assertEquals(1, $res->json('data.config_version'));
+        $this->assertEquals('Updated Friendly Name', $res->json('data.name'));
+    }
+
+    public function test_update_delete_and_toggle_using_uuid(): void
+    {
+        $tenant = $this->createTenant('UUID Org');
+        $admin = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenant->id,
+        ]);
+
+        $provider = NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'UUID Target',
+            'channel' => 'slack',
+            'provider' => 'slack_webhook',
+            'environment' => 'staging',
+            'credentials' => ['url' => 'https://slack.com/uuid'],
+            'is_enabled' => false,
+            'created_by' => $admin->id,
+        ]);
+
+        Sanctum::actingAs($admin, ['*']);
+
+        // Toggle via UUID
+        $this->patchJson("/api/v1/notification-providers/{$provider->uuid}/toggle")
+            ->assertStatus(200)
+            ->assertJsonPath('is_enabled', true);
+
+        // Update via UUID
+        $this->putJson("/api/v1/notification-providers/{$provider->uuid}", [
+            'name' => 'UUID Renamed',
+        ])->assertStatus(200)
+          ->assertJsonPath('data.name', 'UUID Renamed');
+
+        // Delete via UUID
+        $this->deleteJson("/api/v1/notification-providers/{$provider->uuid}")
+            ->assertStatus(200);
+
+        $this->assertNull(NotificationProvider::find($provider->id));
+    }
+
+    public function test_health_probe_probes_various_channels(): void
+    {
+        $tenant = $this->createTenant('Probe Org');
+        $admin = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenant->id,
+        ]);
+
+        Sanctum::actingAs($admin, ['*']);
+
+        // Telegram channel
+        $telegram = NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Telegram Alert',
+            'channel' => 'telegram',
+            'provider' => 'telegram_bot',
+            'environment' => 'production',
+            'credentials' => ['bot_token' => 'bot123', 'chat_id' => '-100'],
+            'created_by' => $admin->id,
+        ]);
+        $this->postJson("/api/v1/notification-providers/{$telegram->id}/test")
+            ->assertStatus(200)
+            ->assertJsonPath('data.probe.status', 'healthy')
+            ->assertJsonPath('data.channel', 'telegram');
+
+        // Slack channel
+        $slack = NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Slack Alert',
+            'channel' => 'slack',
+            'provider' => 'slack_webhook',
+            'environment' => 'production',
+            'credentials' => ['webhook_url' => 'https://hooks.slack.com/services/test'],
+            'created_by' => $admin->id,
+        ]);
+        $this->postJson("/api/v1/notification-providers/{$slack->id}/test")
+            ->assertStatus(200)
+            ->assertJsonPath('data.probe.status', 'healthy')
+            ->assertJsonPath('data.channel', 'slack');
+
+        // SMS channel
+        $sms = NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Twilio SMS',
+            'channel' => 'sms',
+            'provider' => 'twilio',
+            'environment' => 'production',
+            'credentials' => ['auth_token' => 'token123'],
+            'created_by' => $admin->id,
+        ]);
+        $this->postJson("/api/v1/notification-providers/{$sms->id}/test", ['recipient' => '+85599887766'])
+            ->assertStatus(200)
+            ->assertJsonPath('data.probe.status', 'healthy')
+            ->assertJsonPath('data.probe.target', '+85599887766');
+    }
+
+    public function test_audit_logs_recorded_for_all_mutations(): void
+    {
+        $tenant = $this->createTenant('Audit Org');
+        $admin = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenant->id,
+        ]);
+
+        Sanctum::actingAs($admin, ['*']);
+
+        // 1. Create -> audit log
+        $res = $this->postJson('/api/v1/notification-providers', [
+            'name' => 'Audit Tested Provider',
+            'channel' => 'email',
+            'provider' => 'smtp',
+            'environment' => 'production',
+            'credentials' => ['host' => 'smtp.audit.com'],
+        ])->assertStatus(201);
+        $providerId = $res->json('data.id');
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'notification_provider.created',
+            'module' => 'notifications',
+            'entity_id' => (string) $providerId,
+        ]);
+
+        // 2. Update -> audit log
+        $this->putJson("/api/v1/notification-providers/{$providerId}", [
+            'name' => 'Audit Updated Provider',
+        ])->assertStatus(200);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'notification_provider.updated',
+            'module' => 'notifications',
+            'entity_id' => (string) $providerId,
+        ]);
+
+        // 3. Toggle -> audit log
+        $this->patchJson("/api/v1/notification-providers/{$providerId}/toggle")->assertStatus(200);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'notification_provider.toggled',
+            'module' => 'notifications',
+            'entity_id' => (string) $providerId,
+        ]);
+
+        // 4. Test -> audit log
+        $this->postJson("/api/v1/notification-providers/{$providerId}/test")->assertStatus(200);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'notification_provider.tested',
+            'module' => 'notifications',
+            'entity_id' => (string) $providerId,
+        ]);
+
+        // 5. Delete -> audit log
+        $this->deleteJson("/api/v1/notification-providers/{$providerId}")->assertStatus(200);
+
+        $this->assertDatabaseHas('audit_logs', [
+            'action' => 'notification_provider.deleted',
+            'module' => 'notifications',
+            'entity_id' => (string) $providerId,
+        ]);
+    }
 }

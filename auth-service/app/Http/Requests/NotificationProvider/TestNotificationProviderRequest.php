@@ -27,3 +27,4 @@ class TestNotificationProviderRequest extends FormRequest
         ];
     }
 }
+

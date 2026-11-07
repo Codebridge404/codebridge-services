@@ -18,3 +18,4 @@ Route::middleware('role:super_admin,organization,admin')->group(function () {
     Route::patch('/notification-providers/{id}/toggle', [NotificationProviderController::class, 'toggle']);
     Route::post('/notification-providers/{id}/test', [NotificationProviderController::class, 'test']);
 });
+
