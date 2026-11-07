@@ -32,6 +32,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->redirectGuestsTo(fn () => null);
         $middleware->api(prepend: [\App\Http\Middleware\AuthenticateJwt::class]);
         $middleware->append(LogRequestActivity::class);
+        $middleware->append(\App\Http\Middleware\ProtectAttackMiddleware::class);
         $middleware->alias([
             'role' => EnsureRole::class,
             'workspace' => \App\Http\Middleware\EnsureWorkspace::class,
@@ -40,6 +41,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'quota' => TenantQuotaMiddleware::class,
             'api_key' => ApiKeyMiddleware::class,
             'auth_throttle' => RateLimitAuthMiddleware::class,
+            'protect_attack' => \App\Http\Middleware\ProtectAttackMiddleware::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
