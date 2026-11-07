@@ -95,4 +95,14 @@ subsets:
     ports:
       - name: http
         port: 81
+---
+apiVersion: traefik.io/v1alpha1
+kind: TLSOption
+metadata:
+  name: default
+  namespace: codebridge-staging
+spec:
+  minVersion: VersionTLS12
+  sniStrict: true
+
 

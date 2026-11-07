@@ -176,9 +176,28 @@ data:
             https   on;
         }
 
+        # ==============================================================================
+        # Default Server Block: Reject direct IP access and unknown/spoofed domains
+        # Closes plain HTTP connections (444) and aborts SSL handshakes without valid SNI
+        # ==============================================================================
+        server {
+            listen 80 default_server;
+            listen [::]:80 default_server;
+            server_name _;
+            return 444;
+        }
+
+        server {
+            listen 443 ssl default_server;
+            listen [::]:443 ssl default_server;
+            server_name _;
+            ssl_reject_handshake on;
+            return 444;
+        }
+
         server {
             listen 80;
-            server_name _;
+            server_name localhost 127.0.0.1 codebridge-api.servicefixit.me staging-codebridge-api.servicefixit.me codebridge-docs.servicefixit.me staging-codebridge-docs.servicefixit.me *.servicefixit.me;
 
             # Hardened Security Headers
             add_header X-Frame-Options "SAMEORIGIN" always;

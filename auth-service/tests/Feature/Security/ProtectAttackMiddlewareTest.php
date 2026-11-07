@@ -109,3 +109,4 @@ class ProtectAttackMiddlewareTest extends TestCase
         $res->assertHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
     }
 }
+
