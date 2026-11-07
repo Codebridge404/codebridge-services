@@ -64,6 +64,7 @@ Route::prefix('v1')->group(function () {
         require __DIR__ . '/api/tenants.php';
         require __DIR__ . '/api/api_keys.php';
         require __DIR__ . '/api/organization.php';
+        require __DIR__ . '/api/notification_providers.php';
         require __DIR__ . '/api/crm.php';
         Route::middleware('meeting_access')->group(function () {
             require __DIR__ . '/api/meetings.php';
