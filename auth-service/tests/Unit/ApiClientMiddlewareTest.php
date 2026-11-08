@@ -25,14 +25,14 @@ class ApiClientMiddlewareTest extends TestCase
 
         $this->activeClient = ApiClient::create([
             'name' => 'Active POS Client',
-            'client_key' => 'client_pos_active_test',
+            'client_key' => hash('sha256', 'client_pos_active_test'),
             'client_type' => 'public',
             'is_active' => true,
         ]);
 
         $this->inactiveClient = ApiClient::create([
             'name' => 'Deactivated Client',
-            'client_key' => 'client_pos_inactive_test',
+            'client_key' => hash('sha256', 'client_pos_inactive_test'),
             'client_type' => 'public',
             'is_active' => false,
         ]);
@@ -101,7 +101,7 @@ class ApiClientMiddlewareTest extends TestCase
     {
         $publicClient = ApiClient::create([
             'name' => 'Public Web Admin Client',
-            'client_key' => 'client_web_admin_test_2026',
+            'client_key' => hash('sha256', 'client_web_admin_test_2026'),
             'client_type' => 'public',
             'is_active' => true,
         ]);
@@ -113,6 +113,29 @@ class ApiClientMiddlewareTest extends TestCase
         $response = $this->middleware->handle($request, function ($req) use (&$called, $publicClient) {
             $called = true;
             $this->assertEquals($publicClient->id, $req->attributes->get('api_client_id'));
+            return response('OK', 200);
+        });
+
+        $this->assertTrue($called);
+        $this->assertEquals(200, $response->getStatusCode());
+    }
+
+    public function test_legacy_unhashed_client_key_passes_through(): void
+    {
+        $legacyClient = ApiClient::create([
+            'name' => 'Legacy Unhashed App',
+            'client_key' => 'legacy_unhashed_test_key',
+            'client_type' => 'public',
+            'is_active' => true,
+        ]);
+
+        $request = Request::create('/api/v1/some-endpoint', 'POST');
+        $request->headers->set('X-App-Key', 'legacy_unhashed_test_key');
+
+        $called = false;
+        $response = $this->middleware->handle($request, function ($req) use (&$called, $legacyClient) {
+            $called = true;
+            $this->assertEquals($legacyClient->id, $req->attributes->get('api_client_id'));
             return response('OK', 200);
         });
 

@@ -16,15 +16,16 @@ return [
     'api_path' => 'api',
     'api_domain' => null,
     'info' => [
-        'version' => '1.0.2',
+        'version' => '1.0.3',
         'description' => "### CodeBridge@ Enterprise API Gateway & Auth Microservice\n\n"
             . "**API Client Authentication (`X-App-Key`)**:\n"
             . "- Every API request across all microservices (including public endpoints such as `/api/v1/auth/login`, `/api/v1/auth/register`, and `/api/v1/tenants/register`) must supply a valid `X-App-Key` header representing an active registered application client.\n"
-            . "- **Default Web Admin Key**: `client_web_admin_cb2026`\n"
-            . "- **Default Mobile POS Key**: `client_mobile_pos_sunny`\n"
-            . "- **Default Customer Kiosk Key**: `client_kiosk_sunny`\n\n"
+            . "- Callers and frontends pass human-readable public keys in the `X-App-Key` header; the backend validates them against SHA-256 hashes stored in `api_clients`:\n"
+            . "  - **Web Admin**: `client_web_admin_cb2026`\n"
+            . "  - **POS Flutter Terminal**: `client_pos_flutter_cb2026`\n"
+            . "  - **Mobile Runner**: `client_mobile_runner_cb2026`\n\n"
             . "**User Authorization (`Authorization: Bearer <token>`)**:\n"
-            . "- Protected endpoints require both the `X-App-Key` header and a Sanctum Bearer access token.\n"
+            . "- Protected endpoints require both the `X-App-Key` header and a Bearer access token.\n"
             . "- Sessions utilize rotating token families with automatic reuse detection.\n\n"
             . "**Exemptions**:\n"
             . "- Browser email verification links, payment provider webhooks, and gateway health probes (`/api/v1/health`).",

@@ -65,14 +65,15 @@ class EnsureApiClientTest extends TestCase
 
     public function test_request_with_disabled_client_key_returns_401_invalid_app_key(): void
     {
+        $plainKey = 'ck_disabled_kiosk_key';
         $client = ApiClient::create([
             'name' => 'Disabled Kiosk',
             'client_type' => 'pos',
-            'client_key' => 'ck_disabled_kiosk_key',
+            'client_key' => hash('sha256', $plainKey),
             'is_active' => false,
         ]);
 
-        $response = $this->withHeader('X-App-Key', $client->client_key)
+        $response = $this->withHeader('X-App-Key', $plainKey)
             ->postJson('/api/v1/auth/login', [
                 'email' => 'admin@sunnycafe.kh',
                 'password' => 'Password123!',
@@ -87,10 +88,11 @@ class EnsureApiClientTest extends TestCase
 
     public function test_request_with_valid_x_app_key_succeeds_and_injects_attributes(): void
     {
+        $plainKey = 'ck_pos_valid_terminal_key';
         $client = ApiClient::create([
             'name' => 'Valid POS Terminal',
             'client_type' => 'pos',
-            'client_key' => 'ck_pos_valid_terminal_key',
+            'client_key' => hash('sha256', $plainKey),
             'is_active' => true,
         ]);
 
@@ -99,7 +101,7 @@ class EnsureApiClientTest extends TestCase
             'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
         ]);
 
-        $response = $this->withHeader('X-App-Key', $client->client_key)
+        $response = $this->withHeader('X-App-Key', $plainKey)
             ->postJson('/api/v1/auth/login', [
                 'email' => $user->email,
                 'password' => 'Password123!',
@@ -111,10 +113,11 @@ class EnsureApiClientTest extends TestCase
 
     public function test_request_with_alias_x_client_key_succeeds(): void
     {
+        $plainKey = 'ck_mobile_alias_key';
         $client = ApiClient::create([
             'name' => 'Mobile Courier App',
             'client_type' => 'mobile',
-            'client_key' => 'ck_mobile_alias_key',
+            'client_key' => hash('sha256', $plainKey),
             'is_active' => true,
         ]);
 
@@ -124,7 +127,7 @@ class EnsureApiClientTest extends TestCase
         ]);
 
         $response = $this->withoutHeader('X-App-Key')
-            ->withHeader('X-Client-Key', $client->client_key)
+            ->withHeader('X-Client-Key', $plainKey)
             ->postJson('/api/v1/auth/login', [
                 'email' => $user->email,
                 'password' => 'Password123!',
@@ -136,10 +139,11 @@ class EnsureApiClientTest extends TestCase
 
     public function test_public_app_key_authenticates_successfully(): void
     {
+        $plainKey = 'client_kiosk_public_2026';
         $publicClient = ApiClient::create([
             'name' => 'Sunny Public Kiosk',
             'client_type' => 'kiosk',
-            'client_key' => 'client_kiosk_public_2026',
+            'client_key' => hash('sha256', $plainKey),
             'is_active' => true,
         ]);
 
@@ -148,7 +152,66 @@ class EnsureApiClientTest extends TestCase
             'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
         ]);
 
-        $response = $this->withHeader('X-App-Key', $publicClient->client_key)
+        $response = $this->withHeader('X-App-Key', $plainKey)
+            ->postJson('/api/v1/auth/login', [
+                'email' => $user->email,
+                'password' => 'Password123!',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJsonStructure(['access_token', 'token_type']);
+    }
+
+    public function test_frontend_header_with_plain_app_key_matches_sha256_hash_in_database(): void
+    {
+        $plainKey = 'client_web_admin_cb2026';
+        $hashedKey = hash('sha256', $plainKey);
+
+        $client = ApiClient::create([
+            'name' => 'CodeBridges Web Admin',
+            'client_type' => 'first_party',
+            'client_key' => $hashedKey,
+            'is_active' => true,
+        ]);
+
+        $this->assertEquals(64, strlen($client->client_key));
+        $this->assertDatabaseHas('api_clients', [
+            'id' => $client->id,
+            'client_key' => $hashedKey,
+        ]);
+
+        $user = User::factory()->create([
+            'email' => 'admin.frontend@sunnycafe.kh',
+            'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
+        ]);
+
+        // Caller sends plain public key in X-App-Key header
+        $response = $this->withHeader('X-App-Key', $plainKey)
+            ->postJson('/api/v1/auth/login', [
+                'email' => $user->email,
+                'password' => 'Password123!',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJsonStructure(['access_token', 'token_type']);
+    }
+
+    public function test_legacy_unhashed_key_in_database_remains_supported(): void
+    {
+        $plainKey = 'ck_legacy_unhashed_2026';
+        $client = ApiClient::create([
+            'name' => 'Legacy Unhashed App',
+            'client_type' => 'first_party',
+            'client_key' => $plainKey,
+            'is_active' => true,
+        ]);
+
+        $user = User::factory()->create([
+            'email' => 'legacy.user@sunnycafe.kh',
+            'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
+        ]);
+
+        $response = $this->withHeader('X-App-Key', $plainKey)
             ->postJson('/api/v1/auth/login', [
                 'email' => $user->email,
                 'password' => 'Password123!',

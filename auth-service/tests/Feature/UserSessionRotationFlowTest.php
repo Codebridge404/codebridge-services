@@ -27,7 +27,7 @@ class UserSessionRotationFlowTest extends TestCase
 
         $this->posClient = ApiClient::create([
             'name' => 'CodeBridges Flutter POS',
-            'client_key' => 'client_pos_flutter_cb2026',
+            'client_key' => hash('sha256', 'client_pos_flutter_cb2026'),
             'client_type' => 'public',
             'is_active' => true,
         ]);

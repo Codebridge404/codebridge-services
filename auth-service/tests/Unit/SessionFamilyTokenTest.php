@@ -329,20 +329,27 @@ class SessionFamilyTokenTest extends TestCase
     {
         $this->seed(\Database\Seeders\ApiClientSeeder::class);
 
-        $webAdmin = ApiClient::where('client_key', 'client_web_admin_cb2026')->first();
-        $posFlutter = ApiClient::where('client_key', 'client_pos_flutter_cb2026')->first();
-        $mobileRunner = ApiClient::where('client_key', 'client_mobile_runner_cb2026')->first();
+        $hashedWeb = hash('sha256', 'client_web_admin_cb2026');
+        $hashedPos = hash('sha256', 'client_pos_flutter_cb2026');
+        $hashedMobile = hash('sha256', 'client_mobile_runner_cb2026');
+
+        $webAdmin = ApiClient::where('client_key', $hashedWeb)->first();
+        $posFlutter = ApiClient::where('client_key', $hashedPos)->first();
+        $mobileRunner = ApiClient::where('client_key', $hashedMobile)->first();
 
         $this->assertNotNull($webAdmin);
+        $this->assertEquals($hashedWeb, $webAdmin->client_key);
         $this->assertEquals('CodeBridges Web Admin', $webAdmin->name);
         $this->assertEquals('first_party', $webAdmin->client_type);
         $this->assertTrue($webAdmin->is_active);
 
         $this->assertNotNull($posFlutter);
+        $this->assertEquals($hashedPos, $posFlutter->client_key);
         $this->assertEquals('CodeBridges POS Flutter Terminal', $posFlutter->name);
         $this->assertEquals('public', $posFlutter->client_type);
 
         $this->assertNotNull($mobileRunner);
+        $this->assertEquals($hashedMobile, $mobileRunner->client_key);
         $this->assertEquals('CodeBridges Mobile Runner', $mobileRunner->name);
         $this->assertEquals('public', $mobileRunner->client_type);
     }
