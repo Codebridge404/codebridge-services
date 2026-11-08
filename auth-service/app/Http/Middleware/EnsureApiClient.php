@@ -31,6 +31,23 @@ class EnsureApiClient
         $key = ($clientKey && $appKey === 'client_test_suite_key') ? $clientKey : ($appKey ?? $clientKey);
 
         if (!is_string($key) || $key === '' || strlen($key) > 100) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'app_key_missing',
+                        ruleCode: 'SEC_APP_KEY_REQUIRED',
+                        summary: 'API request rejected: missing or invalid X-App-Key header format',
+                        severity: 'low',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        request: $request,
+                        statusCode: 401
+                    );
+                }
+            } catch (\Throwable) {
+                // Safeguard
+            }
+
             return response()->json([
                 'code' => 'APP_KEY_REQUIRED',
                 'message' => 'A valid X-App-Key header is required.',

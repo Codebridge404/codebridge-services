@@ -38,6 +38,21 @@ class EnsureRole
         $user = $request->user();
 
         if (!$user) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'unauthenticated',
+                        ruleCode: 'SEC_UNAUTHENTICATED',
+                        summary: 'Role verification failed: user is unauthenticated',
+                        severity: 'low',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        request: $request,
+                        statusCode: 401
+                    );
+                }
+            } catch (\Throwable) {}
+
             return response()->json([
                 'status' => 'error',
                 'message' => 'Unauthenticated.',
@@ -71,6 +86,27 @@ class EnsureRole
         $effectiveRoles = array_unique($effectiveRoles);
 
         if (empty(array_intersect($effectiveRoles, $roles))) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'role_access_denied',
+                        ruleCode: 'SEC_ROLE_DENIED',
+                        summary: "Forbidden: user role [{$user->role}] lacks required roles [" . implode(', ', $roles) . "]",
+                        severity: 'medium',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        userId: $user->id,
+                        tenantId: $user->tenant_id,
+                        request: $request,
+                        metadata: [
+                            'user_role' => $user->role,
+                            'required_roles' => $roles,
+                        ],
+                        statusCode: 403
+                    );
+                }
+            } catch (\Throwable) {}
+
             return response()->json([
                 'status' => 'error',
                 'message' => 'Forbidden. Your role [' . $user->role . '] does not have access to this resource.',

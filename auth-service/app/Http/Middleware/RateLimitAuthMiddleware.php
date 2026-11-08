@@ -52,6 +52,27 @@ class RateLimitAuthMiddleware
         if (RateLimiter::tooManyAttempts($throttleKey, $maxAttempts) || ($challengeToken && RateLimiter::tooManyAttempts('2fa_attempts:' . sha1($challengeToken), $maxAttempts))) {
             $seconds = max(1, RateLimiter::availableIn($throttleKey));
 
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'auth_rate_limit_exceeded',
+                        ruleCode: 'SEC_AUTH_RATE_LIMIT',
+                        summary: 'Brute-force lockout triggered on authentication endpoint',
+                        severity: 'high',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        userId: $request->user()?->id,
+                        tenantId: $request->user()?->tenant_id,
+                        request: $request,
+                        metadata: [
+                            'identifier' => is_string($identifier) ? substr($identifier, 0, 50) : 'unknown',
+                            'retry_after_seconds' => $seconds,
+                        ],
+                        statusCode: 429
+                    );
+                }
+            } catch (\Throwable) {}
+
             return response()->json([
                 'status' => 'error',
                 'code' => 'ACCOUNT_LOCKED_OUT',

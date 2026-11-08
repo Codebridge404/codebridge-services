@@ -35,6 +35,77 @@ class SecurityEventsTest extends TestCase
         $this->assertEquals(401, $event->status_code);
     }
 
+    public function test_missing_app_key_records_security_event(): void
+    {
+        $response = $this->withoutHeader('X-App-Key')
+            ->postJson('/api/v1/auth/login', [
+                'email' => 'admin@sunnycafe.kh',
+                'password' => 'Password123!',
+            ]);
+
+        $response->assertStatus(401);
+
+        $event = SecurityEvent::where('event_type', 'app_key_missing')->latest('id')->first();
+        $this->assertNotNull($event);
+        $this->assertEquals('SEC_APP_KEY_REQUIRED', $event->rule_code);
+        $this->assertEquals('low', $event->severity);
+        $this->assertEquals('blocked', $event->outcome);
+        $this->assertEquals(401, $event->status_code);
+    }
+
+    public function test_role_access_denial_records_security_event(): void
+    {
+        $user = User::factory()->inWorkspace()->create(['role' => 'cashier']);
+        \Laravel\Sanctum\Sanctum::actingAs($user, ['*']);
+
+        // Accessing admin-only endpoint as cashier
+        $response = $this->getJson('/api/v1/admin/dashboard');
+
+        $response->assertStatus(403);
+
+        $event = SecurityEvent::where('event_type', 'role_access_denied')->latest('id')->first();
+        $this->assertNotNull($event);
+        $this->assertEquals('SEC_ROLE_DENIED', $event->rule_code);
+        $this->assertEquals('medium', $event->severity);
+        $this->assertEquals('blocked', $event->outcome);
+        $this->assertEquals(403, $event->status_code);
+        $this->assertEquals($user->id, $event->user_id);
+    }
+
+    public function test_unauthenticated_protected_api_records_security_event(): void
+    {
+        // Calling protected endpoint without token
+        $response = $this->getJson('/api/v1/me');
+
+        $response->assertStatus(401);
+
+        $event = SecurityEvent::whereIn('event_type', ['access_unauthorized', 'unauthenticated', 'jwt_invalid_signature'])
+            ->latest('id')
+            ->first();
+        $this->assertNotNull($event);
+        $this->assertEquals(401, $event->status_code);
+        $this->assertEquals('blocked', $event->outcome);
+    }
+
+    public function test_pos_scope_violation_records_security_event(): void
+    {
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
+        $jwt = app(\App\Services\JwtService::class);
+        $access = $jwt->generateTokenForUser($user, ['scope' => 'pos', 'is_pos_session' => true, 'permissions' => ['pos:access']]);
+
+        $response = $this->withHeader('Authorization', 'Bearer ' . $access)
+            ->getJson('/api/v1/users');
+
+        $response->assertStatus(403);
+
+        $event = SecurityEvent::where('event_type', 'pos_scope_violation')->latest('id')->first();
+        $this->assertNotNull($event);
+        $this->assertEquals('SEC_POS_SCOPE_VIOLATION', $event->rule_code);
+        $this->assertEquals('medium', $event->severity);
+        $this->assertEquals('blocked', $event->outcome);
+        $this->assertEquals(403, $event->status_code);
+    }
+
     public function test_refresh_token_replay_attack_records_critical_security_event(): void
     {
         $client = ApiClient::create([

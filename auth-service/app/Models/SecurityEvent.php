@@ -148,6 +148,8 @@ class SecurityEvent extends Model
     ): static {
         $req = $request ?? (app()->bound('request') ? request() : null);
 
+        $req?->attributes->set('_security_event_recorded', true);
+
         $requestId = $req?->header('X-Request-ID')
             ?? $req?->header('CF-Ray')
             ?? (string) Str::uuid();
@@ -161,10 +163,13 @@ class SecurityEvent extends Model
         $userAgent = $req ? substr((string) $req->userAgent(), 0, 512) : null;
         $resolvedStatusCode = $statusCode ?? ($outcome === 'blocked' ? 401 : 200);
 
+        $resolvedUserId = $userId ?? ($req?->user()?->id ?? ($req?->attributes->has('auth_user_id') ? (int) $req->attributes->get('auth_user_id') : null));
+        $resolvedTenantId = $tenantId ?? ($req?->user()?->tenant_id ?? ($req?->attributes->has('auth_tenant_id') ? (int) $req->attributes->get('auth_tenant_id') : null));
+
         return static::create([
             'uuid' => (string) Str::uuid(),
-            'tenant_id' => $tenantId,
-            'user_id' => $userId,
+            'tenant_id' => $resolvedTenantId,
+            'user_id' => $resolvedUserId,
             'request_id' => substr($requestId, 0, 64),
             'trace_id' => substr($traceId, 0, 32),
             'service_name' => 'auth-service',

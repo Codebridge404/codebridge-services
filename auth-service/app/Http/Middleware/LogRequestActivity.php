@@ -162,7 +162,19 @@ class LogRequestActivity
             }
         }
 
-        // 3. Log activity stream
+        // 3. Central Security Event Enforcement: Ensure all 401, 403, and 429 access/security errors record a SecurityEvent
+        if ($statusCode === 401 || $statusCode === 403 || $statusCode === 429) {
+            $this->ensureSecurityEventRecorded(
+                request: $request,
+                statusCode: $statusCode,
+                userId: $userId,
+                tenantId: $tenantId,
+                errorCode: $errorCode,
+                errorMessage: $errorMessage
+            );
+        }
+
+        // 4. Log activity stream
         $userInfo = $user ? "User #{$user->id} [{$user->role}]" : "Guest";
         Log::info("HTTP ACTIVITY | {$method} {$request->route()?->uri()} | Status: {$statusCode} | {$durationMs}ms | {$userInfo} | IP: {$request->ip()}");
 
@@ -290,6 +302,71 @@ class LogRequestActivity
             AuditLog::create($auditData);
         } catch (\Throwable $e) {
             Log::warning('Failed to record auto audit_log: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Ensure a SecurityEvent is recorded for every 401, 403, and 429 access error or security failure.
+     */
+    protected function ensureSecurityEventRecorded(
+        Request $request,
+        int $statusCode,
+        ?int $userId,
+        ?int $tenantId,
+        ?string $errorCode,
+        ?string $errorMessage
+    ): void {
+        try {
+            // If a specific security event was already recorded for this request, skip to avoid duplicates
+            if ($request->attributes->get('_security_event_recorded', false)) {
+                return;
+            }
+
+            if (!Schema::hasTable('security_events')) {
+                return;
+            }
+
+            $eventType = match ($statusCode) {
+                401 => 'access_unauthorized',
+                403 => 'access_forbidden',
+                429 => 'rate_limit_exceeded',
+                default => 'security_violation',
+            };
+
+            $ruleCode = match ($statusCode) {
+                401 => $errorCode ?: 'SEC_UNAUTHORIZED',
+                403 => $errorCode ?: 'SEC_FORBIDDEN',
+                429 => $errorCode ?: 'SEC_RATE_LIMITED',
+                default => 'SEC_SECURITY_VIOLATION',
+            };
+
+            $summary = $errorMessage
+                ?? match ($statusCode) {
+                    401 => 'Unauthorized API access denied',
+                    403 => 'Forbidden API access denied',
+                    429 => 'Rate limit exceeded on API endpoint',
+                    default => "Access error encountered (HTTP {$statusCode})",
+                };
+
+            \App\Models\SecurityEvent::record(
+                eventType: $eventType,
+                ruleCode: $ruleCode,
+                summary: substr((string) $summary, 0, 255),
+                severity: $statusCode === 429 ? 'high' : ($statusCode === 403 ? 'medium' : 'low'),
+                outcome: 'blocked',
+                confidence: 'observed',
+                userId: $userId,
+                tenantId: $tenantId,
+                request: $request,
+                metadata: array_filter([
+                    'status_code' => $statusCode,
+                    'error_code' => $errorCode,
+                    'path' => $request->path(),
+                ]),
+                statusCode: $statusCode
+            );
+        } catch (\Throwable $e) {
+            Log::warning('Failed to record security_event in LogRequestActivity: ' . $e->getMessage());
         }
     }
 }

@@ -39,6 +39,21 @@ class ApiKeyMiddleware
         $rawKey = $request->header('X-API-Key') ?? $request->bearerToken();
 
         if (empty($rawKey)) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'api_key_missing',
+                        ruleCode: 'SEC_API_KEY_MISSING',
+                        summary: 'Missing Merchant API Key header',
+                        severity: 'low',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        request: $request,
+                        statusCode: 401
+                    );
+                }
+            } catch (\Throwable) {}
+
             return response()->json([
                 'status' => 'error',
                 'code' => 'API_KEY_MISSING',
@@ -59,6 +74,22 @@ class ApiKeyMiddleware
             ->first();
 
         if (!$apiKey) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'api_key_invalid',
+                        ruleCode: 'SEC_API_KEY_INVALID',
+                        summary: 'Invalid, revoked, or expired Merchant API Key',
+                        severity: 'medium',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        request: $request,
+                        metadata: ['prefix' => $prefix],
+                        statusCode: 401
+                    );
+                }
+            } catch (\Throwable) {}
+
             return response()->json([
                 'status' => 'error',
                 'code' => 'INVALID_API_KEY',
@@ -70,6 +101,22 @@ class ApiKeyMiddleware
         if ($permissionRequired) {
             $permissions = json_decode($apiKey->permissions ?? '[]', true) ?: [];
             if (!in_array('*', $permissions) && !in_array($permissionRequired, $permissions)) {
+                try {
+                    if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                        \App\Models\SecurityEvent::record(
+                            eventType: 'api_key_forbidden',
+                            ruleCode: 'SEC_API_KEY_FORBIDDEN',
+                            summary: "Merchant API Key lacks required '{$permissionRequired}' permission",
+                            severity: 'medium',
+                            outcome: 'blocked',
+                            confidence: 'confirmed',
+                            tenantId: $apiKey->tenant_id,
+                            request: $request,
+                            statusCode: 403
+                        );
+                    }
+                } catch (\Throwable) {}
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'INSUFFICIENT_PERMISSIONS',

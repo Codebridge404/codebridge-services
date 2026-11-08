@@ -28,6 +28,21 @@ class ApiClientMiddleware
 
         if (empty($rawKey)) {
             if ($mode === 'required') {
+                try {
+                    if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                        \App\Models\SecurityEvent::record(
+                            eventType: 'app_key_missing',
+                            ruleCode: 'SEC_CLIENT_KEY_MISSING',
+                            summary: 'Missing API Client Key in required mode',
+                            severity: 'low',
+                            outcome: 'blocked',
+                            confidence: 'confirmed',
+                            request: $request,
+                            statusCode: 401
+                        );
+                    }
+                } catch (\Throwable) {}
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'CLIENT_KEY_MISSING',
@@ -55,6 +70,22 @@ class ApiClientMiddleware
             ->first();
 
         if (!$client) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'app_key_invalid',
+                        ruleCode: 'SEC_INVALID_CLIENT_KEY',
+                        summary: 'Invalid API client key',
+                        severity: 'medium',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        request: $request,
+                        metadata: ['key_prefix' => substr($rawKey, 0, 8)],
+                        statusCode: 401
+                    );
+                }
+            } catch (\Throwable) {}
+
             return response()->json([
                 'status' => 'error',
                 'code' => 'INVALID_CLIENT_KEY',
@@ -63,6 +94,21 @@ class ApiClientMiddleware
         }
 
         if (!$client->is_active) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'app_key_disabled',
+                        ruleCode: 'SEC_CLIENT_INACTIVE',
+                        summary: 'Deactivated API client attempted access',
+                        severity: 'medium',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        request: $request,
+                        statusCode: 401
+                    );
+                }
+            } catch (\Throwable) {}
+
             return response()->json([
                 'status' => 'error',
                 'code' => 'CLIENT_INACTIVE',
