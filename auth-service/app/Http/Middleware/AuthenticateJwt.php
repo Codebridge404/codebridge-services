@@ -107,24 +107,61 @@ class AuthenticateJwt
                     $session = $this->jwtService->sessionForPayload($payload);
                     if (!$session) return response()->json(['status' => 'error', 'code' => 'TOKEN_REVOKED', 'message' => 'Session has been revoked.'], 401);
 
-                    // Enforce account inactivity timeout policy
-                    $inactivityDays = $user->session_inactivity_days ?: 180;
-                    $lastActive = $session->last_used_at ? \Illuminate\Support\Carbon::parse($session->last_used_at) : ($session->created_at ? \Illuminate\Support\Carbon::parse($session->created_at) : null);
-                    if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
-                        $session->delete();
-                        return response()->json([
-                            'status' => 'error',
-                            'code' => 'SESSION_EXPIRED',
-                            'message' => 'Session has expired due to inactivity.',
-                        ], 401);
-                    }
+                    if ($session instanceof \App\Models\UserSession) {
+                        $session->touchLastSeen($request->ip(), $request->userAgent());
+                        $request->attributes->set('user_session', $session);
 
-                    // Throttle updating last_used_at to at most once every 60 seconds
-                    if (!$session->last_used_at || \Illuminate\Support\Carbon::parse($session->last_used_at)->diffInSeconds(now()) >= 60) {
-                        $session->forceFill(['last_used_at' => now()])->save();
-                    }
+                        $inactivityDays = $user->session_inactivity_days ?: 180;
+                        $pat = \Laravel\Sanctum\PersonalAccessToken::where('tokenable_id', $user->id)
+                            ->where('tokenable_type', get_class($user))
+                            ->where('name', $session->device_name)
+                            ->latest('id')
+                            ->first();
 
-                    $user->withAccessToken($session);
+                        if ($pat) {
+                            $lastActive = $pat->last_used_at ? \Illuminate\Support\Carbon::parse($pat->last_used_at) : ($pat->created_at ? \Illuminate\Support\Carbon::parse($pat->created_at) : null);
+                            if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
+                                $session->revoke('inactivity_timeout');
+                                $pat->delete();
+                                return response()->json([
+                                    'status' => 'error',
+                                    'code' => 'SESSION_EXPIRED',
+                                    'message' => 'Session has expired due to inactivity.',
+                                ], 401);
+                            }
+                            $user->withAccessToken($pat);
+                        } else {
+                            $lastActive = $session->last_seen_at ?? $session->created_at;
+                            if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
+                                $session->revoke('inactivity_timeout');
+                                return response()->json([
+                                    'status' => 'error',
+                                    'code' => 'SESSION_EXPIRED',
+                                    'message' => 'Session has expired due to inactivity.',
+                                ], 401);
+                            }
+                            $user->withAccessToken($session);
+                        }
+                    } else {
+                        // Enforce account inactivity timeout policy on PersonalAccessToken
+                        $inactivityDays = $user->session_inactivity_days ?: 180;
+                        $lastActive = $session->last_used_at ? \Illuminate\Support\Carbon::parse($session->last_used_at) : ($session->created_at ? \Illuminate\Support\Carbon::parse($session->created_at) : null);
+                        if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
+                            $session->delete();
+                            return response()->json([
+                                'status' => 'error',
+                                'code' => 'SESSION_EXPIRED',
+                                'message' => 'Session has expired due to inactivity.',
+                            ], 401);
+                        }
+
+                        // Throttle updating last_used_at to at most once every 60 seconds
+                        if (!$session->last_used_at || \Illuminate\Support\Carbon::parse($session->last_used_at)->diffInSeconds(now()) >= 60) {
+                            $session->forceFill(['last_used_at' => now()])->save();
+                        }
+
+                        $user->withAccessToken($session);
+                    }
                 }
                 $request->attributes->set('is_pos_session', !empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos');
                 Auth::setUser($user);

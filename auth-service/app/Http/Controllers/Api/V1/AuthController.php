@@ -19,12 +19,15 @@ use App\Http\Requests\Auth\UpdatePasswordRequest;
 use App\Http\Requests\Auth\UpdateProfileRequest;
 use App\Http\Requests\Auth\UploadProfileImageRequest;
 use App\Http\Resources\User\UserResource;
+use App\Models\ApiClient;
 use App\Models\Outlet;
+use App\Models\RefreshToken;
 use App\Models\Tenant;
 use App\Models\TenantUser;
 use App\Models\TenantUserOutlet;
 use App\Models\User;
 use App\Models\UserPosPin;
+use App\Models\UserSession;
 use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
 use App\Services\DeviceDetectorService;
@@ -202,13 +205,41 @@ class AuthController extends Controller
             );
         }
 
-        // Issue Stateless Enterprise JWT Token & Rotating Refresh Token
-        /** @var JwtService $jwtService */
-        $jwtService = app(JwtService::class);
-        $jwtToken = $jwtService->generateTokenForUser($user);
-        $refreshToken = $jwtService->generateRefreshTokenForUser($user);
+        // Resolve ApiClient
+        $clientKey = $request->header('X-Client-Key') ?? $request->header('X-App-Key') ?? $request->input('client_key');
+        $client = null;
+        if ($clientKey) {
+            $client = ApiClient::where('client_key', $clientKey)->active()->first();
+        }
+        if (!$client) {
+            $client = ApiClient::where('client_key', 'client_web_admin_cb2026')->first() ?? ApiClient::first();
+        }
+        if (!$client) {
+            $client = ApiClient::create([
+                'name' => 'Default Platform Client',
+                'client_key' => 'client_web_admin_cb2026',
+                'client_type' => 'first_party',
+                'is_active' => true,
+            ]);
+        }
 
-        // Generate Sanctum token with client device telemetry (scoped to full refresh session lifecycle)
+        // Resolve verified tenant membership
+        $sessionTenantId = null;
+        if ($user->tenant_id) {
+            $hasMembership = DB::table('tenant_users')
+                ->where('tenant_id', $user->tenant_id)
+                ->where('user_id', $user->id)
+                ->exists();
+            if ($hasMembership) {
+                $sessionTenantId = $user->tenant_id;
+            }
+        }
+
+        $sessionPermissions = method_exists($user, 'getAllPermissions')
+            ? $user->getAllPermissions()->pluck('name')->values()->toArray()
+            : [];
+
+        // Detect device telemetry
         /** @var DeviceDetectorService $detector */
         $detector = app(DeviceDetectorService::class);
         $deviceName = $request->device_name ?? $detector->parseDeviceName($request->userAgent());
@@ -216,11 +247,37 @@ class AuthController extends Controller
         $platform = $detector->parsePlatform($request->userAgent());
         $location = $detector->parseLocation($request);
 
+        // Create Enterprise UserSession
+        $userSession = UserSession::create([
+            'user_id' => $user->id,
+            'api_client_id' => $client->id,
+            'tenant_id' => $sessionTenantId,
+            'device_uuid' => $request->header('X-Device-Id') ?? $request->input('device_uuid'),
+            'device_name' => $deviceName,
+            'ip_address' => $request->ip(),
+            'user_agent' => substr($request->userAgent() ?? '', 0, 512),
+            'permissions' => array_values($sessionPermissions),
+            'expires_at' => now()->addDays(30),
+        ]);
+
+        // Issue root rotating refresh token
+        $rootPair = RefreshToken::issueRoot($userSession);
+        $rotatingRefreshToken = $rootPair['credential'];
+
+        /** @var JwtService $jwtService */
+        $jwtService = app(JwtService::class);
+
+        // Generate Sanctum token with client device telemetry (scoped to full refresh session lifecycle)
         $expiresAt = now()->addSeconds($jwtService->getRefreshTtlSeconds());
         $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
         $jwtService->bindSession($tokenResult->accessToken);
-        $jwtToken = $jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
-        $refreshToken = $jwtService->generateRefreshTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
+
+        // Mint access JWT with sid = user_sessions.uuid
+        $jwtToken = $jwtService->generateTokenForUser($user, [
+            'sid' => $userSession->uuid,
+            'client_id' => $client->uuid,
+        ]);
+        $refreshToken = $rotatingRefreshToken;
 
         $tokenMetadata = [
             'ip_address' => $request->ip(),
@@ -292,6 +349,8 @@ class AuthController extends Controller
                 'token' => $jwtToken,
                 'access_token' => $jwtToken,
                 'refresh_token' => $refreshToken,
+                'session_id' => $userSession->uuid,
+                'session_uuid' => $userSession->uuid,
                 'token_type' => 'Bearer',
                 'expires_in' => $jwtService->getTtlSeconds(),
                 'user' => new UserResource($user),
@@ -523,6 +582,83 @@ class AuthController extends Controller
             );
         }
 
+        // 1. Rotating Opaque Refresh Token Flow (rt_<token_id>_<secret>)
+        if (str_starts_with(trim($refreshToken), 'rt_')) {
+            try {
+                $rotated = RefreshToken::rotate($refreshToken);
+            } catch (\InvalidArgumentException $e) {
+                return $this->errorResponse(
+                    $e->getMessage(),
+                    HttpStatus::UNPROCESSABLE_ENTITY,
+                    ResponseCode::INVALID_REFRESH_TOKEN
+                );
+            } catch (\RuntimeException $e) {
+                return $this->unauthorizedResponse(
+                    $e->getMessage(),
+                    ResponseCode::INVALID_REFRESH_TOKEN
+                );
+            }
+
+            $session = $rotated['session'];
+            $user = $session->user;
+
+            if (!$user) {
+                return $this->notFoundResponse(
+                    'User associated with this token was not found.',
+                    ResponseCode::USER_NOT_FOUND
+                );
+            }
+
+            if (isset($user->is_active) && !(bool) $user->is_active) {
+                return $this->forbiddenResponse(
+                    'User account is deactivated.',
+                    ResponseCode::ACCOUNT_INACTIVE
+                );
+            }
+
+            if ($user->isLockedOut()) {
+                $lockoutExpire = (int) Cache::get('auth:login_lockout_expire:' . $user->id, now()->addMinutes(15)->timestamp);
+                $remaining = max(1, $lockoutExpire - now()->timestamp);
+                return $this->errorResponse(
+                    "Account is temporarily locked out. Please try again in {$remaining} seconds.",
+                    HttpStatus::LOCKED,
+                    ResponseCode::ACCOUNT_LOCKED_OUT
+                );
+            }
+
+            if ($user->tenant_id) {
+                $tenant = DB::table('tenants')->where('id', $user->tenant_id)->first();
+                if ($tenant) {
+                    $user->tenant_name = $tenant->name;
+                    $user->company_name = $tenant->name;
+                    $user->tenant_logo_url = $tenant->logo_url ?? null;
+                    $user->logo_url = $tenant->logo_url ?? null;
+                }
+            }
+
+            /** @var JwtService $jwtService */
+            $jwtService = app(JwtService::class);
+            $newAccessToken = $jwtService->generateTokenForUser($user, [
+                'sid' => $session->uuid,
+                'client_id' => $session->client?->uuid,
+                'permissions' => $session->permissions ?? [],
+            ]);
+
+            return $this->successResponse(
+                message: 'Tokens refreshed successfully.',
+                extra: [
+                    'token' => $newAccessToken,
+                    'access_token' => $newAccessToken,
+                    'refresh_token' => $rotated['credential'],
+                    'session_id' => $session->uuid,
+                    'session_uuid' => $session->uuid,
+                    'token_type' => 'Bearer',
+                    'expires_in' => $jwtService->getTtlSeconds(),
+                    'user' => new UserResource($user),
+                ]
+            );
+        }
+
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
         $payload = $jwtService->verifyRefreshToken($refreshToken);
@@ -732,10 +868,26 @@ class AuthController extends Controller
     public function revokeSession(Request $request, $id)
     {
         $user = $request->user();
+        $deleted = false;
 
+        // 1. Revoke UserSession if UUID
+        $userSession = UserSession::where('user_id', $user->id)
+            ->where(function ($q) use ($id) {
+                $q->where('uuid', (string) $id)->orWhere('id', (string) $id);
+            })->first();
+
+        if ($userSession) {
+            $userSession->revoke('remote_revocation');
+            $deleted = true;
+        }
+
+        // 2. Revoke Sanctum token
         $session = $user->tokens()->where('id', $id)->first();
-        $deleted = $user->tokens()->where('id', $id)->delete();
-        if ($deleted && !$session?->session_expires_at) app(JwtService::class)->revokeAllUserTokens($user->id);
+        $tokenDeleted = $user->tokens()->where('id', $id)->delete();
+        if ($tokenDeleted) {
+            $deleted = true;
+            if (!$session?->session_expires_at) app(JwtService::class)->revokeAllUserTokens($user->id);
+        }
 
         if (!$deleted) {
             return $this->notFoundResponse('Session not found or already terminated.');
@@ -753,6 +905,22 @@ class AuthController extends Controller
     {
         $user = $request->user();
         $currentTokenId = $user->currentAccessToken()?->id;
+
+        // Revoke all active UserSessions for this user except current
+        $currentSid = null;
+        $token = $request->bearerToken();
+        if ($token && substr_count($token, '.') === 2) {
+            $payload = app(JwtService::class)->verify($token);
+            $currentSid = $payload['sid'] ?? null;
+        }
+
+        $sessionQuery = UserSession::where('user_id', $user->id)->whereNull('revoked_at');
+        if ($currentSid && !$request->boolean('include_current')) {
+            $sessionQuery->where('uuid', '!=', $currentSid);
+        }
+        foreach ($sessionQuery->get() as $s) {
+            $s->revoke('logout_all_devices');
+        }
 
         $query = $user->tokens();
 
@@ -1852,6 +2020,11 @@ class AuthController extends Controller
         // Revoke all personal access tokens for this user
         $user->tokens()->delete();
 
+        // Revoke all enterprise UserSessions for this user
+        foreach (UserSession::where('user_id', $user->id)->whereNull('revoked_at')->get() as $s) {
+            $s->revoke('password_updated');
+        }
+
         // Invalidate all active JWT and refresh tokens globally
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
@@ -1904,19 +2077,28 @@ class AuthController extends Controller
 
         $request->user()?->currentAccessToken()?->delete();
 
-        // Also revoke stateless JWT token in Redis if Bearer token is present
+        // Revoke enterprise UserSession and refresh family if present in JWT claims
         $token = $request->bearerToken();
         if ($token && substr_count($token, '.') === 2) {
             /** @var JwtService $jwtService */
             $jwtService = app(JwtService::class);
             $payload = $jwtService->verify($token);
+            if (!empty($payload['sid'])) {
+                $sid = (string) $payload['sid'];
+                if (\Illuminate\Support\Str::isUuid($sid)) {
+                    $userSession = UserSession::where('uuid', $sid)->first();
+                    if ($userSession) {
+                        $userSession->revoke('user_logged_out');
+                    }
+                }
+            }
             if (!empty($payload['jti'])) {
                 $exp = $payload['exp'] ?? (time() + $jwtService->getTtlSeconds());
                 $remainingTtl = max(0, $exp - time());
                 $jwtService->revokeToken($payload['jti'], $remainingTtl);
                 if (empty($payload['sid'])) {
-                    $user->tokens()->delete();
-                    $jwtService->revokeAllUserTokens($user->id);
+                    $user?->tokens()->delete();
+                    if ($user) $jwtService->revokeAllUserTokens($user->id);
                 }
             }
         }

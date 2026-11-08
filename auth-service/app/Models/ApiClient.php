@@ -57,3 +57,4 @@ class ApiClient extends Model
         return $this->hasMany(UserSession::class, 'api_client_id');
     }
 }
+

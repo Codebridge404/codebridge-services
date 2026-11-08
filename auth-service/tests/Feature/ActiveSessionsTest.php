@@ -286,9 +286,15 @@ class ActiveSessionsTest extends TestCase
 
         // Artificially age the session to 8 days ago
         DB::table('personal_access_tokens')
-            ->where('id', $sid)
+            ->where('tokenable_id', $user->id)
             ->update([
                 'last_used_at' => Carbon::now()->subDays(8),
+                'created_at' => Carbon::now()->subDays(8),
+            ]);
+        DB::table('user_sessions')
+            ->where('uuid', $sid)
+            ->update([
+                'last_seen_at' => Carbon::now()->subDays(8),
                 'created_at' => Carbon::now()->subDays(8),
             ]);
 

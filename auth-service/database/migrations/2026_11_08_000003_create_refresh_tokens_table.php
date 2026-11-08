@@ -57,3 +57,4 @@ return new class extends Migration
         Schema::dropIfExists('refresh_tokens');
     }
 };
+

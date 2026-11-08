@@ -177,3 +177,4 @@ class UserSession extends Model
         $this->updateQuietly($payload);
     }
 }
+

@@ -169,6 +169,43 @@ class JwtService
      */
     public function verifyRefreshToken(string $token): ?array
     {
+        $token = trim($token);
+
+        // Rotating Opaque Refresh Token (rt_<token_id>_<secret>) support
+        if (str_starts_with($token, 'rt_')) {
+            $parsed = \App\Models\RefreshToken::parseCredential($token);
+            if (!$parsed) {
+                return null;
+            }
+
+            $refreshToken = \App\Models\RefreshToken::where('token_id', $parsed['token_id'])->first();
+            if (!$refreshToken || !$refreshToken->isValid()) {
+                return null;
+            }
+
+            $incomingHash = hash('sha256', $token);
+            if (!hash_equals($refreshToken->token_hash, $incomingHash)) {
+                return null;
+            }
+
+            $session = $refreshToken->session;
+            if (!$session || !$session->isActive()) {
+                return null;
+            }
+
+            return [
+                'sub' => (string) $session->user_id,
+                'sid' => (string) $session->uuid,
+                'token_use' => 'refresh',
+                'client_id' => $session->client?->uuid,
+                'is_rotating_token' => true,
+                'token_id' => $refreshToken->token_id,
+                'iat' => $refreshToken->created_at?->timestamp ?? time(),
+                'exp' => $refreshToken->expires_at->timestamp,
+                'jti' => $refreshToken->token_id,
+            ];
+        }
+
         $payload = $this->verify($token);
         if (!$payload) {
             return null;
@@ -224,9 +261,29 @@ class JwtService
     public function sessionForPayload(array $payload)
     {
         if (empty($payload['sid'])) return null;
-        
+
+        $sid = (string) $payload['sid'];
+
+        // 1. Resolve enterprise UserSession if sid is a UUID
+        if (\Illuminate\Support\Str::isUuid($sid)) {
+            try {
+                $userSession = \App\Models\UserSession::where('uuid', $sid)->first();
+                if (!$userSession || !$userSession->isActive()) {
+                    return null;
+                }
+                if (!empty($payload['sub']) && (string) $userSession->user_id !== (string) $payload['sub']) {
+                    return null;
+                }
+                return $userSession;
+            } catch (\Throwable $e) {
+                Log::warning('sessionForPayload UserSession lookup error: ' . $e->getMessage());
+                return null;
+            }
+        }
+
+        // 2. Legacy fallback: resolve Sanctum PersonalAccessToken
         try {
-            $session = \Laravel\Sanctum\PersonalAccessToken::where('id', $payload['sid'])
+            $session = \Laravel\Sanctum\PersonalAccessToken::where('id', $sid)
                 ->where('tokenable_id', $payload['sub'])
                 ->where('tokenable_type', User::class)
                 ->first();
