@@ -50,6 +50,24 @@ class EnsureApiClient
             ->first();
 
         if (!$client || (!hash_equals((string) $client->client_key, $hashedKey) && !hash_equals((string) $client->client_key, $key))) {
+            try {
+                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'app_key_invalid',
+                        ruleCode: 'SEC_APP_KEY_INVALID',
+                        summary: 'API request rejected: invalid or disabled application client key',
+                        severity: 'medium',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        request: $request,
+                        metadata: ['key_prefix' => substr($key, 0, 8)],
+                        statusCode: 401
+                    );
+                }
+            } catch (\Throwable) {
+                // Safeguard to prevent logging issues from blocking response
+            }
+
             return response()->json([
                 'code' => 'INVALID_APP_KEY',
                 'message' => 'Application key is invalid or disabled.',

@@ -193,6 +193,26 @@ class RefreshToken extends Model
             // If consumed, immediately revoke family and commit before returning failure.
             if ($token->consumed_at !== null) {
                 $session->revoke('replay_attack_detected');
+
+                try {
+                    if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                        SecurityEvent::record(
+                            eventType: 'refresh_token_replay_attack',
+                            ruleCode: 'SEC_TOKEN_REPLAY',
+                            summary: 'Refresh token replay detected on consumed token; entire token family revoked',
+                            severity: 'critical',
+                            outcome: 'blocked',
+                            confidence: 'confirmed',
+                            userId: $session->user_id,
+                            tenantId: $session->tenant_id,
+                            sessionRefHash: hash('sha256', $session->uuid),
+                            statusCode: 401
+                        );
+                    }
+                } catch (\Throwable) {
+                    // Safe fall-through
+                }
+
                 return [
                     'replay_attack' => true,
                     'session' => $session,

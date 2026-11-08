@@ -167,6 +167,23 @@ class AuthenticateJwt
                 Auth::setUser($user);
                 Auth::guard('sanctum')->setUser($user);
                 $request->setUserResolver(fn () => $user);
+            } else {
+                try {
+                    if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                        \App\Models\SecurityEvent::record(
+                            eventType: 'jwt_invalid_signature',
+                            ruleCode: 'SEC_JWT_INVALID_SIGNATURE',
+                            summary: 'JWT verification failed: invalid signature, expired, or malformed claims',
+                            severity: 'medium',
+                            outcome: 'blocked',
+                            confidence: 'confirmed',
+                            request: $request,
+                            statusCode: 401
+                        );
+                    }
+                } catch (\Throwable) {
+                    // Safe fall-through
+                }
             }
         } elseif ($token && substr_count($token, '.') !== 2) {
             $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);

@@ -661,5 +661,13 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return $this->hasMany(UserSession::class, 'user_id');
     }
+
+    /**
+     * Get forensic security events recorded for this user.
+     */
+    public function securityEvents()
+    {
+        return $this->hasMany(SecurityEvent::class, 'user_id');
+    }
 }
 

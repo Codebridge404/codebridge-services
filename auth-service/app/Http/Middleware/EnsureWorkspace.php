@@ -30,19 +30,53 @@ class EnsureWorkspace
         }
 
         if ($user->role !== 'super_admin') {
-            abort_unless($user->tenant_id, 403, 'An active workspace membership is required.');
+            if (!$user->tenant_id) {
+                $this->recordTenantDenied($request, $user, 'User has no active tenant context assigned');
+                abort(403, 'An active workspace membership is required.');
+            }
 
             $isMember = DB::table('tenant_users')
                 ->where('tenant_id', $user->tenant_id)
                 ->where('user_id', $user->id)
                 ->where('status', 'active')
                 ->exists();
-            abort_unless($isMember, 403, 'An active workspace membership is required.');
+            if (!$isMember) {
+                $this->recordTenantDenied($request, $user, 'User is not an active member of this workspace');
+                abort(403, 'An active workspace membership is required.');
+            }
 
             $tenant = DB::table('tenants')->where('id', $user->tenant_id)->first();
-            abort_unless($tenant && in_array($tenant->status, ['active', 'trial'], true), 403, 'Workspace tenant is suspended or inactive.');
+            if (!$tenant || !in_array($tenant->status, ['active', 'trial'], true)) {
+                $this->recordTenantDenied($request, $user, 'Workspace tenant is suspended or inactive');
+                abort(403, 'Workspace tenant is suspended or inactive.');
+            }
         }
 
         return $next($request);
+    }
+
+    /**
+     * Record tenant access denial security event.
+     */
+    protected function recordTenantDenied(Request $request, $user, string $reason): void
+    {
+        try {
+            if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                \App\Models\SecurityEvent::record(
+                    eventType: 'tenant_access_denied',
+                    ruleCode: 'SEC_TENANT_ACCESS_DENIED',
+                    summary: "Tenant access denied: {$reason}",
+                    severity: 'medium',
+                    outcome: 'blocked',
+                    confidence: 'confirmed',
+                    userId: $user->id,
+                    tenantId: $user->tenant_id,
+                    request: $request,
+                    statusCode: 403
+                );
+            }
+        } catch (\Throwable) {
+            // Safe fall-through
+        }
     }
 }

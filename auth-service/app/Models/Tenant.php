@@ -109,4 +109,9 @@ class Tenant extends Model
     {
         return $this->hasMany(UserSession::class, 'tenant_id');
     }
+
+    public function securityEvents()
+    {
+        return $this->hasMany(SecurityEvent::class, 'tenant_id');
+    }
 }

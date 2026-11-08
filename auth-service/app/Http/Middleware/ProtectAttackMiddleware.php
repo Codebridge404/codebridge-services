@@ -149,26 +149,43 @@ class ProtectAttackMiddleware
     protected function recordAttackBlocked(Request $request, string $threatType, string $details): void
     {
         try {
-            if (!Schema::hasTable('audit_logs')) {
-                return;
+            if (Schema::hasTable('security_events')) {
+                \App\Models\SecurityEvent::record(
+                    eventType: 'attack_' . $threatType,
+                    ruleCode: 'SEC_ATTACK_' . strtoupper($threatType),
+                    summary: $details,
+                    severity: 'high',
+                    outcome: 'blocked',
+                    confidence: 'confirmed',
+                    userId: $request->user()?->id,
+                    tenantId: $request->user()?->tenant_id,
+                    request: $request,
+                    metadata: [
+                        'threat_type' => $threatType,
+                        'uri' => substr($request->getRequestUri(), 0, 200),
+                    ],
+                    statusCode: 403
+                );
             }
 
-            AuditLog::create([
-                'uuid' => (string) Str::uuid(),
-                'tenant_id' => $request->user()?->tenant_id,
-                'user_id' => $request->user()?->id,
-                'action' => 'security.attack_blocked',
-                'module' => 'security',
-                'request_id' => $request->header('X-Request-ID') ?? (string) Str::uuid(),
-                'trace_id' => $request->header('X-Trace-ID') ?? substr(md5(microtime()), 0, 32),
-                'entity_type' => 'security_threat',
-                'entity_id' => $threatType,
-                'ip_address' => $request->ip(),
-                'user_agent' => substr((string) $request->userAgent(), 0, 500),
-                'details' => $details,
-                'created_at' => now(),
-                'updated_at' => now(),
-            ]);
+            if (Schema::hasTable('audit_logs')) {
+                AuditLog::create([
+                    'uuid' => (string) Str::uuid(),
+                    'tenant_id' => $request->user()?->tenant_id,
+                    'user_id' => $request->user()?->id,
+                    'action' => 'security.attack_blocked',
+                    'module' => 'security',
+                    'request_id' => $request->header('X-Request-ID') ?? (string) Str::uuid(),
+                    'trace_id' => $request->header('X-Trace-ID') ?? substr(md5(microtime()), 0, 32),
+                    'entity_type' => 'security_threat',
+                    'entity_id' => $threatType,
+                    'ip_address' => $request->ip(),
+                    'user_agent' => substr((string) $request->userAgent(), 0, 500),
+                    'details' => $details,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
         } catch (\Throwable $e) {
             Log::warning('Failed to record security audit log: ' . $e->getMessage());
         }
