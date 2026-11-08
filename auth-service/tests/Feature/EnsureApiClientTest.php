@@ -134,6 +134,33 @@ class EnsureApiClientTest extends TestCase
             ->assertJsonStructure(['access_token', 'token_type']);
     }
 
+    public function test_plain_x_app_key_matches_sha256_hashed_database_key(): void
+    {
+        $plainKey = 'my_plain_kiosk_key_2026';
+        $hashedKey = hash('sha256', $plainKey);
+
+        ApiClient::create([
+            'name' => 'SHA256 Hashed Kiosk',
+            'client_type' => 'kiosk',
+            'client_key' => $hashedKey,
+            'is_active' => true,
+        ]);
+
+        $user = User::factory()->create([
+            'email' => 'kiosk.staff@sunnycafe.kh',
+            'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
+        ]);
+
+        $response = $this->withHeader('X-App-Key', $plainKey)
+            ->postJson('/api/v1/auth/login', [
+                'email' => $user->email,
+                'password' => 'Password123!',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJsonStructure(['access_token', 'token_type']);
+    }
+
     public function test_cors_preflight_options_bypasses_x_app_key(): void
     {
         $response = $this->withoutHeader('X-App-Key')

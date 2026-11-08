@@ -39,12 +39,17 @@ class EnsureApiClient
             ], 401);
         }
 
+        $hashedKey = hash('sha256', $key);
+
         $client = DB::table('api_clients')
-            ->where('client_key', $key)
+            ->where(function ($query) use ($hashedKey, $key) {
+                $query->where('client_key', $hashedKey)
+                    ->orWhere('client_key', $key);
+            })
             ->where('is_active', true)
             ->first();
 
-        if (!$client || !hash_equals((string) $client->client_key, $key)) {
+        if (!$client || (!hash_equals((string) $client->client_key, $hashedKey) && !hash_equals((string) $client->client_key, $key))) {
             return response()->json([
                 'code' => 'INVALID_APP_KEY',
                 'message' => 'Application key is invalid or disabled.',
