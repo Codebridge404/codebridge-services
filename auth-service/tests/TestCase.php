@@ -13,8 +13,9 @@ abstract class TestCase extends BaseTestCase
 
         try {
             if (\Illuminate\Support\Facades\Schema::hasTable('api_clients')) {
+                $testSuiteKey = hash('sha256', 'client_test_suite_key');
                 $client = \App\Models\ApiClient::firstOrCreate(
-                    ['client_key' => 'client_test_suite_key'],
+                    ['client_key' => $testSuiteKey],
                     [
                         'name' => 'Test Suite Client',
                         'client_type' => 'server',

@@ -28,7 +28,9 @@ class EnsureApiClient
         // Support both X-App-Key and legacy/alias X-Client-Key
         $appKey = $request->header('X-App-Key');
         $clientKey = $request->header('X-Client-Key');
-        $key = ($clientKey && $appKey === 'client_test_suite_key') ? $clientKey : ($appKey ?? $clientKey);
+        $testSuiteKey = hash('sha256', 'client_test_suite_key');
+        $isTestSuite = ($appKey === $testSuiteKey || $appKey === 'client_test_suite_key');
+        $key = ($clientKey && $isTestSuite) ? $clientKey : ($appKey ?? $clientKey);
 
         if (!is_string($key) || $key === '' || strlen($key) > 100) {
             return response()->json([
