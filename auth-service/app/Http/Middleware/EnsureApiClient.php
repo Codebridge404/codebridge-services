@@ -75,15 +75,8 @@ class EnsureApiClient
             return true;
         }
 
-        // Public health checks & system probes
+        // System health probes
         if ($request->is('health') || $request->is('api/v1/health') || $request->is('up')) {
-            return true;
-        }
-
-        // Public signed kiosk displays & public issue reporting
-        if ($request->is('api/v1/meetings/room-display/*') ||
-            $request->is('api/v1/meetings/*/check-in/public') ||
-            $request->is('api/v1/meeting-rooms/*/issues/public')) {
             return true;
         }
 

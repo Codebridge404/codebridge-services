@@ -153,3 +153,4 @@ class EnsureApiClientTest extends TestCase
             ->assertJsonPath('service', 'auth-service');
     }
 }
+
