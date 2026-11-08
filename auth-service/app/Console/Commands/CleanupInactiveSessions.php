@@ -89,6 +89,47 @@ class CleanupInactiveSessions extends Command
             }
         }
 
+        // 3. Purge expired refresh_tokens lineages from descendants to parents
+        // (RESTRICT prevents accidental deletion; leaf descendants must be purged before roots)
+        $expiredSessionIds = DB::table('user_sessions')
+            ->where('expires_at', '<', $now)
+            ->pluck('id')
+            ->toArray();
+
+        $totalPurgedTokens = 0;
+        if (!empty($expiredSessionIds)) {
+            if (!$dryRun) {
+                // Delete descendant leaf tokens layer-by-layer
+                do {
+                    $deletedDescendants = DB::table('refresh_tokens')
+                        ->whereIn('session_id', $expiredSessionIds)
+                        ->whereNotNull('parent_token_id')
+                        ->whereNotIn('id', function ($query) {
+                            $query->select('parent_token_id')
+                                ->from('refresh_tokens')
+                                ->whereNotNull('parent_token_id');
+                        })
+                        ->delete();
+                    $totalPurgedTokens += $deletedDescendants;
+                } while ($deletedDescendants > 0);
+
+                // Delete remaining root tokens
+                $deletedRoots = DB::table('refresh_tokens')
+                    ->whereIn('session_id', $expiredSessionIds)
+                    ->delete();
+                $totalPurgedTokens += $deletedRoots;
+
+                // Delete the expired user_sessions families
+                DB::table('user_sessions')
+                    ->whereIn('id', $expiredSessionIds)
+                    ->delete();
+            } else {
+                $totalPurgedTokens = DB::table('refresh_tokens')
+                    ->whereIn('session_id', $expiredSessionIds)
+                    ->count();
+            }
+        }
+
         $grandTotal = $totalExpired + $totalInactive;
 
         $this->info("✅ Inactivity session cleanup completed!");
@@ -97,6 +138,7 @@ class CleanupInactiveSessions extends Command
             [
                 ['Hard-Expired Sessions (session_expires_at)', $totalExpired],
                 ['Inactive Sessions Past Policy (session_inactivity_days)', $totalInactive],
+                ['Expired Refresh Token Lineages Purged', $totalPurgedTokens],
                 ['Total Sessions ' . ($dryRun ? 'Identified' : 'Purged'), $grandTotal],
                 ['Executed At', $now->toIso8601String()],
             ]

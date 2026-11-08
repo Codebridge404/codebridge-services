@@ -346,4 +346,36 @@ class SessionFamilyTokenTest extends TestCase
         $this->assertEquals('CodeBridges Mobile Runner', $mobileRunner->name);
         $this->assertEquals('public', $mobileRunner->client_type);
     }
+
+    /**
+     * Test lineage cleanup from descendants to parents under ON DELETE RESTRICT constraints.
+     */
+    public function test_lineage_cleanup_from_descendants_to_parents(): void
+    {
+        $session = UserSession::create([
+            'user_id' => $this->user->id,
+            'api_client_id' => $this->client->id,
+            'tenant_id' => $this->tenant->id,
+            'permissions' => ['pos.cashier'],
+            'expires_at' => Carbon::now()->addDays(30),
+        ]);
+
+        $root = RefreshToken::issueRoot($session);
+        $rot1 = RefreshToken::rotate($root['credential']);
+        $rot2 = RefreshToken::rotate($rot1['credential']);
+
+        $this->assertEquals(3, RefreshToken::where('session_id', $session->id)->count());
+
+        // Now artificially age the session past expiration
+        $session->update(['expires_at' => Carbon::now()->subMinute()]);
+
+        // Run the automated cleanup command
+        $this->artisan('sessions:cleanup-inactive')
+            ->expectsOutputToContain('Inactivity session cleanup completed!')
+            ->assertExitCode(0);
+
+        // Verify all 3 tokens and the session are cleaned up cleanly
+        $this->assertEquals(0, RefreshToken::where('session_id', $session->id)->count());
+        $this->assertNull(UserSession::find($session->id));
+    }
 }
