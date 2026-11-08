@@ -14,5 +14,7 @@ Route::middleware('role:super_admin,organization,admin')->group(function () {
     Route::get('/api-clients/{id}', [ApiClientController::class, 'show']);
     Route::match(['put', 'patch'], '/api-clients/{id}', [ApiClientController::class, 'update']);
     Route::put('/api-clients/{id}/toggle', [ApiClientController::class, 'toggle']);
+    Route::post('/api-clients/{id}/regenerate-key', [ApiClientController::class, 'regenerateKey']);
     Route::delete('/api-clients/{id}', [ApiClientController::class, 'destroy']);
 });
+

@@ -52,6 +52,62 @@ class ApiClientTest extends TestCase
         ]);
     }
 
+    public function test_admin_can_create_api_client_with_auto_generated_key(): void
+    {
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
+        Sanctum::actingAs($user, ['*']);
+
+        $response = $this->postJson('/api/v1/api-clients', [
+            'name' => 'Auto Key POS Kiosk',
+            'client_type' => 'pos',
+        ])->assertStatus(201);
+
+        $clientKey = $response->json('data.client_key');
+        $this->assertNotEmpty($clientKey);
+        $this->assertStringStartsWith('ck_pos_', $clientKey);
+
+        $this->assertDatabaseHas('api_clients', [
+            'name' => 'Auto Key POS Kiosk',
+            'client_key' => $clientKey,
+            'client_type' => 'pos',
+        ]);
+    }
+
+    public function test_model_auto_creates_client_key_on_eloquent_create(): void
+    {
+        $client = ApiClient::create([
+            'name' => 'Direct Eloquent Model Client',
+            'client_type' => 'mobile',
+        ]);
+
+        $this->assertNotEmpty($client->client_key);
+        $this->assertStringStartsWith('ck_mobile_', $client->client_key);
+    }
+
+    public function test_admin_can_regenerate_client_key(): void
+    {
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
+        Sanctum::actingAs($user, ['*']);
+
+        $client = ApiClient::create([
+            'name' => 'Regenerate Target App',
+            'client_type' => 'web',
+            'client_key' => 'old_key_123',
+        ]);
+
+        $response = $this->postJson("/api/v1/api-clients/{$client->id}/regenerate-key")
+            ->assertStatus(200);
+
+        $newKey = $response->json('data.client_key');
+        $this->assertNotEquals('old_key_123', $newKey);
+        $this->assertStringStartsWith('ck_web_', $newKey);
+
+        $this->assertDatabaseHas('api_clients', [
+            'id' => $client->id,
+            'client_key' => $newKey,
+        ]);
+    }
+
     public function test_admin_can_view_update_toggle_and_delete_api_client(): void
     {
         $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
@@ -98,3 +154,4 @@ class ApiClientTest extends TestCase
         ]);
     }
 }
+

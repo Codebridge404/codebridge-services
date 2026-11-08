@@ -44,10 +44,11 @@ class ApiClientController extends Controller
             'is_active' => 'nullable|boolean',
         ]);
 
-        $clientKey = $validated['client_key'] ?? ('client_' . Str::lower($validated['client_type']) . '_' . Str::random(24));
+        $clientKey = !empty($validated['client_key'])
+            ? $validated['client_key']
+            : ApiClient::generateClientKey($validated['client_type']);
 
         $client = ApiClient::create([
-            'uuid' => (string) Str::uuid(),
             'name' => $validated['name'],
             'client_key' => $clientKey,
             'client_type' => $validated['client_type'],
@@ -140,6 +141,31 @@ class ApiClientController extends Controller
     }
 
     /**
+     * Regenerate client key.
+     * POST /api/v1/api-clients/{id}/regenerate-key
+     */
+    public function regenerateKey(string $id): JsonResponse
+    {
+        $client = ApiClient::where('id', $id)->orWhere('uuid', $id)->first();
+
+        if (!$client) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'API client not found.',
+            ], 404);
+        }
+
+        $newKey = ApiClient::generateClientKey($client->client_type);
+        $client->update(['client_key' => $newKey]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'API client key regenerated successfully.',
+            'data' => $client,
+        ]);
+    }
+
+    /**
      * Delete an API client.
      * DELETE /api/v1/api-clients/{id}
      */
@@ -169,3 +195,4 @@ class ApiClientController extends Controller
         ]);
     }
 }
+

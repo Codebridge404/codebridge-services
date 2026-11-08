@@ -38,7 +38,27 @@ class ApiClient extends Model
             if (empty($client->uuid)) {
                 $client->uuid = (string) Str::uuid();
             }
+
+            if (empty($client->client_key)) {
+                $client->client_key = static::generateClientKey($client->client_type);
+            }
         });
+    }
+
+    /**
+     * Generate a cryptographically secure, unique client key.
+     * Format: ck_{client_type}_{32-character random string} (max 64 chars).
+     */
+    public static function generateClientKey(?string $clientType = 'app'): string
+    {
+        $typeSlug = Str::slug($clientType ?: 'app', '_');
+        $prefix = 'ck_' . ($typeSlug ? $typeSlug . '_' : '');
+
+        do {
+            $key = substr($prefix . Str::random(32), 0, 64);
+        } while (static::where('client_key', $key)->exists());
+
+        return $key;
     }
 
     /**
