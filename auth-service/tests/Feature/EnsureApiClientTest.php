@@ -196,28 +196,44 @@ class EnsureApiClientTest extends TestCase
             ->assertJsonStructure(['access_token', 'token_type']);
     }
 
-    public function test_legacy_unhashed_key_in_database_remains_supported(): void
+    public function test_raw_stored_sha256_hash_in_header_is_rejected_with_401(): void
     {
-        $plainKey = 'ck_legacy_unhashed_2026';
+        $plainKey = 'client_web_admin_cb2026';
+        $hashedKey = hash('sha256', $plainKey);
+
         $client = ApiClient::create([
-            'name' => 'Legacy Unhashed App',
+            'name' => 'CodeBridges Web Admin Hash Test',
             'client_type' => 'first_party',
-            'client_key' => $plainKey,
+            'client_key' => $hashedKey,
             'is_active' => true,
         ]);
 
         $user = User::factory()->create([
-            'email' => 'legacy.user@sunnycafe.kh',
+            'email' => 'admin.hashcheck@sunnycafe.kh',
             'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
         ]);
 
-        $response = $this->withHeader('X-App-Key', $plainKey)
+        // Sending raw stored SHA-256 hash in X-App-Key is REJECTED with 401 Invalid app key
+        $response = $this->withHeader('X-App-Key', $hashedKey)
             ->postJson('/api/v1/auth/login', [
                 'email' => $user->email,
                 'password' => 'Password123!',
             ]);
 
-        $response->assertStatus(200)
+        $response->assertStatus(401)
+            ->assertJson([
+                'code' => 'INVALID_APP_KEY',
+                'message' => 'Application key is invalid or disabled.',
+            ]);
+
+        // Sending the original public key is ACCEPTED
+        $successResponse = $this->withHeader('X-App-Key', $plainKey)
+            ->postJson('/api/v1/auth/login', [
+                'email' => $user->email,
+                'password' => 'Password123!',
+            ]);
+
+        $successResponse->assertStatus(200)
             ->assertJsonStructure(['access_token', 'token_type']);
     }
 

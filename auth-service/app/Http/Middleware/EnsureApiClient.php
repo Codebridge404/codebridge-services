@@ -40,14 +40,11 @@ class EnsureApiClient
         $hashedKey = hash('sha256', $key);
 
         $client = DB::table('api_clients')
-            ->where(function ($query) use ($hashedKey, $key) {
-                $query->where('client_key', $hashedKey)
-                    ->orWhere('client_key', $key);
-            })
+            ->where('client_key', $hashedKey)
             ->where('is_active', true)
             ->first();
 
-        if (!$client || (!hash_equals((string) $client->client_key, $hashedKey) && !hash_equals((string) $client->client_key, $key))) {
+        if (!$client || !hash_equals((string) $client->client_key, $hashedKey)) {
             try {
                 if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(

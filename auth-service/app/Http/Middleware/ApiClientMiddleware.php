@@ -37,9 +37,7 @@ class ApiClientMiddleware
 
             // Optional mode fallback: resolve default platform client
             $defaultHashedKey = hash('sha256', 'client_web_admin_cb2026');
-            $defaultClient = ApiClient::where('client_key', $defaultHashedKey)
-                ->orWhere('client_key', 'client_web_admin_cb2026')
-                ->first() ?? ApiClient::first();
+            $defaultClient = ApiClient::where('client_key', $defaultHashedKey)->first() ?? ApiClient::first();
             if ($defaultClient) {
                 $request->attributes->set('api_client', $defaultClient);
                 $request->attributes->set('api_client_id', $defaultClient->id);
@@ -53,7 +51,6 @@ class ApiClientMiddleware
         $hashedKey = hash('sha256', $rawKey);
 
         $client = ApiClient::where('client_key', $hashedKey)
-            ->orWhere('client_key', $rawKey)
             ->orWhere('uuid', $rawKey)
             ->first();
 

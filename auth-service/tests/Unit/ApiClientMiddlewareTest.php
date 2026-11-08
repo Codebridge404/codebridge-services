@@ -120,27 +120,28 @@ class ApiClientMiddlewareTest extends TestCase
         $this->assertEquals(200, $response->getStatusCode());
     }
 
-    public function test_legacy_unhashed_client_key_passes_through(): void
+    public function test_raw_stored_sha256_hash_in_header_is_rejected(): void
     {
-        $legacyClient = ApiClient::create([
-            'name' => 'Legacy Unhashed App',
-            'client_key' => 'legacy_unhashed_test_key',
+        $plainKey = 'client_pos_sample_key';
+        $hashedKey = hash('sha256', $plainKey);
+
+        $client = ApiClient::create([
+            'name' => 'Sample POS Client',
+            'client_key' => $hashedKey,
             'client_type' => 'public',
             'is_active' => true,
         ]);
 
         $request = Request::create('/api/v1/some-endpoint', 'POST');
-        $request->headers->set('X-App-Key', 'legacy_unhashed_test_key');
+        $request->headers->set('X-App-Key', $hashedKey);
 
-        $called = false;
-        $response = $this->middleware->handle($request, function ($req) use (&$called, $legacyClient) {
-            $called = true;
-            $this->assertEquals($legacyClient->id, $req->attributes->get('api_client_id'));
+        $response = $this->middleware->handle($request, function ($req) {
             return response('OK', 200);
         });
 
-        $this->assertTrue($called);
-        $this->assertEquals(200, $response->getStatusCode());
+        $this->assertEquals(401, $response->getStatusCode());
+        $data = json_decode($response->getContent(), true);
+        $this->assertEquals('INVALID_CLIENT_KEY', $data['code']);
     }
 
     public function test_valid_client_uuid_in_header_passes_through(): void
