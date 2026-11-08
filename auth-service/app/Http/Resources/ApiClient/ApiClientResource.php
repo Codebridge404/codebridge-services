@@ -44,3 +44,4 @@ class ApiClientResource extends JsonResource
         ];
     }
 }
+

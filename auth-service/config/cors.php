@@ -32,6 +32,8 @@ return [
         'X-RateLimit-Limit',
         'X-RateLimit-Remaining',
         'Retry-After',
+        'X-App-Key',
+        'X-Client-Key',
     ],
 
     'max_age' => 86400,

@@ -56,7 +56,8 @@ class UserSessionRotationFlowTest extends TestCase
      */
     public function test_full_login_session_creation_and_token_rotation(): void
     {
-        $loginRes = $this->withHeader('X-Client-Key', 'client_pos_flutter_cb2026')
+        $loginRes = $this->withHeader('X-App-Key', 'client_pos_flutter_cb2026')
+            ->withHeader('X-Client-Key', 'client_pos_flutter_cb2026')
             ->postJson('/api/v1/auth/login', [
                 'email' => 'cashier@sunnycafe.kh',
                 'password' => 'Password123!',
