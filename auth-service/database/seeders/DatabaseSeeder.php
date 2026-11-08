@@ -14,7 +14,7 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // 0. Seed Granular Permissions, System Roles, Role-Permission Mappings, Platform Modules, Plans, and Payment Providers
+        // 0. Seed Granular Permissions, System Roles, Role-Permission Mappings, Platform Modules, Plans, Payment Providers, and API Clients
         $this->call([
             PermissionSeeder::class,
             RoleSeeder::class,
@@ -22,6 +22,7 @@ class DatabaseSeeder extends Seeder
             PlatformModuleSeeder::class,
             SubscriptionPlanSeeder::class,
             PaymentProviderAccountSeeder::class,
+            ApiClientSeeder::class,
         ]);
 
         // 1. Seed Platform Super Admin account

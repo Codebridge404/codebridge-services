@@ -653,5 +653,13 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         return $this->hasMany(UserPosPin::class, 'user_id');
     }
+
+    /**
+     * Get user session families for this user.
+     */
+    public function userSessions()
+    {
+        return $this->hasMany(UserSession::class, 'user_id');
+    }
 }
 

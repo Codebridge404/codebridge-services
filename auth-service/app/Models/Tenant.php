@@ -104,4 +104,9 @@ class Tenant extends Model
     {
         return $this->hasMany(UserPosPin::class, 'tenant_id');
     }
+
+    public function userSessions()
+    {
+        return $this->hasMany(UserSession::class, 'tenant_id');
+    }
 }
