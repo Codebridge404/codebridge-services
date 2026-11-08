@@ -153,5 +153,61 @@ class ApiClientTest extends TestCase
             'id' => $client->id,
         ]);
     }
+
+    public function test_validation_errors_on_invalid_store_payload(): void
+    {
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
+        Sanctum::actingAs($user, ['*']);
+
+        // Missing required fields
+        $this->postJson('/api/v1/api-clients', [])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['name', 'client_type']);
+
+        // Invalid client_type
+        $this->postJson('/api/v1/api-clients', [
+            'name' => 'Invalid Type Client',
+            'client_type' => 'quantum_computer',
+        ])->assertStatus(422)->assertJsonValidationErrors(['client_type']);
+
+        // Non-unique client_key
+        ApiClient::create([
+            'name' => 'Existing Unique Client',
+            'client_type' => 'pos',
+            'client_key' => 'unique_key_conflict_123',
+        ]);
+
+        $this->postJson('/api/v1/api-clients', [
+            'name' => 'Duplicate Key Client',
+            'client_type' => 'web',
+            'client_key' => 'unique_key_conflict_123',
+        ])->assertStatus(422)->assertJsonValidationErrors(['client_key']);
+    }
+
+    public function test_cannot_delete_api_client_with_associated_sessions(): void
+    {
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
+        Sanctum::actingAs($user, ['*']);
+
+        $client = ApiClient::create([
+            'name' => 'Active Session Client',
+            'client_type' => 'pos',
+            'client_key' => 'active_session_client_key',
+        ]);
+
+        // Attach a user session
+        \App\Models\UserSession::create([
+            'user_id' => $user->id,
+            'api_client_id' => $client->id,
+            'tenant_id' => $user->tenant_id,
+            'permissions' => ['*'],
+            'expires_at' => now()->addDays(7),
+        ]);
+
+        $this->deleteJson("/api/v1/api-clients/{$client->id}")
+            ->assertStatus(422)
+            ->assertJsonFragment(['status' => 'error'])
+            ->assertJsonFragment(['code' => 'VALIDATION_ERROR']);
+    }
 }
 
