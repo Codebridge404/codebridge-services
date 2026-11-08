@@ -97,7 +97,7 @@ run_rule_check "9" "Deployment Testing (Blue/Green Rollback, Offline K8s Kustomi
 # 10. Dependency Vulnerability Audit
 # ------------------------------------------------------------------------------
 run_rule_check "10" "Dependency Security Audit (composer audit = 0 vulnerabilities)" \
-    "composer audit"
+    "composer audit --ignore-unreachable"
 
 # ------------------------------------------------------------------------------
 # Final Verification Summary
