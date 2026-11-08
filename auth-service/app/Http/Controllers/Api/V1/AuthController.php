@@ -66,7 +66,7 @@ class AuthController extends Controller
      * Central Authentication supporting Email and Phone Number Login.
      * POST /api/v1/auth/login
      */
-    #[OpenApiResponse(status: 200, description: 'Login successful', type: 'array{status: string, message: string, access_token: string, token?: string, refresh_token: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 200, description: 'Login successful', type: 'array{status: string, message: string, access_token: string, refresh_token: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
     #[OpenApiResponse(status: 403, description: 'Two-factor authentication required', type: 'array{status: string, code: string, message: string, status_mfa?: string, two_factor_required?: bool, challenge_token?: string, expires_in?: int}')]
     public function login(LoginRequest $request)
     {
@@ -348,7 +348,6 @@ class AuthController extends Controller
                 'Pragma' => 'no-cache',
             ],
             extra: [
-                'token' => $jwtToken,
                 'access_token' => $jwtToken,
                 'refresh_token' => $refreshToken,
                 'session_id' => $userSession->uuid,
@@ -364,7 +363,7 @@ class AuthController extends Controller
      * Cashier Fast PIN Quick-Switch (Physical Register Quick-Switch).
      * POST /api/v1/auth/quick-switch
      */
-    #[OpenApiResponse(status: 200, description: 'Cashier quick-switch successful', type: 'array{status: string, message: string, access_token: string, token: string, refresh_token: string, token_type: string, expires_in: int, sanctum_token?: string, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 200, description: 'Cashier quick-switch successful', type: 'array{status: string, message: string, access_token: string, refresh_token: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
     public function quickSwitch(QuickSwitchRequest $request)
     {
         $pin = trim($request->pin_code);
@@ -552,12 +551,10 @@ class AuthController extends Controller
         return $this->successResponse(
             message: "Welcome back, {$user->name}!",
             extra: [
-                'token' => $jwtToken,
                 'access_token' => $jwtToken,
                 'refresh_token' => $refreshToken,
                 'token_type' => 'Bearer',
                 'expires_in' => $jwtService->getTtlSeconds(),
-                'sanctum_token' => $plainToken,
                 'user' => new UserResource($user),
             ]
         );
@@ -567,7 +564,7 @@ class AuthController extends Controller
      * Refresh Access Token using Refresh Token.
      * POST /api/v1/auth/refresh
      */
-    #[OpenApiResponse(status: 200, description: 'Tokens refreshed successfully', type: 'array{status: string, message: string, access_token: string, token: string, refresh_token: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 200, description: 'Tokens refreshed successfully', type: 'array{status: string, message: string, access_token: string, refresh_token: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
     #[OpenApiResponse(status: 401, description: 'Invalid or expired refresh token', type: 'array{status: string, code: string, message: string}')]
     #[OpenApiResponse(status: 403, description: 'Account inactive or locked out', type: 'array{status: string, code: string, message: string}')]
     #[OpenApiResponse(status: 404, description: 'User not found', type: 'array{status: string, code: string, message: string}')]
@@ -649,7 +646,6 @@ class AuthController extends Controller
             return $this->successResponse(
                 message: 'Tokens refreshed successfully.',
                 extra: [
-                    'token' => $newAccessToken,
                     'access_token' => $newAccessToken,
                     'refresh_token' => $rotated['credential'],
                     'session_id' => $session->uuid,
@@ -732,7 +728,6 @@ class AuthController extends Controller
         return $this->successResponse(
             message: 'Token refreshed successfully.',
             extra: [
-                'token' => $newAccessToken,
                 'access_token' => $newAccessToken,
                 'refresh_token' => $newRefreshToken,
                 'token_type' => 'Bearer',
@@ -1046,7 +1041,7 @@ class AuthController extends Controller
      * POST /api/v1/auth/accept-invite
      */
     #[OpenApiResponse(status: 200, description: 'Membership accepted (MFA required)', type: 'array{status: string, message: string, code?: string}')]
-    #[OpenApiResponse(status: 201, description: 'Staff account setup completed successfully', type: 'array{status: string, message: string, access_token: string, token: string, refresh_token: string, sanctum_token?: string, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 201, description: 'Staff account setup completed successfully', type: 'array{status: string, message: string, access_token: string, refresh_token: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
     #[OpenApiResponse(status: 403, description: 'Account suspended or forbidden', type: 'array{status: string, code: string, message: string}')]
     #[OpenApiResponse(status: 422, description: 'Invalid or expired invitation link', type: 'array{status: string, code: string, message: string}')]
     public function acceptInvite(AcceptInviteRequest $request)
@@ -1240,13 +1235,12 @@ class AuthController extends Controller
             );
 
             return $this->createdResponse(
-             
                 message: 'Staff account setup completed successfully. Welcome aboard!',
                 extra: [
-                    'token' => $jwtToken,
                     'access_token' => $jwtToken,
                     'refresh_token' => $refreshToken,
-                    'sanctum_token' => $tokenResult->plainTextToken,
+                    'token_type' => 'Bearer',
+                    'expires_in' => $jwtService->getTtlSeconds(),
                     'user' => new UserResource($user),
                 ]
             );
@@ -1655,7 +1649,7 @@ class AuthController extends Controller
      * Registration.
      * POST /api/v1/auth/register
      */
-    #[OpenApiResponse(status: 201, description: 'User account registered successfully', type: 'array{status: string, message: string, access_token: string, token: string, refresh_token: string, sanctum_token?: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
+    #[OpenApiResponse(status: 201, description: 'User account registered successfully', type: 'array{status: string, message: string, access_token: string, refresh_token: string, token_type: string, expires_in: int, user: \App\Http\Resources\User\UserResource}')]
     public function register(RegisterRequest $request)
     {
         $rawEmail = $request->email;
@@ -1739,10 +1733,8 @@ class AuthController extends Controller
         return $this->createdResponse(
             message: 'User account registered successfully.',
             extra: [
-                'token' => $jwtToken,
                 'access_token' => $jwtToken,
                 'refresh_token' => $refreshToken,
-                'sanctum_token' => $plainToken,
                 'token_type' => 'Bearer',
                 'expires_in' => $jwtService->getTtlSeconds(),
                 'user' => new UserResource($user),

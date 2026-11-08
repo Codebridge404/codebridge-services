@@ -217,10 +217,11 @@ class TenantController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Tenant workspace registered successfully! Your 14-day trial has started.',
-            'user'    => $updatedUser,
-            'token'   => $newJwtToken,
+            'user'         => $updatedUser,
             'access_token' => $newJwtToken,
             'refresh_token' => $newRefreshToken,
+            'token_type'   => 'Bearer',
+            'expires_in'   => app(\App\Services\JwtService::class)->getTtlSeconds(),
             'data'    => array_merge(
                 (array) DB::table('tenants')->where('id', $id)->first(),
                 [

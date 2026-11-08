@@ -53,13 +53,13 @@ class AuthTest extends TestCase
                 'message',
                 'access_token',
                 'refresh_token',
-                'sanctum_token',
                 'token_type',
                 'expires_in',
                 'user' => ['id', 'email', 'name'],
             ]);
 
-        $this->assertNotEmpty($response->json('sanctum_token'));
+        $this->assertNull($response->json('token'));
+        $this->assertNull($response->json('sanctum_token'));
         $this->assertNotEmpty($response->json('access_token'));
         $this->assertNotEmpty($response->json('refresh_token'));
     }
@@ -295,7 +295,9 @@ class AuthTest extends TestCase
                 'status' => 'success',
             ]);
 
-        $this->assertNotNull($response->json('token'));
+        $this->assertNotNull($response->json('access_token'));
+        $this->assertNull($response->json('token'));
+        $this->assertNull($response->json('sanctum_token'));
         $this->assertEquals($cashier->id, $response->json('user.id'));
     }
 
