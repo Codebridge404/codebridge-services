@@ -31,55 +31,116 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0 24px;
+      padding: 0 20px;
       z-index: 100;
+      gap: 16px;
     }
     .brand {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       color: #f8fafc;
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 700;
       letter-spacing: -0.02em;
+      white-space: nowrap;
     }
     .brand-badge {
       background: linear-gradient(135deg, #3b82f6, #6366f1);
       color: #ffffff;
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 700;
       padding: 3px 8px;
       border-radius: 6px;
       text-transform: uppercase;
       letter-spacing: 0.05em;
     }
-    .selector-box {
+    .nav-controls {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
+      flex-wrap: wrap;
     }
-    .selector-label {
+    .control-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .control-label {
       color: #94a3b8;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
+      white-space: nowrap;
     }
-    .service-select {
+    .service-select, .appkey-input, .appkey-select {
       background: #1e293b;
       color: #f1f5f9;
       border: 1px solid #334155;
-      padding: 8px 16px;
-      border-radius: 8px;
-      font-size: 13px;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
       font-weight: 600;
       font-family: inherit;
-      cursor: pointer;
       outline: none;
       transition: all 0.2s ease;
       box-shadow: 0 1px 2px rgba(0,0,0,0.2);
     }
-    .service-select:hover, .service-select:focus {
+    .service-select {
+      cursor: pointer;
+    }
+    .appkey-select {
+      cursor: pointer;
+      max-width: 220px;
+    }
+    .appkey-input {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      color: #38bdf8;
+      width: 200px;
+      cursor: text;
+    }
+    .service-select:hover, .service-select:focus,
+    .appkey-input:hover, .appkey-input:focus,
+    .appkey-select:hover, .appkey-select:focus {
       border-color: #3b82f6;
       background: #243248;
+    }
+    .btn-copy {
+      background: #334155;
+      color: #e2e8f0;
+      border: 1px solid #475569;
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .btn-copy:hover {
+      background: #475569;
+      color: #fff;
+    }
+    .badge-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: #34d399;
+      padding: 4px 8px;
+      border-radius: 16px;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .badge-dot {
+      width: 6px;
+      height: 6px;
+      background: #10b981;
+      border-radius: 50%;
+      box-shadow: 0 0 6px #10b981;
     }
     .docs-container {
       flex: 1;
@@ -101,12 +162,32 @@
       <span>🌉 CodeBridge@ Multi-Tenant</span>
       <span class="brand-badge">Enterprise Gateway</span>
     </div>
-    <div class="selector-box">
-      <label class="selector-label" for="serviceSelect">Service Definition:</label>
-      <select id="serviceSelect" class="service-select" onchange="switchService(this.value)">
-        <option value="/docs/api.json">🔑 Auth, RBAC, CRM & MMS Meeting Service</option>
-        <option value="/docs/operations/api.json">📦 Operations, Inventory, Shifts & Commerce Engine</option>
-      </select>
+
+    <div class="nav-controls">
+      <div class="control-box">
+        <label class="control-label" for="serviceSelect">Service:</label>
+        <select id="serviceSelect" class="service-select" onchange="switchService(this.value)">
+          <option value="/docs/api.json">🔑 Auth, RBAC, CRM & MMS Service</option>
+          <option value="/docs/operations/api.json">📦 Operations, Shifts & POS Engine</option>
+        </select>
+      </div>
+
+      <div class="control-box">
+        <label class="control-label" for="appKeySelect">🔑 Client Key:</label>
+        <select id="appKeySelect" class="appkey-select" onchange="onAppKeyPresetChange(this.value)">
+          <option value="client_web_admin_cb2026">Web Admin (Default)</option>
+          <option value="client_mobile_pos_sunny">Mobile POS (Sunny Cafe)</option>
+          <option value="client_kiosk_sunny">Customer Kiosk (Sunny Cafe)</option>
+          <option value="custom">Custom Client Key...</option>
+        </select>
+        <input type="text" id="appKeyInput" class="appkey-input" value="client_web_admin_cb2026" oninput="onCustomKeyInput(this.value)" placeholder="X-App-Key header" title="Active X-App-Key injected into interactive Try It requests" />
+        <button class="btn-copy" onclick="copyAppKey()" title="Copy active X-App-Key value">📋 Copy</button>
+      </div>
+
+      <div class="badge-status" id="activeKeyStatus" title="X-App-Key gate active across all microservice API routes">
+        <span class="badge-dot"></span>
+        <span id="keyStatusText">Gateway Key Gate Active</span>
+      </div>
     </div>
   </header>
 
@@ -115,9 +196,70 @@
   </main>
 
   <script>
+    const DEFAULT_APP_KEY = 'client_web_admin_cb2026';
+    let currentAppKey = localStorage.getItem('codebridges_app_key') || DEFAULT_APP_KEY;
+
+    function getActiveAppKey() {
+      return (currentAppKey && currentAppKey.trim()) ? currentAppKey.trim() : DEFAULT_APP_KEY;
+    }
+
+    function setAppKey(key) {
+      currentAppKey = key.trim();
+      localStorage.setItem('codebridges_app_key', currentAppKey);
+      const input = document.getElementById('appKeyInput');
+      if (input) input.value = currentAppKey;
+
+      const select = document.getElementById('appKeySelect');
+      if (select) {
+        if (Array.from(select.options).some(o => o.value === currentAppKey)) {
+          select.value = currentAppKey;
+        } else {
+          select.value = 'custom';
+        }
+      }
+    }
+
+    function onAppKeyPresetChange(value) {
+      if (value === 'custom') {
+        const input = document.getElementById('appKeyInput');
+        if (input) {
+          input.focus();
+          input.select();
+        }
+      } else {
+        setAppKey(value);
+      }
+    }
+
+    function onCustomKeyInput(value) {
+      currentAppKey = value.trim();
+      localStorage.setItem('codebridges_app_key', currentAppKey);
+      const select = document.getElementById('appKeySelect');
+      if (select) {
+        if (Array.from(select.options).some(o => o.value === currentAppKey)) {
+          select.value = currentAppKey;
+        } else {
+          select.value = 'custom';
+        }
+      }
+    }
+
+    async function copyAppKey() {
+      const key = getActiveAppKey();
+      try {
+        await navigator.clipboard.writeText(key);
+        const status = document.getElementById('keyStatusText');
+        const prev = status.textContent;
+        status.textContent = 'Copied to clipboard!';
+        setTimeout(() => status.textContent = prev, 1500);
+      } catch (e) {
+        prompt('Copy active X-App-Key:', key);
+      }
+    }
+
     // Universal Fetch Interceptor for Interactive Documentation
-    // 1. Intercepts OpenAPI spec requests (/docs/api.json & /docs/operations/api.json) to prioritize live staging HTTPS/Current Origin servers
-    // 2. Intercepts "Try It" API calls to rewrite localhost:8080 to current origin when running remotely
+    // 1. Injects active X-App-Key header into all "Try It" API calls if not explicitly present
+    // 2. Intercepts OpenAPI spec requests to add X-App-Key security scheme & prioritize live staging HTTPS/Current Origin servers
     // 3. Upgrades any insecure http:// calls to https:// to prevent Mixed Content blocking
 
     const originalFetch = window.fetch;
@@ -147,42 +289,129 @@
         }
       }
 
+      // Inject X-App-Key header into API requests (Try It console) if not explicitly present
+      const isApiRequest = url && (
+        url.includes('/api/v1/') ||
+        url.includes('/api/') ||
+        url.startsWith('/api')
+      ) && !url.includes('/docs/');
+
+      if (isApiRequest) {
+        const activeKey = getActiveAppKey();
+
+        if (resource instanceof Request) {
+          if (!resource.headers.has('X-App-Key') && !resource.headers.has('x-app-key') && !resource.headers.has('X-Client-Key') && !resource.headers.has('x-client-key')) {
+            const newHeaders = new Headers(resource.headers);
+            newHeaders.set('X-App-Key', activeKey);
+            resource = new Request(resource, { headers: newHeaders });
+          }
+        } else {
+          init = init || {};
+          if (init.headers instanceof Headers) {
+            if (!init.headers.has('X-App-Key') && !init.headers.has('x-app-key') && !init.headers.has('X-Client-Key') && !init.headers.has('x-client-key')) {
+              init.headers.set('X-App-Key', activeKey);
+            }
+          } else if (Array.isArray(init.headers)) {
+            const hasKey = init.headers.some(h => {
+              const name = (h[0] || '').toLowerCase();
+              return name === 'x-app-key' || name === 'x-client-key';
+            });
+            if (!hasKey) {
+              init.headers.push(['X-App-Key', activeKey]);
+            }
+          } else if (typeof init.headers === 'object' && init.headers !== null) {
+            const keys = Object.keys(init.headers).map(k => k.toLowerCase());
+            if (!keys.includes('x-app-key') && !keys.includes('x-client-key')) {
+              init.headers['X-App-Key'] = activeKey;
+            }
+          } else {
+            init.headers = { 'X-App-Key': activeKey };
+          }
+        }
+      }
+
       const response = await originalFetch.call(this, resource, init);
 
       // Dynamically enhance OpenAPI specifications so Stoplight Elements always defaults to a reachable HTTPS server
+      // and documents the required X-App-Key security scheme
       if (url && (url.endsWith('/api.json') || url.includes('/docs/api.json') || url.includes('/docs/operations/api.json'))) {
         try {
           const clone = response.clone();
           const spec = await clone.json();
-          if (spec && spec.servers && Array.isArray(spec.servers)) {
-            const currentOriginApi = window.location.origin + '/api';
-            const stagingApi = 'https://staging-codebridge-api.servicefixit.me/api';
-            
-            const prioritized = [];
-            
-            // Prioritize Current Host (Same Origin - zero CORS issues)
-            prioritized.push({
-              url: currentOriginApi,
-              description: 'Current Host (' + window.location.host + ')'
-            });
-            
-            // Staging API Gateway
-            if (currentOriginApi !== stagingApi) {
+          if (spec) {
+            // 1. Prioritize reachable servers
+            if (spec.servers && Array.isArray(spec.servers)) {
+              const currentOriginApi = window.location.origin + '/api';
+              const stagingApi = 'https://staging-codebridge-api.servicefixit.me/api';
+              const prioritized = [];
+
               prioritized.push({
-                url: stagingApi,
-                description: 'Staging API Gateway'
+                url: currentOriginApi,
+                description: 'Current Host (' + window.location.host + ')'
               });
+
+              if (currentOriginApi !== stagingApi) {
+                prioritized.push({
+                  url: stagingApi,
+                  description: 'Staging API Gateway'
+                });
+              }
+
+              for (const s of spec.servers) {
+                const sUrl = (s.url || '').replace(/\/$/, '');
+                if (sUrl !== currentOriginApi.replace(/\/$/, '') && sUrl !== stagingApi.replace(/\/$/, '')) {
+                  prioritized.push(s);
+                }
+              }
+
+              spec.servers = prioritized;
             }
 
-            // Keep any other servers from spec (excluding duplicate current origin or staging)
-            for (const s of spec.servers) {
-              const sUrl = (s.url || '').replace(/\/$/, '');
-              if (sUrl !== currentOriginApi.replace(/\/$/, '') && sUrl !== stagingApi.replace(/\/$/, '')) {
-                prioritized.push(s);
+            // 2. Ensure X-App-Key Security Scheme is registered
+            spec.components = spec.components || {};
+            spec.components.securitySchemes = spec.components.securitySchemes || {};
+            if (!spec.components.securitySchemes.appKeyAuth) {
+              spec.components.securitySchemes.appKeyAuth = {
+                type: 'apiKey',
+                in: 'header',
+                name: 'X-App-Key',
+                description: 'Active registered API Client Key (Default: client_web_admin_cb2026). Required on all microservice API calls.'
+              };
+            }
+
+            // 3. Ensure top-level security
+            if (!spec.security || !spec.security.length) {
+              spec.security = [{ appKeyAuth: [] }];
+            }
+
+            // 4. Ensure each operation path declares appKeyAuth (unless exempt)
+            if (spec.paths && typeof spec.paths === 'object') {
+              for (const pathKey of Object.keys(spec.paths)) {
+                const pathObj = spec.paths[pathKey];
+                const isExempt = pathKey.includes('health') || pathKey.includes('email/verify') || pathKey.includes('webhook') || pathKey.includes('payment-callbacks');
+                if (pathObj && typeof pathObj === 'object') {
+                  const methods = ['get', 'post', 'put', 'patch', 'delete', 'options', 'head'];
+                  for (const m of methods) {
+                    if (pathObj[m] && typeof pathObj[m] === 'object') {
+                      const op = pathObj[m];
+                      if (!isExempt) {
+                        if (!op.security || !Array.isArray(op.security) || !op.security.length) {
+                          op.security = [{ appKeyAuth: [] }];
+                        } else {
+                          op.security = op.security.map(secReq => {
+                            if (typeof secReq === 'object' && !secReq.appKeyAuth) {
+                              return Object.assign({ appKeyAuth: [] }, secReq);
+                            }
+                            return secReq;
+                          });
+                        }
+                      }
+                    }
+                  }
+                }
               }
             }
 
-            spec.servers = prioritized;
             return new Response(JSON.stringify(spec), {
               status: response.status,
               statusText: response.statusText,
@@ -192,7 +421,7 @@
             });
           }
         } catch (e) {
-          console.warn('Could not rewrite OpenAPI spec servers:', e);
+          console.warn('Could not rewrite OpenAPI spec:', e);
         }
       }
 
@@ -205,7 +434,7 @@
       wrapper.innerHTML = '<elements-api id="elementsDoc" apiDescriptionUrl="' + specUrl + '" router="hash" layout="sidebar"></elements-api>';
     }
 
-    // Restore last selected service if saved
+    // Restore last selected service & app key if saved
     window.addEventListener('DOMContentLoaded', () => {
       const saved = localStorage.getItem('codebridges_selected_doc_spec');
       if (saved) {
@@ -214,6 +443,9 @@
           select.value = saved;
           switchService(saved);
         }
+      }
+      if (currentAppKey) {
+        setAppKey(currentAppKey);
       }
     });
   </script>

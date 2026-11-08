@@ -34,24 +34,50 @@ class AppServiceProvider extends ServiceProvider
                 ->routes(fn ($route) => str_starts_with($route->uri(), 'api/'))
                 ->withOperationTransformers(function (\Dedoc\Scramble\Configuration\OperationTransformers $transformers) {
                     $transformers->append(function (\Dedoc\Scramble\Support\Generator\Operation $operation, \Dedoc\Scramble\Support\RouteInfo $routeInfo) {
+                        $uri = $routeInfo->route->uri();
                         $middlewares = collect($routeInfo->route->gatherMiddleware());
                         $isAuthProtected = $middlewares->some(fn ($m) => \Illuminate\Support\Str::is(['auth', 'auth:*'], $m));
+                        $isExempt = \Illuminate\Support\Str::is([
+                            '*email/verify/*',
+                            '*payment-callbacks*',
+                            '*payments/webhook*',
+                            '*health*',
+                            'health',
+                            'up',
+                        ], $uri);
 
-                        if ($isAuthProtected) {
+                        if ($isExempt) {
+                            $operation->security = [];
+                        } elseif ($isAuthProtected) {
                             $operation->security = [
-                                new \Dedoc\Scramble\Support\Generator\SecurityRequirement(['bearerAuth' => []]),
+                                new \Dedoc\Scramble\Support\Generator\SecurityRequirement([
+                                    'appKeyAuth' => [],
+                                    'bearerAuth' => [],
+                                ]),
                             ];
                         } else {
-                            $operation->security = [];
+                            $operation->security = [
+                                new \Dedoc\Scramble\Support\Generator\SecurityRequirement([
+                                    'appKeyAuth' => [],
+                                ]),
+                            ];
                         }
                     });
                 })
                 ->afterOpenApiGenerated(function (\Dedoc\Scramble\Support\Generator\OpenApi $openApi) {
-                    $scheme = \Dedoc\Scramble\Support\Generator\SecurityScheme::http('bearer', 'JWT')
+                    $appKeyScheme = \Dedoc\Scramble\Support\Generator\SecurityScheme::apiKey('header', 'X-App-Key')
+                        ->as('appKeyAuth')
+                        ->setDescription('Active registered API Client Key (e.g. client_web_admin_cb2026). Required on all microservice API calls.');
+                    $openApi->components->addSecurityScheme('appKeyAuth', $appKeyScheme);
+
+                    $bearerScheme = \Dedoc\Scramble\Support\Generator\SecurityScheme::http('bearer', 'JWT')
                         ->as('bearerAuth')
                         ->setDescription('Enter your Sanctum access_token or Bearer token');
-                    $openApi->components->addSecurityScheme('bearerAuth', $scheme);
-                    $openApi->security = null;
+                    $openApi->components->addSecurityScheme('bearerAuth', $bearerScheme);
+
+                    $openApi->security = [
+                        new \Dedoc\Scramble\Support\Generator\SecurityRequirement(['appKeyAuth' => []]),
+                    ];
                 });
         }
     }
