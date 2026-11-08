@@ -205,22 +205,24 @@ class AuthController extends Controller
             );
         }
 
-        // Resolve ApiClient
-        $clientKey = $request->header('X-Client-Key') ?? $request->header('X-App-Key') ?? $request->input('client_key');
-        $client = null;
-        if ($clientKey) {
-            $client = ApiClient::where('client_key', $clientKey)->active()->first();
-        }
+        // Resolve ApiClient (prioritize middleware-injected client)
+        $client = $request->attributes->get('api_client');
         if (!$client) {
-            $client = ApiClient::where('client_key', 'client_web_admin_cb2026')->first() ?? ApiClient::first();
-        }
-        if (!$client) {
-            $client = ApiClient::create([
-                'name' => 'Default Platform Client',
-                'client_key' => 'client_web_admin_cb2026',
-                'client_type' => 'first_party',
-                'is_active' => true,
-            ]);
+            $clientKey = $request->header('X-Client-Key') ?? $request->header('X-App-Key') ?? $request->input('client_key');
+            if ($clientKey) {
+                $client = ApiClient::where('client_key', $clientKey)->active()->first();
+            }
+            if (!$client) {
+                $client = ApiClient::where('client_key', 'client_web_admin_cb2026')->first() ?? ApiClient::first();
+            }
+            if (!$client) {
+                $client = ApiClient::create([
+                    'name' => 'Default Platform Client',
+                    'client_key' => 'client_web_admin_cb2026',
+                    'client_type' => 'first_party',
+                    'is_active' => true,
+                ]);
+            }
         }
 
         // Resolve verified tenant membership

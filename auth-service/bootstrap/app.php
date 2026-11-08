@@ -40,6 +40,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'meeting_access' => \App\Http\Middleware\AuthorizeMeetingAccess::class,
             'quota' => TenantQuotaMiddleware::class,
             'api_key' => ApiKeyMiddleware::class,
+            'api_client' => \App\Http\Middleware\ApiClientMiddleware::class,
             'auth_throttle' => RateLimitAuthMiddleware::class,
             'protect_attack' => \App\Http\Middleware\ProtectAttackMiddleware::class,
         ]);

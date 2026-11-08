@@ -199,3 +199,4 @@ class UserSessionRotationFlowTest extends TestCase
             ->assertUnauthorized();
     }
 }
+
