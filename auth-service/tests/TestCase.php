@@ -13,19 +13,16 @@ abstract class TestCase extends BaseTestCase
 
         try {
             if (\Illuminate\Support\Facades\Schema::hasTable('api_clients')) {
-                $plainKey = 'client_test_suite_key';
-                $hashedKey = hash('sha256', $plainKey);
-
                 $client = \App\Models\ApiClient::firstOrCreate(
-                    ['client_key' => $hashedKey],
+                    ['client_key' => 'client_test_suite_key'],
                     [
                         'name' => 'Test Suite Client',
                         'client_type' => 'server',
                         'is_active' => true,
                     ]
                 );
-                // Frontend's X-App-Key header sends the plain key
-                $this->withHeader('X-App-Key', $plainKey);
+                // Frontend sends public app key in X-App-Key header
+                $this->withHeader('X-App-Key', $client->client_key);
             }
         } catch (\Throwable $e) {
             // Ignore during early schema bootstrap

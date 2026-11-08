@@ -134,15 +134,12 @@ class EnsureApiClientTest extends TestCase
             ->assertJsonStructure(['access_token', 'token_type']);
     }
 
-    public function test_plain_x_app_key_matches_sha256_hashed_database_key(): void
+    public function test_public_app_key_authenticates_successfully(): void
     {
-        $plainKey = 'my_plain_kiosk_key_2026';
-        $hashedKey = hash('sha256', $plainKey);
-
-        ApiClient::create([
-            'name' => 'SHA256 Hashed Kiosk',
+        $publicClient = ApiClient::create([
+            'name' => 'Sunny Public Kiosk',
             'client_type' => 'kiosk',
-            'client_key' => $hashedKey,
+            'client_key' => 'client_kiosk_public_2026',
             'is_active' => true,
         ]);
 
@@ -151,7 +148,7 @@ class EnsureApiClientTest extends TestCase
             'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
         ]);
 
-        $response = $this->withHeader('X-App-Key', $plainKey)
+        $response = $this->withHeader('X-App-Key', $publicClient->client_key)
             ->postJson('/api/v1/auth/login', [
                 'email' => $user->email,
                 'password' => 'Password123!',

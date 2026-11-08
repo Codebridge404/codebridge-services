@@ -28,9 +28,7 @@ class EnsureApiClient
         // Support both X-App-Key and legacy/alias X-Client-Key
         $appKey = $request->header('X-App-Key');
         $clientKey = $request->header('X-Client-Key');
-        $testSuiteKey = hash('sha256', 'client_test_suite_key');
-        $isTestSuite = ($appKey === $testSuiteKey || $appKey === 'client_test_suite_key');
-        $key = ($clientKey && $isTestSuite) ? $clientKey : ($appKey ?? $clientKey);
+        $key = ($clientKey && $appKey === 'client_test_suite_key') ? $clientKey : ($appKey ?? $clientKey);
 
         if (!is_string($key) || $key === '' || strlen($key) > 100) {
             return response()->json([
@@ -39,17 +37,12 @@ class EnsureApiClient
             ], 401);
         }
 
-        $hashedKey = hash('sha256', $key);
-
         $client = DB::table('api_clients')
-            ->where(function ($query) use ($hashedKey, $key) {
-                $query->where('client_key', $hashedKey)
-                    ->orWhere('client_key', $key);
-            })
+            ->where('client_key', $key)
             ->where('is_active', true)
             ->first();
 
-        if (!$client || (!hash_equals((string) $client->client_key, $hashedKey) && !hash_equals((string) $client->client_key, $key))) {
+        if (!$client || !hash_equals((string) $client->client_key, $key)) {
             try {
                 if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(

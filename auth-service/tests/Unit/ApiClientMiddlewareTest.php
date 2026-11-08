@@ -97,25 +97,22 @@ class ApiClientMiddlewareTest extends TestCase
         $this->assertEquals(200, $response->getStatusCode());
     }
 
-    public function test_plain_client_key_matches_sha256_hashed_key_in_database(): void
+    public function test_public_client_key_in_header_passes_through(): void
     {
-        $plainKey = 'my_secret_frontend_key';
-        $hashedKey = hash('sha256', $plainKey);
-
-        $hashedClient = ApiClient::create([
-            'name' => 'Hashed Secret Client',
-            'client_key' => $hashedKey,
+        $publicClient = ApiClient::create([
+            'name' => 'Public Web Admin Client',
+            'client_key' => 'client_web_admin_test_2026',
             'client_type' => 'public',
             'is_active' => true,
         ]);
 
         $request = Request::create('/api/v1/some-endpoint', 'POST');
-        $request->headers->set('X-App-Key', $plainKey);
+        $request->headers->set('X-App-Key', 'client_web_admin_test_2026');
 
         $called = false;
-        $response = $this->middleware->handle($request, function ($req) use (&$called, $hashedClient) {
+        $response = $this->middleware->handle($request, function ($req) use (&$called, $publicClient) {
             $called = true;
-            $this->assertEquals($hashedClient->id, $req->attributes->get('api_client_id'));
+            $this->assertEquals($publicClient->id, $req->attributes->get('api_client_id'));
             return response('OK', 200);
         });
 

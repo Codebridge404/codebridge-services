@@ -48,10 +48,7 @@ class ApiClientMiddleware
 
         $rawKey = trim((string) $rawKey);
 
-        $hashedKey = hash('sha256', $rawKey);
-
-        $client = ApiClient::where('client_key', $hashedKey)
-            ->orWhere('client_key', $rawKey)
+        $client = ApiClient::where('client_key', $rawKey)
             ->orWhere('uuid', $rawKey)
             ->first();
 
