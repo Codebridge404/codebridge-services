@@ -44,7 +44,6 @@ return new class extends Migration
 
         // Dialect check constraints for MySQL / MariaDB
         if (in_array(DB::getDriverName(), ['mysql', 'mariadb'])) {
-            DB::statement("ALTER TABLE `refresh_tokens` ADD CONSTRAINT `refresh_tokens_expiry_check` CHECK (`expires_at` > `created_at`)");
             DB::statement("ALTER TABLE `refresh_tokens` ADD CONSTRAINT `refresh_tokens_consumed_check` CHECK (`consumed_at` IS NULL OR `consumed_at` >= `created_at`)");
         }
     }

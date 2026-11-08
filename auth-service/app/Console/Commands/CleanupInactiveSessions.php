@@ -101,15 +101,22 @@ class CleanupInactiveSessions extends Command
             if (!$dryRun) {
                 // Delete descendant leaf tokens layer-by-layer
                 do {
-                    $deletedDescendants = DB::table('refresh_tokens')
+                    $parentIds = DB::table('refresh_tokens')
                         ->whereIn('session_id', $expiredSessionIds)
                         ->whereNotNull('parent_token_id')
-                        ->whereNotIn('id', function ($query) {
-                            $query->select('parent_token_id')
-                                ->from('refresh_tokens')
-                                ->whereNotNull('parent_token_id');
-                        })
-                        ->delete();
+                        ->pluck('parent_token_id')
+                        ->unique()
+                        ->toArray();
+
+                    $leafQuery = DB::table('refresh_tokens')
+                        ->whereIn('session_id', $expiredSessionIds)
+                        ->whereNotNull('parent_token_id');
+
+                    if (!empty($parentIds)) {
+                        $leafQuery->whereNotIn('id', $parentIds);
+                    }
+
+                    $deletedDescendants = $leafQuery->delete();
                     $totalPurgedTokens += $deletedDescendants;
                 } while ($deletedDescendants > 0);
 

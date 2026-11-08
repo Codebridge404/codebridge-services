@@ -46,7 +46,6 @@ return new class extends Migration
         // Dialect check constraints for MySQL / MariaDB
         if (in_array(DB::getDriverName(), ['mysql', 'mariadb'])) {
             DB::statement("ALTER TABLE `user_sessions` ADD CONSTRAINT `user_sessions_permissions_check` CHECK (JSON_TYPE(`permissions`) = 'ARRAY')");
-            DB::statement("ALTER TABLE `user_sessions` ADD CONSTRAINT `user_sessions_expiry_check` CHECK (`expires_at` > `created_at`)");
         }
     }
 

@@ -880,15 +880,18 @@ class AuthController extends Controller
 
         if ($userSession) {
             $userSession->revoke('remote_revocation');
+            $user->tokens()->where('name', 'jwt_session_' . $userSession->uuid)->delete();
             $deleted = true;
         }
 
-        // 2. Revoke Sanctum token
-        $session = $user->tokens()->where('id', $id)->first();
-        $tokenDeleted = $user->tokens()->where('id', $id)->delete();
-        if ($tokenDeleted) {
-            $deleted = true;
-            if (!$session?->session_expires_at) app(JwtService::class)->revokeAllUserTokens($user->id);
+        // 2. Revoke Sanctum token if numeric ID
+        if (is_numeric($id)) {
+            $session = $user->tokens()->where('id', (int) $id)->first();
+            $tokenDeleted = $user->tokens()->where('id', (int) $id)->delete();
+            if ($tokenDeleted) {
+                $deleted = true;
+                if (!$session?->session_expires_at) app(JwtService::class)->revokeAllUserTokens($user->id);
+            }
         }
 
         if (!$deleted) {
