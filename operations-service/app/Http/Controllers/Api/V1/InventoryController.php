@@ -385,7 +385,7 @@ class InventoryController extends Controller
     {
         $productId = $request->query('product_id');
         $search = $request->query('q') ?? $request->query('search');
-        $tenantId = $request->header('X-Tenant-Id') ?? $request->user()?->tenant_id;
+        $tenantId = $this->getTenantId($request, false);
 
         if (empty($productId) && empty($search)) {
             return response()->json([

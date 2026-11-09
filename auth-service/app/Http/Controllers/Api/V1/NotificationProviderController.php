@@ -8,8 +8,10 @@ use App\Http\Requests\NotificationProvider\TestNotificationProviderRequest;
 use App\Http\Requests\NotificationProvider\UpdateNotificationProviderRequest;
 use App\Http\Resources\NotificationProvider\NotificationProviderResource;
 use App\Models\NotificationProvider;
+use App\Services\UserAuthorizationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Multi-Tenant & Platform Notification Providers Controller.
@@ -29,7 +31,8 @@ class NotificationProviderController extends Controller
         $query = NotificationProvider::with(['tenant', 'creator', 'updater']);
 
         // Scope by tenant: non-super-admins can only see their tenant's providers
-        if ($user->role !== 'super_admin') {
+        if (!UserAuthorizationService::isSuperAdmin($user)) {
+            abort_unless($user->tenant_id, 403, 'An active workspace membership is required.');
             $query->where('tenant_id', $user->tenant_id);
         } else {
             // Super Admin can optionally filter by tenant_id
@@ -85,38 +88,47 @@ class NotificationProviderController extends Controller
     {
         $validated = $request->validated();
         $user = $request->user();
+        $isSuperAdmin = UserAuthorizationService::isSuperAdmin($user);
 
         // Enforce tenant boundary
-        $tenantId = $user->role === 'super_admin'
+        $tenantId = $isSuperAdmin
             ? ($validated['tenant_id'] ?? null)
             : $user->tenant_id;
 
-        $provider = NotificationProvider::create([
-            'tenant_id' => $tenantId,
-            'name' => $validated['name'],
-            'channel' => $validated['channel'],
-            'provider' => $validated['provider'],
-            'environment' => $validated['environment'],
-            'credentials' => $validated['credentials'],
-            'settings' => $validated['settings'] ?? [],
-            'is_enabled' => (bool) ($validated['is_enabled'] ?? false),
-            'config_version' => 1,
-            'created_by' => $user->id,
-            'updated_by' => $user->id,
-        ]);
+        if (!$isSuperAdmin) {
+            abort_unless($tenantId, 403, 'An active workspace membership is required.');
+        }
+
+        $provider = DB::transaction(function () use ($validated, $user, $tenantId) {
+            $provider = NotificationProvider::create([
+                'tenant_id' => $tenantId,
+                'name' => $validated['name'],
+                'channel' => $validated['channel'],
+                'provider' => $validated['provider'],
+                'environment' => $validated['environment'],
+                'credentials' => $validated['credentials'],
+                'settings' => $validated['settings'] ?? [],
+                'is_enabled' => (bool) ($validated['is_enabled'] ?? false),
+                'config_version' => 1,
+                'created_by' => $user->id,
+                'updated_by' => $user->id,
+            ]);
+
+            $this->recordAuditLog(
+                action: 'notification_provider.created',
+                module: 'notifications',
+                entityType: 'notification_provider',
+                entityId: (string) $provider->id,
+                details: "Configured notification provider '{$provider->name}' ({$provider->channel}/{$provider->provider})",
+                userId: $user->id,
+                userName: $user->name,
+                tenantId: $provider->tenant_id
+            );
+
+            return $provider;
+        });
 
         $provider->load(['tenant', 'creator', 'updater']);
-
-        $this->recordAuditLog(
-            action: 'notification_provider.created',
-            module: 'notifications',
-            entityType: 'notification_provider',
-            entityId: (string) $provider->id,
-            details: "Configured notification provider '{$provider->name}' ({$provider->channel}/{$provider->provider})",
-            userId: $user->id,
-            userName: $user->name,
-            tenantId: $provider->tenant_id
-        );
 
         return response()->json([
             'status' => 'success',
@@ -169,60 +181,65 @@ class NotificationProviderController extends Controller
         }
 
         $validated = $request->validated();
-        $configChanged = false;
+        $isSuperAdmin = UserAuthorizationService::isSuperAdmin($user);
 
-        if (array_key_exists('credentials', $validated)) {
-            $provider->credentials = $validated['credentials'];
-            $configChanged = true;
-        }
+        DB::transaction(function () use ($provider, $validated, $user, $isSuperAdmin) {
+            $configChanged = false;
 
-        if (array_key_exists('settings', $validated)) {
-            $provider->settings = $validated['settings'];
-            $configChanged = true;
-        }
+            if (array_key_exists('credentials', $validated)) {
+                $provider->credentials = $validated['credentials'];
+                $configChanged = true;
+            }
 
-        if ($configChanged) {
-            $provider->config_version = ($provider->config_version ?? 1) + 1;
-        }
+            if (array_key_exists('settings', $validated)) {
+                $provider->settings = $validated['settings'];
+                $configChanged = true;
+            }
 
-        if (array_key_exists('name', $validated)) {
-            $provider->name = $validated['name'];
-        }
+            if ($configChanged) {
+                $provider->config_version = ($provider->config_version ?? 1) + 1;
+            }
 
-        if (array_key_exists('channel', $validated)) {
-            $provider->channel = $validated['channel'];
-        }
+            if (array_key_exists('name', $validated)) {
+                $provider->name = $validated['name'];
+            }
 
-        if (array_key_exists('provider', $validated)) {
-            $provider->provider = $validated['provider'];
-        }
+            if (array_key_exists('channel', $validated)) {
+                $provider->channel = $validated['channel'];
+            }
 
-        if (array_key_exists('environment', $validated)) {
-            $provider->environment = $validated['environment'];
-        }
+            if (array_key_exists('provider', $validated)) {
+                $provider->provider = $validated['provider'];
+            }
 
-        if (array_key_exists('is_enabled', $validated)) {
-            $provider->is_enabled = (bool) $validated['is_enabled'];
-        }
+            if (array_key_exists('environment', $validated)) {
+                $provider->environment = $validated['environment'];
+            }
 
-        if ($user->role === 'super_admin' && array_key_exists('tenant_id', $validated)) {
-            $provider->tenant_id = $validated['tenant_id'];
-        }
+            if (array_key_exists('is_enabled', $validated)) {
+                $provider->is_enabled = (bool) $validated['is_enabled'];
+            }
 
-        $provider->updated_by = $user->id;
-        $provider->save();
+            if ($isSuperAdmin && array_key_exists('tenant_id', $validated)) {
+                $provider->tenant_id = $validated['tenant_id'];
+            }
+
+            $provider->updated_by = $user->id;
+            $provider->save();
+
+            $this->recordAuditLog(
+                action: 'notification_provider.updated',
+                module: 'notifications',
+                entityType: 'notification_provider',
+                entityId: (string) $provider->id,
+                details: "Updated notification provider '{$provider->name}' (version: {$provider->config_version})",
+                userId: $user->id,
+                userName: $user->name,
+                tenantId: $provider->tenant_id
+            );
+        });
+
         $provider->load(['tenant', 'creator', 'updater']);
-
-        $this->recordAuditLog(
-            action: 'notification_provider.updated',
-            module: 'notifications',
-            entityType: 'notification_provider',
-            entityId: (string) $provider->id,
-            details: "Updated notification provider '{$provider->name}' (version: {$provider->config_version})",
-            userId: $user->id,
-            userName: $user->name,
-            tenantId: $provider->tenant_id
-        );
 
         return response()->json([
             'status' => 'success',
@@ -399,7 +416,10 @@ class NotificationProviderController extends Controller
             }
         });
 
-        if ($user->role !== 'super_admin') {
+        if (!UserAuthorizationService::isSuperAdmin($user)) {
+            if (!$user->tenant_id) {
+                return null;
+            }
             $query->where('tenant_id', $user->tenant_id);
         }
 

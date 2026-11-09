@@ -17,6 +17,8 @@ use App\Http\Requests\Tenant\UpdateTenantRequest;
 use App\Http\Resources\Tenant\TenantResource;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
@@ -39,58 +41,57 @@ use Illuminate\Support\Str;
 class TenantController extends Controller
 {
     /**
-     * Public Self-Service Tenant Registration.
+     * Authenticated Self-Service Tenant Registration.
      * POST /api/v1/tenants/register
      */
     public function register(RegisterTenantRequest $request)
     {
+        $authUser = auth('sanctum')->user() ?? $request->user();
+        abort_unless($authUser, 401, 'Authentication required to register a tenant workspace.');
+
+        if (!$authUser->is_active) {
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ACCOUNT_DEACTIVATED',
+                'message' => 'User account is deactivated.',
+            ], 401);
+        }
+
+        if (method_exists($authUser, 'isLockedOut') && $authUser->isLockedOut()) {
+            return response()->json([
+                'status' => 'error',
+                'code' => 'ACCOUNT_LOCKED_OUT',
+                'message' => 'User account is temporarily locked out.',
+            ], 401);
+        }
+
+        $token = method_exists($authUser, 'currentAccessToken') ? $authUser->currentAccessToken() : null;
+        $abilities = is_array($token?->abilities ?? null) ? $token->abilities : [];
+        $isPos = $request->attributes->get('is_pos_session', false)
+            || (in_array('pos:access', $abilities, true) && !in_array('*', $abilities, true))
+            || ($token && method_exists($token, 'can') && $token->can('pos:access') && !$token->can('*'));
+        if ($isPos) {
+            abort(403, 'This endpoint requires a full account session.');
+        }
+
+        // Prevent authenticated user from provisioning on behalf of another user
+        foreach (['owner_user_id', 'owner_id', 'user_id'] as $ownerField) {
+            if ($request->filled($ownerField) && (string) $request->input($ownerField) !== (string) $authUser->id) {
+                abort(403, 'Authenticated user cannot provision a workspace for another account.');
+            }
+        }
+        if ($request->filled('owner_email') && strtolower(trim((string) $request->input('owner_email'))) !== strtolower(trim((string) $authUser->email))) {
+            abort(403, 'Authenticated user cannot provision a workspace for another account.');
+        }
 
         $clientTier = $request->client_tier ?? 'business_runner';
-        $slug = Str::slug($request->name);
-        $existing = DB::table('tenants')->where('slug', $slug)->first();
-        if ($existing) {
-            $slug .= '-' . Str::random(4);
-        }
-
-        // Store the user's authentic account email for this organization
-        $email = $request->email;
-        if (empty($email)) {
-            $email = $request->user()?->email ?? ($slug . '@codebridges.app');
-        }
+        $baseSlug = Str::slug($request->name) ?: ('tenant-' . Str::lower(Str::random(6)));
 
         $limits = match ($clientTier) {
             'enterprise_org'  => ['max_outlets' => 50, 'max_registers' => 200, 'max_users' => 500],
             'business_runner' => ['max_outlets' => 5,  'max_registers' => 15,  'max_users' => 50],
             default           => ['max_outlets' => 1,  'max_registers' => 2,   'max_users' => 5],
         };
-
-        $authUser = auth('sanctum')->user() ?? $request->user();
-        if (!$authUser && !empty($email)) {
-            $authUser = \App\Models\User::where('email', strtolower(trim($email)))->first();
-        }
-        $tenantUuid = (string) Str::uuid();
-
-        $id = DB::table('tenants')->insertGetId([
-            'uuid'          => $tenantUuid,
-            'owner_user_id' => $authUser?->id,
-            'name'          => $request->name,
-            'slug'          => $slug,
-            'company_code'  => 'CB-' . strtoupper(Str::random(6)),
-            'client_tier'   => $clientTier,
-            'status'        => 'trial',
-            'email'         => $email,
-            'phone'         => $request->phone,
-            'address'       => $request->address,
-            'country'       => $request->country ?? 'KH',
-            'currency'      => 'USD',
-            'enabled_modules' => json_encode([]),
-            'max_outlets'   => $limits['max_outlets'],
-            'max_registers' => $limits['max_registers'],
-            'max_users'     => $limits['max_users'],
-            'trial_ends_at' => now()->addDays(14),
-            'created_at'    => now(),
-            'updated_at'    => now(),
-        ]);
 
         $planMap = [
             'free_personal'   => ['plan' => 'Personal Solopreneur Free', 'price' => 0],
@@ -100,59 +101,81 @@ class TenantController extends Controller
 
         $planInfo = $planMap[$clientTier];
 
-        DB::table('tenant_subscriptions')->insert([
-            'tenant_id'     => $id,
-            'plan_name'     => $planInfo['plan'],
-            'billing_cycle' => 'monthly',
-            'price'         => $planInfo['price'],
-            'currency'      => 'USD',
-            'status'        => 'pending',
-            'starts_at'     => now(),
-            'expires_at'    => now()->addDays(14),
-            'notes'         => '14-day free trial period.',
-            'created_at'    => now(),
-            'updated_at'    => now(),
-        ]);
+        $result = DB::transaction(function () use ($request, $authUser, $clientTier, $baseSlug, $limits, $planInfo) {
+            $slug = $baseSlug;
+            while (DB::table('tenants')->where('slug', $slug)->exists()) {
+                $slug = $baseSlug . '-' . Str::lower(Str::random(4));
+            }
 
-        // 3. Automatically provision Default Primary Store Outlet & Register for this tenant
-        $outletCode = 'STR-' . strtoupper(Str::random(4));
-        $outletId = DB::table('outlets')->insertGetId([
-            'tenant_id'      => $id,
-            'name'           => $request->name . ' - Main Store',
-            'code'           => $outletCode,
-            'phone'          => $request->phone,
-            'address'        => $request->address,
-            'receipt_header' => 'Welcome to ' . $request->name,
-            'receipt_footer' => 'Thank you for shopping with us!',
-            'is_active'      => true,
-            'created_at'     => now(),
-            'updated_at'     => now(),
-        ]);
+            // Store organization contact email; owner is derived strictly from the authenticated user
+            $contactEmail = $request->email ?: ($authUser->email ?? ($slug . '@codebridges.app'));
+            $tenantUuid = (string) Str::uuid();
 
-        if (\Illuminate\Support\Facades\Schema::hasTable('registers')) {
-            DB::table('registers')->insert([
-                'outlet_id'  => $outletId,
-                'name'       => 'Register #1 (Main)',
-                'code'       => 'REG-01',
-                'is_active'  => true,
-                'created_at' => now(),
-                'updated_at' => now(),
+            $id = DB::table('tenants')->insertGetId([
+                'uuid'          => $tenantUuid,
+                'owner_user_id' => $authUser->id,
+                'name'          => $request->name,
+                'slug'          => $slug,
+                'company_code'  => 'CB-' . strtoupper(Str::random(6)),
+                'client_tier'   => $clientTier,
+                'status'        => 'trial',
+                'email'         => $contactEmail,
+                'phone'         => $request->phone,
+                'address'       => $request->address,
+                'country'       => $request->country ?? 'KH',
+                'currency'      => 'USD',
+                'enabled_modules' => json_encode([]),
+                'max_outlets'   => $limits['max_outlets'],
+                'max_registers' => $limits['max_registers'],
+                'max_users'     => $limits['max_users'],
+                'trial_ends_at' => now()->addDays(14),
+                'created_at'    => now(),
+                'updated_at'    => now(),
             ]);
-        }
 
-        // Link authenticated user to new tenant workspace and grant organization role directly
-        $authUser = auth('sanctum')->user() ?? $request->user();
-        if (!$authUser && !empty($email)) {
-            $authUser = \App\Models\User::where('email', strtolower(trim($email)))->first();
-        }
-        $updatedUser = null;
-        if ($authUser) {
-            $newRole = 'organization';
+            DB::table('tenant_subscriptions')->insert([
+                'tenant_id'     => $id,
+                'plan_name'     => $planInfo['plan'],
+                'billing_cycle' => 'monthly',
+                'price'         => $planInfo['price'],
+                'currency'      => 'USD',
+                'status'        => 'pending',
+                'starts_at'     => now(),
+                'expires_at'    => now()->addDays(14),
+                'notes'         => '14-day free trial period.',
+                'created_at'    => now(),
+                'updated_at'    => now(),
+            ]);
 
-            // 1. Ensure owner_user_id is set on tenant
-            DB::table('tenants')->where('id', $id)->update(['owner_user_id' => $authUser->id]);
+            // Automatically provision Default Primary Store Outlet & Register for this tenant
+            $outletCode = 'STR-' . strtoupper(Str::random(4));
+            $outletUuid = (string) Str::uuid();
+            $outletId = DB::table('outlets')->insertGetId([
+                'uuid'           => $outletUuid,
+                'tenant_id'      => $id,
+                'name'           => $request->name . ' - Main Store',
+                'code'           => $outletCode,
+                'phone'          => $request->phone,
+                'address'        => $request->address,
+                'receipt_header' => 'Welcome to ' . $request->name,
+                'receipt_footer' => 'Thank you for shopping with us!',
+                'is_active'      => true,
+                'created_at'     => now(),
+                'updated_at'     => now(),
+            ]);
 
-            // 2. Insert active membership in tenant_users (ERD Rule: Owner must be an active tenant member)
+            if (Schema::hasTable('registers')) {
+                DB::table('registers')->insert([
+                    'outlet_id'  => $outletId,
+                    'name'       => 'Register #1 (Main)',
+                    'code'       => 'REG-01',
+                    'is_active'  => true,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            // Insert active membership in tenant_users for authenticated owner
             if (Schema::hasTable('tenant_users')) {
                 DB::table('tenant_users')->updateOrInsert(
                     ['tenant_id' => $id, 'user_id' => $authUser->id],
@@ -163,9 +186,21 @@ class TenantController extends Controller
                         'updated_at' => now(),
                     ]
                 );
+
+                $tenantUserId = DB::table('tenant_users')
+                    ->where('tenant_id', $id)
+                    ->where('user_id', $authUser->id)
+                    ->value('id');
+
+                if ($tenantUserId && Schema::hasTable('tenant_user_outlets')) {
+                    DB::table('tenant_user_outlets')->updateOrInsert(
+                        ['tenant_user_id' => $tenantUserId, 'outlet_uuid' => $outletUuid],
+                        ['is_active' => true, 'created_at' => now(), 'updated_at' => now()]
+                    );
+                }
             }
 
-            // 3. Link user role in user_roles pivot (role: organization = admin)
+            // Link organization role scoped strictly to this tenant without touching roles in other tenants or super_admin
             if (Schema::hasTable('user_roles')) {
                 $roleId = DB::table('roles')->where('slug', 'organization')->value('id');
                 if (!$roleId) {
@@ -183,53 +218,83 @@ class TenantController extends Controller
                         'updated_at' => now(),
                     ]);
                 }
-                DB::table('user_roles')->where('user_id', $authUser->id)->update(['is_active' => false]);
+
                 DB::table('user_roles')->updateOrInsert(
-                    ['user_id' => $authUser->id, 'role_id' => $roleId],
-                    ['tenant_id' => $id, 'is_active' => true, 'updated_at' => now()]
+                    ['tenant_id' => $id, 'user_id' => $authUser->id, 'role_id' => $roleId],
+                    ['is_active' => true, 'created_at' => now(), 'updated_at' => now()]
                 );
             }
 
-            // 4. Update legacy users table if columns exist
+            // Update legacy users table columns only if they exist
             $legacyUpdates = ['updated_at' => now()];
-            if (Schema::hasColumn('users', 'tenant_id')) $legacyUpdates['tenant_id'] = $id;
-            if (Schema::hasColumn('users', 'outlet_id')) $legacyUpdates['outlet_id'] = $outletId;
-            if (Schema::hasColumn('users', 'role')) $legacyUpdates['role'] = $newRole;
-            DB::table('users')->where('id', $authUser->id)->update($legacyUpdates);
-
-            $userModel = \App\Models\User::find($authUser->id);
-            $newJwtToken = null;
-            $newRefreshToken = null;
-            if ($userModel) {
-                $userModel->refresh();
-                $updatedUser = (new \App\Http\Resources\User\UserResource($userModel))->toArray($request);
-
-                /** @var \App\Services\JwtService $jwtService */
-                $jwtService = app(\App\Services\JwtService::class);
-                $deviceName = $request->device_name ?? 'web_session';
-                $tokenResult = $userModel->createToken($deviceName, ['*'], now()->addSeconds($jwtService->getRefreshTtlSeconds()));
-                $jwtService->bindSession($tokenResult->accessToken);
-                $newJwtToken = $jwtService->generateTokenForUser($userModel, ['sid' => (string) $tokenResult->accessToken->id]);
-                $newRefreshToken = $jwtService->generateRefreshTokenForUser($userModel, ['sid' => (string) $tokenResult->accessToken->id]);
+            if (Schema::hasColumn('users', 'tenant_id')) {
+                $legacyUpdates['tenant_id'] = $id;
             }
-        }
+            if (Schema::hasColumn('users', 'outlet_id')) {
+                $legacyUpdates['outlet_id'] = $outletId;
+            }
+            if (Schema::hasColumn('users', 'role') && !\App\Services\UserAuthorizationService::isSuperAdmin($authUser)) {
+                $legacyUpdates['role'] = 'organization';
+            }
+            if (count($legacyUpdates) > 1) {
+                DB::table('users')->where('id', $authUser->id)->update($legacyUpdates);
+            }
+
+            $userModel = \App\Models\User::findOrFail($authUser->id);
+            $userModel->pendingTenantId = $id;
+            $userModel->pendingOutletUuid = $outletUuid;
+            $updatedUser = (new \App\Http\Resources\User\UserResource($userModel))->toArray($request);
+
+            /** @var \App\Services\JwtService $jwtService */
+            $jwtService = app(\App\Services\JwtService::class);
+            $deviceName = $request->device_name ?? 'web_session';
+            $tokenResult = $userModel->createToken($deviceName, ['*'], now()->addSeconds($jwtService->getRefreshTtlSeconds()));
+            $jwtService->bindSession($tokenResult->accessToken);
+            $newJwtToken = $jwtService->generateTokenForUser($userModel, ['sid' => (string) $tokenResult->accessToken->id]);
+            $newRefreshToken = $jwtService->generateRefreshTokenForUser($userModel, ['sid' => (string) $tokenResult->accessToken->id]);
+
+            $request->attributes->set('auth_user_id', $authUser->id);
+            $request->attributes->set('auth_tenant_id', $id);
+
+            $this->recordAuditLog(
+                action: 'tenant.registered',
+                module: 'tenant',
+                entityType: 'tenant',
+                entityId: (string) $id,
+                details: "Registered tenant workspace '{$request->name}' for user #{$authUser->id}",
+                userId: $authUser->id,
+                userName: $authUser->name,
+                tenantId: $id
+            );
+
+            $tenantRecord = DB::table('tenants')->where('id', $id)->first();
+
+            return [
+                'user' => $updatedUser,
+                'access_token' => $newJwtToken,
+                'refresh_token' => $newRefreshToken,
+                'expires_in' => $jwtService->getTtlSeconds(),
+                'data' => array_merge(
+                    (array) $tenantRecord,
+                    [
+                        'outlet_id' => $outletId,
+                        'outlet_uuid' => $outletUuid,
+                        'outlet_name' => $request->name . ' - Main Store',
+                        'outlet_code' => $outletCode,
+                    ]
+                ),
+            ];
+        });
 
         return response()->json([
             'success' => true,
             'message' => 'Tenant workspace registered successfully! Your 14-day trial has started.',
-            'user'         => $updatedUser,
-            'access_token' => $newJwtToken,
-            'refresh_token' => $newRefreshToken,
-            'token_type'   => 'Bearer',
-            'expires_in'   => app(\App\Services\JwtService::class)->getTtlSeconds(),
-            'data'    => array_merge(
-                (array) DB::table('tenants')->where('id', $id)->first(),
-                [
-                    'outlet_id'   => $outletId,
-                    'outlet_name' => $request->name . ' - Main Store',
-                    'outlet_code' => $outletCode,
-                ]
-            ),
+            'user' => $result['user'],
+            'access_token' => $result['access_token'],
+            'refresh_token' => $result['refresh_token'],
+            'token_type' => 'Bearer',
+            'expires_in' => $result['expires_in'],
+            'data' => $result['data'],
         ], 201);
     }
 
@@ -285,10 +350,10 @@ class TenantController extends Controller
             if (!$tenant->owner) {
                 $tenant->owner = DB::table('users as u')
                     ->join('tenant_users as tu', function ($j) use ($tenant) {
-                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $tenant->id);
+                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $tenant->id)->where('tu.status', 'active');
                     })
-                    ->leftJoin('user_roles as ur', function ($j) {
-                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                    ->leftJoin('user_roles as ur', function ($j) use ($tenant) {
+                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $tenant->id);
                     })
                     ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
                     ->where(function ($q) {
@@ -301,10 +366,10 @@ class TenantController extends Controller
             if (!$tenant->owner) {
                 $tenant->owner = DB::table('users as u')
                     ->join('tenant_users as tu', function ($j) use ($tenant) {
-                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $tenant->id);
+                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $tenant->id)->where('tu.status', 'active');
                     })
-                    ->leftJoin('user_roles as ur', function ($j) {
-                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                    ->leftJoin('user_roles as ur', function ($j) use ($tenant) {
+                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $tenant->id);
                     })
                     ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
                     ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
@@ -372,10 +437,10 @@ class TenantController extends Controller
         if (!$tenant->owner) {
             $tenant->owner = DB::table('users as u')
                 ->join('tenant_users as tu', function ($j) use ($id) {
-                    $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id);
+                    $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id)->where('tu.status', 'active');
                 })
-                ->leftJoin('user_roles as ur', function ($j) {
-                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                ->leftJoin('user_roles as ur', function ($j) use ($id) {
+                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $id);
                 })
                 ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
                 ->where(function ($q) {
@@ -385,10 +450,10 @@ class TenantController extends Controller
                 ->first()
                 ?? DB::table('users as u')
                     ->join('tenant_users as tu', function ($j) use ($id) {
-                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id);
+                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id)->where('tu.status', 'active');
                     })
-                    ->leftJoin('user_roles as ur', function ($j) {
-                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                    ->leftJoin('user_roles as ur', function ($j) use ($id) {
+                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $id);
                     })
                     ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
                     ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
@@ -439,10 +504,10 @@ class TenantController extends Controller
 
             $owner = DB::table('users as u')
                 ->join('tenant_users as tu', function ($j) use ($id) {
-                    $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id);
+                    $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id)->where('tu.status', 'active');
                 })
-                ->leftJoin('user_roles as ur', function ($j) {
-                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                ->leftJoin('user_roles as ur', function ($j) use ($id) {
+                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $id);
                 })
                 ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
                 ->where(function ($q) {
@@ -503,10 +568,10 @@ class TenantController extends Controller
 
                 if ($orgRoleId) {
                     DB::table('user_roles')->updateOrInsert(
-                        ['user_id' => $ownerId, 'role_id' => $orgRoleId],
+                        ['tenant_id' => $id, 'user_id' => $ownerId, 'role_id' => $orgRoleId],
                         [
-                            'tenant_id' => $id,
                             'is_active' => true,
+                            'created_at' => now(),
                             'updated_at' => now(),
                         ]
                     );
@@ -904,18 +969,15 @@ class TenantController extends Controller
     protected function resolveTenant(Request $request)
     {
         $user = $request->user();
-        if ($user && $user->role !== 'super_admin') {
+        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
             $tenantId = $user->tenant_id;
-            if (!$tenantId) {
-                // If user doesn't have tenant_id directly on their model, resolve from owned tenants or active tenant_users
-                $tenantId = DB::table('tenants')->where('owner_user_id', $user->id)->value('id')
-                    ?? DB::table('tenant_users')->where('user_id', $user->id)->where('status', 'active')->value('tenant_id')
-                    ?? DB::table('tenant_users')->where('user_id', $user->id)->value('tenant_id');
-            }
             if (!$tenantId && $request->filled('tenant_id')) {
                 $requestedId = (int) $request->tenant_id;
-                $isPermitted = DB::table('tenants')->where('id', $requestedId)->where('owner_user_id', $user->id)->exists()
-                    || DB::table('tenant_users')->where('tenant_id', $requestedId)->where('user_id', $user->id)->exists();
+                $isPermitted = DB::table('tenant_users')
+                    ->where('tenant_id', $requestedId)
+                    ->where('user_id', $user->id)
+                    ->where('status', 'active')
+                    ->exists();
                 if ($isPermitted) {
                     $tenantId = $requestedId;
                 }

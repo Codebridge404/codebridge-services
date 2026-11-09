@@ -70,13 +70,18 @@ class UserController extends Controller
                 $join->on('tuo.outlet_uuid', '=', 'o.uuid');
             })
             ->leftJoin('user_roles as ur', function ($join) {
-                $join->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                $join->on('u.id', '=', 'ur.user_id')
+                    ->where('ur.is_active', true)
+                    ->where(function ($q) {
+                        $q->whereColumn('ur.tenant_id', 'tu.tenant_id')
+                            ->orWhereNull('ur.tenant_id');
+                    });
             })
             ->leftJoin('roles as r', function ($join) {
                 $join->on('ur.role_id', '=', 'r.id');
             });
 
-        if ($currentUser && $currentUser->role !== 'super_admin' && ! empty($currentUser->tenant_id)) {
+        if ($currentUser && ! UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && ! empty($currentUser->tenant_id)) {
             $query->where('tu.tenant_id', $currentUser->tenant_id);
         }
         if (! empty($role) && $role !== 'all') {
@@ -154,14 +159,35 @@ class UserController extends Controller
 
     private function resolveRoleAndId($role, $roleId = null, $currentUser = null): array
     {
-        if ($currentUser?->role !== 'super_admin' && $role === 'super_admin') {
+        $isSuperAdmin = UserAuthorizationService::isSuperAdmin($currentUser);
+        $isPlatformSuper = UserAuthorizationService::hasPlatformSuperAdminRole($currentUser);
+
+        if (! $isSuperAdmin && $role === 'super_admin') {
             abort(403);
         }
-        $record = $roleId ? DB::table('roles')->where('id', $roleId)->first()
-            : DB::table('roles')->where('slug', $role)->first();
+
+        if ($roleId) {
+            $record = DB::table('roles')->where('id', $roleId)->first();
+        } else {
+            $tenantId = $currentUser?->tenant_id;
+            $record = DB::table('roles')
+                ->where('slug', $role)
+                ->where(function ($q) use ($tenantId) {
+                    $q->where(function ($sysQ) {
+                        $sysQ->whereNull('tenant_id')->whereNull('company_id');
+                    });
+                    if ($tenantId) {
+                        $q->orWhere('tenant_id', $tenantId)->orWhere('company_id', $tenantId);
+                    }
+                })
+                ->first();
+        }
+
         abort_unless($record, 422, 'The selected role does not exist.');
-        if ($currentUser?->role !== 'super_admin') {
+        if (! $isSuperAdmin) {
             abort_if($record->slug === 'super_admin', 403, 'Only a super administrator may assign this role.');
+        }
+        if (! $isPlatformSuper) {
             $tenant = $record->tenant_id ?? $record->company_id ?? null;
             abort_if($tenant && (int) $tenant !== $currentUser?->tenant_id, 403);
             if (! TenantAccess::isAdmin($currentUser)) {
@@ -174,7 +200,7 @@ class UserController extends Controller
 
     private function checkQuota($currentUser, $tenantId): ?string
     {
-        if ($currentUser && $currentUser->role !== 'super_admin' && $tenantId) {
+        if ($currentUser && ! UserAuthorizationService::isSuperAdmin($currentUser, $tenantId ? (int) $tenantId : null) && $tenantId) {
             $tenant = DB::table('tenants')->where('id', $tenantId)->first();
             $maxUsers = $tenant->max_users ?? 50;
             $count = DB::table('tenant_users')->where('tenant_id', $tenantId)->where('status', 'active')->count();
@@ -240,26 +266,28 @@ class UserController extends Controller
         }
 
         $userModel = User::find($targetUser->id);
-        $targetRole = $userModel?->role ?? ($targetUser->role ?? null);
+        $isTargetPlatformSuper = $userModel ? UserAuthorizationService::hasPlatformSuperAdminRole($userModel) : (($targetUser->role ?? null) === 'super_admin');
         $isUserActive = (bool) ($targetUser->is_active ?? $userModel?->is_active);
 
         $currentUser = $request->user();
+        $isCallerPlatformSuper = UserAuthorizationService::hasPlatformSuperAdminRole($currentUser);
+        $isCallerSuper = UserAuthorizationService::isSuperAdmin($currentUser);
 
         // Protect platform super_admin accounts from tenant hijacking
-        if ($targetRole === 'super_admin' && $currentUser?->role !== 'super_admin') {
+        if ($isTargetPlatformSuper && ! $isCallerSuper) {
             return response()->json(['status' => 'error', 'message' => 'Unauthorized to attach platform administrator accounts.'], 403);
         }
 
         // Global account reactivation is reserved for platform administrators
-        if (! $isUserActive && $currentUser?->role !== 'super_admin') {
+        if (! $isUserActive && ! $isCallerPlatformSuper) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Cannot attach a suspended user. Global account reactivation requires platform administrator approval.',
             ], 403);
         }
 
-        $tenantId = ($currentUser?->role === 'super_admin' && ! empty($validated['tenant_id']))
-            ? $validated['tenant_id']
+        $tenantId = ($isCallerPlatformSuper && ! empty($validated['tenant_id']))
+            ? (int) $validated['tenant_id']
             : $currentUser?->tenant_id;
 
         $isMember = DB::table('tenant_users')
@@ -277,7 +305,7 @@ class UserController extends Controller
         $outletUuid = null;
         if (! empty($validated['outlet_id'])) {
             $outlet = Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
-            abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
+            abort_unless($outlet && ($isCallerPlatformSuper || (int) $outlet->tenant_id === (int) $tenantId), 403);
             $outletUuid = $outlet->uuid;
         }
 
@@ -323,10 +351,10 @@ class UserController extends Controller
 
         if ($subRoleId) {
             DB::table('user_roles')->updateOrInsert(
-                ['user_id' => $targetUser->id, 'role_id' => $subRoleId],
+                ['tenant_id' => $tenantId, 'user_id' => $targetUser->id, 'role_id' => $subRoleId],
                 [
-                    'tenant_id' => $tenantId,
                     'is_active' => true,
+                    'created_at' => now(),
                     'updated_at' => now(),
                 ]
             );
@@ -344,8 +372,9 @@ class UserController extends Controller
         $validated = $request->validated();
 
         $currentUser = $request->user();
-        $tenantId = ($currentUser?->role === 'super_admin' && ! empty($validated['tenant_id']))
-            ? $validated['tenant_id']
+        $isPlatformSuper = UserAuthorizationService::hasPlatformSuperAdminRole($currentUser);
+        $tenantId = ($isPlatformSuper && ! empty($validated['tenant_id']))
+            ? (int) $validated['tenant_id']
             : $currentUser?->tenant_id;
 
         if ($quotaErr = $this->checkQuota($currentUser, $tenantId)) {
@@ -357,7 +386,7 @@ class UserController extends Controller
         $outletUuid = null;
         if (! empty($validated['outlet_id'])) {
             $outlet = Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
-            abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
+            abort_unless($outlet && ($isPlatformSuper || (int) $outlet->tenant_id === (int) $tenantId), 403);
             $outletUuid = $outlet->uuid;
         }
 
@@ -415,9 +444,8 @@ class UserController extends Controller
 
         if ($subRoleId) {
             DB::table('user_roles')->updateOrInsert(
-                ['user_id' => $userId, 'role_id' => $subRoleId],
+                ['tenant_id' => $tenantId, 'user_id' => $userId, 'role_id' => $subRoleId],
                 [
-                    'tenant_id' => $tenantId,
                     'is_active' => true,
                     'created_at' => now(),
                     'updated_at' => now(),
@@ -469,18 +497,23 @@ class UserController extends Controller
             ], 422);
         }
 
+        $isPlatformSuper = UserAuthorizationService::hasPlatformSuperAdminRole($currentUser);
+
         // Prevent self-demotion if sole administrator
-        if ($currentUser && (int) $currentUser->id === (int) $id && ! empty($validated['role']) && $currentUser->role !== 'super_admin') {
+        if ($currentUser && (int) $currentUser->id === (int) $id && ! empty($validated['role']) && ! UserAuthorizationService::isSuperAdmin($currentUser)) {
             $newRole = $validated['role'];
-            if (! in_array($newRole, ['organization', 'admin', 'owner'], true)) {
+            if (! in_array($newRole, UserAuthorizationService::ADMIN_ROLE_SLUGS, true)) {
                 $otherAdminsCount = DB::table('tenant_users as tu')
-                    ->join('user_roles as ur', 'tu.user_id', '=', 'ur.user_id')
+                    ->join('user_roles as ur', function ($join) {
+                        $join->on('tu.user_id', '=', 'ur.user_id')
+                            ->on('tu.tenant_id', '=', 'ur.tenant_id');
+                    })
                     ->join('roles as r', 'ur.role_id', '=', 'r.id')
                     ->where('tu.tenant_id', $currentUser->tenant_id)
                     ->where('tu.user_id', '!=', $currentUser->id)
                     ->where('tu.status', 'active')
                     ->where('ur.is_active', true)
-                    ->whereIn('r.slug', ['organization', 'admin', 'owner'])
+                    ->whereIn('r.slug', UserAuthorizationService::ADMIN_ROLE_SLUGS)
                     ->count();
 
                 if ($otherAdminsCount === 0) {
@@ -492,8 +525,10 @@ class UserController extends Controller
             }
         }
 
-        $effectiveTenantId = $targetUser->tenant_id ?? $currentUser?->tenant_id;
-        if (array_key_exists('tenant_id', $validated) && $currentUser?->role === 'super_admin') {
+        $effectiveTenantId = $isPlatformSuper
+            ? ($validated['tenant_id'] ?? $targetUser->tenant_id ?? $currentUser?->tenant_id)
+            : $currentUser?->tenant_id;
+        if (array_key_exists('tenant_id', $validated) && $isPlatformSuper) {
             $effectiveTenantId = $validated['tenant_id'];
             if ($effectiveTenantId) {
                 DB::table('tenant_users')->updateOrInsert(
@@ -527,14 +562,14 @@ class UserController extends Controller
 
         if (! empty($validated['outlet_id'])) {
             $outlet = Outlet::where(fn ($q) => $q->where('id', $validated['outlet_id'])->orWhere('uuid', $validated['outlet_id']))->first();
-            abort_unless($outlet && ($currentUser?->role === 'super_admin' || (int) $outlet->tenant_id === $currentUser?->tenant_id), 403);
+            abort_unless($outlet && ($isPlatformSuper || (int) $outlet->tenant_id === (int) $effectiveTenantId), 403);
             $outletUuid = $outlet->uuid;
             if ($outletUuid && $effectiveTenantId) {
                 $tuId = DB::table('tenant_users')->where('tenant_id', $effectiveTenantId)->where('user_id', $id)->value('id');
                 if ($tuId) {
                     DB::table('tenant_user_outlets')->updateOrInsert(
                         ['tenant_user_id' => $tuId, 'outlet_uuid' => $outletUuid],
-                        ['is_primary' => true, 'is_active' => true, 'created_at' => now(), 'updated_at' => now()]
+                        ['is_active' => true, 'created_at' => now(), 'updated_at' => now()]
                     );
                 }
             }
@@ -543,12 +578,19 @@ class UserController extends Controller
         if (! empty($validated['role']) || ! empty($validated['role_id'])) {
             [$pRole, $rId] = $this->resolveRoleAndId($validated['role'] ?? 'employee', $validated['role_id'] ?? null, $currentUser);
             if ($rId) {
-                DB::table('user_roles')->where('user_id', $id)->update(['is_active' => false]);
+                $deactivateRoleQuery = DB::table('user_roles')->where('user_id', $id);
+                if ($effectiveTenantId === null) {
+                    $deactivateRoleQuery->whereNull('tenant_id');
+                } else {
+                    $deactivateRoleQuery->where('tenant_id', $effectiveTenantId);
+                }
+                $deactivateRoleQuery->update(['is_active' => false]);
+
                 DB::table('user_roles')->updateOrInsert(
-                    ['user_id' => $id, 'role_id' => $rId],
+                    ['tenant_id' => $effectiveTenantId, 'user_id' => $id, 'role_id' => $rId],
                     [
-                        'tenant_id' => $effectiveTenantId,
                         'is_active' => true,
+                        'created_at' => now(),
                         'updated_at' => now(),
                     ]
                 );
@@ -597,18 +639,29 @@ class UserController extends Controller
         $currentUser = $request->user();
 
         $supervisor = null;
-        $pins = UserPosPin::where('tenant_id', $currentUser->tenant_id)
-            ->where('is_active', true)->with('user')->get();
+        $callerTenantId = $currentUser?->tenant_id ? (int) $currentUser->tenant_id : null;
+        $pins = $callerTenantId
+            ? UserPosPin::where('tenant_id', $callerTenantId)
+                ->where('is_active', true)->with('user')->get()
+            : collect();
         foreach ($pins as $candidate) {
             $staff = $candidate->user;
             if (! $staff || ! $staff->is_active || $staff->isLockedOut() || $candidate->isLockedOut()) {
                 continue;
             }
-            if (! $staff->activeRoles()->whereIn('slug', ['super_admin', 'organization', 'admin', 'outlet_manager', 'supervisor'])->exists()) {
+            $scopedStaff = clone $staff;
+            $scopedStaff->pendingTenantId = $callerTenantId;
+            $scopedStaff->unsetRelation('roles');
+            $context = UserAuthorizationService::resolveAuthorizationContext($scopedStaff, null, $callerTenantId, true);
+            if (empty($context['authorized'])) {
+                continue;
+            }
+            $allowedSupervisorRoles = array_merge(['super_admin', 'outlet_manager', 'supervisor', 'store_manager'], UserAuthorizationService::ADMIN_ROLE_SLUGS);
+            if (empty(array_intersect($context['roles'] ?? [], $allowedSupervisorRoles))) {
                 continue;
             }
             if (PinService::matches($validated['pin_code'], $candidate->pin_hash)) {
-                $supervisor = $staff;
+                $supervisor = $scopedStaff;
                 break;
             }
         }
@@ -640,30 +693,56 @@ class UserController extends Controller
             ], 422);
         }
 
-        if ($currentUser && $currentUser->role !== 'super_admin') {
-            if ($targetUser->tenant_id != $currentUser->tenant_id || $targetUser->role === 'super_admin') {
+        $isPlatformSuper = UserAuthorizationService::hasPlatformSuperAdminRole($currentUser);
+        if ($currentUser && ! $isPlatformSuper) {
+            if (UserAuthorizationService::hasPlatformSuperAdminRole($targetUser)) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to user account.'], 403);
+            }
+
+            $callerTenantId = $currentUser->tenant_id;
+            $targetMemberInTenant = $callerTenantId && DB::table('tenant_users')
+                ->where('tenant_id', $callerTenantId)
+                ->where('user_id', $id)
+                ->exists();
+
+            if (! $targetMemberInTenant && (int) $targetUser->tenant_id !== (int) $callerTenantId) {
+                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to user account.'], 403);
+            }
+
+            $scopedTarget = clone $targetUser;
+            if ($callerTenantId) {
+                $scopedTarget->pendingTenantId = (int) $callerTenantId;
+                $scopedTarget->unsetRelation('roles');
+            }
+            $targetScopedRole = $scopedTarget->role;
+
+            if ($targetScopedRole === 'super_admin') {
                 return response()->json(['status' => 'error', 'message' => 'Unauthorized access to user account.'], 403);
             }
 
             // Prevent deleting the workspace owner
-            if ($targetUser->role === 'owner') {
+            if ($targetScopedRole === 'owner') {
                 return response()->json(['status' => 'error', 'message' => 'Cannot delete the primary workspace owner account.'], 422);
             }
 
             // Prevent deleting the sole remaining administrator
-            $isTargetAdmin = in_array($targetUser->role, ['organization', 'admin', 'owner'], true) ||
+            $isTargetAdmin = in_array($targetScopedRole, ['organization', 'admin', 'owner'], true) ||
                 DB::table('user_roles as ur')
                     ->join('roles as r', 'ur.role_id', '=', 'r.id')
                     ->where('ur.user_id', $id)
+                    ->where('ur.tenant_id', $callerTenantId)
                     ->where('ur.is_active', true)
                     ->whereIn('r.slug', ['organization', 'admin', 'owner'])
                     ->exists();
 
             if ($isTargetAdmin) {
                 $activeAdminsCount = DB::table('tenant_users as tu')
-                    ->join('user_roles as ur', 'tu.user_id', '=', 'ur.user_id')
+                    ->join('user_roles as ur', function ($join) {
+                        $join->on('tu.user_id', '=', 'ur.user_id')
+                            ->on('tu.tenant_id', '=', 'ur.tenant_id');
+                    })
                     ->join('roles as r', 'ur.role_id', '=', 'r.id')
-                    ->where('tu.tenant_id', $currentUser->tenant_id)
+                    ->where('tu.tenant_id', $callerTenantId)
                     ->where('tu.status', 'active')
                     ->where('ur.is_active', true)
                     ->whereIn('r.slug', ['organization', 'admin', 'owner'])
@@ -680,7 +759,7 @@ class UserController extends Controller
 
         DB::beginTransaction();
         try {
-            if ($currentUser && $currentUser->role !== 'super_admin') {
+            if ($currentUser && ! $isPlatformSuper) {
                 // Tenant Admin scope: Detach user from this specific tenant workspace
                 $tenantId = $currentUser->tenant_id;
                 $tu = DB::table('tenant_users')->where('tenant_id', $tenantId)->where('user_id', $id)->first();
@@ -693,7 +772,7 @@ class UserController extends Controller
 
                 // If user no longer belongs to any tenant and isn't super admin, clean up completely
                 $hasOtherTenants = DB::table('tenant_users')->where('user_id', $id)->exists();
-                if (! $hasOtherTenants && $targetUser->role !== 'super_admin') {
+                if (! $hasOtherTenants && ! UserAuthorizationService::hasPlatformSuperAdminRole($targetUser)) {
                     $targetUser->tokens()->delete();
                     try {
                         app(JwtService::class)->revokeAllUserTokens($id);

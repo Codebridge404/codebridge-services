@@ -13,6 +13,7 @@ use App\Http\Resources\User\UserResource;
 use App\Models\Role;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\UserAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -27,6 +28,24 @@ use Illuminate\Support\Facades\DB;
  */
 class AdminController extends Controller
 {
+    protected function resolveCallerContext(Request $request): ?array
+    {
+        $currentUser = $request->user();
+        if (!$currentUser) {
+            return null;
+        }
+
+        $claimTenantId = $request->attributes->get('jwt_tenant_id');
+        $context = UserAuthorizationService::resolveAuthorizationContext(
+            $currentUser,
+            null,
+            is_numeric($claimTenantId) ? (int) $claimTenantId : null,
+            false
+        );
+
+        return !empty($context['authorized']) ? $context : null;
+    }
+
     /**
      * Unified Role-Based Admin Dashboard Metrics.
      * GET /api/v1/admin/dashboard
@@ -34,19 +53,27 @@ class AdminController extends Controller
     public function dashboard(Request $request)
     {
         $currentUser = $request->user();
-        $role = $currentUser?->role ?? 'user';
-        $tenantId = $currentUser?->tenant_id;
+        $context = $this->resolveCallerContext($request);
+        if (!$context) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Forbidden. Your role does not have administrative dashboard privileges.',
+            ], 403);
+        }
 
-        if ($role === 'super_admin') {
+        $role = $context['role'] ?? 'user';
+        $tenantId = $context['tenant_id'] ?? $currentUser?->tenant_id;
+
+        if (!empty($context['is_platform_super_admin'])) {
             return $this->superAdminDashboard();
         }
 
-        if (in_array($role, ['organization', 'admin', 'administrator', 'owner'])) {
+        if (!empty($context['is_super_admin']) || in_array($role, UserAuthorizationService::ADMIN_ROLE_SLUGS, true)) {
             return $this->organizationAdminDashboard($currentUser, $tenantId);
         }
 
-        if (in_array($role, ['outlet_manager', 'supervisor'])) {
-            return $this->outletManagerDashboard($currentUser, $tenantId);
+        if (in_array($role, ['outlet_manager', 'supervisor', 'store_manager'], true)) {
+            return $this->outletManagerDashboard($currentUser, $tenantId, $context);
         }
 
         return response()->json([
@@ -190,14 +217,23 @@ class AdminController extends Controller
     /**
      * Outlet Manager Dashboard: Store-scoped register, staff, and shift metrics.
      */
-    protected function outletManagerDashboard($currentUser, $tenantId)
+    protected function outletManagerDashboard($currentUser, $tenantId, ?array $context = null)
     {
-        $outletUuid = $currentUser->outlet_uuid;
+        $outletUuid = $context['outlet_uuid'] ?? $currentUser->outlet_uuid;
+        $outletId = $context['outlet_id'] ?? $currentUser->outlet_id;
         $outlet = null;
         if ($outletUuid) {
-            $outlet = DB::table('outlets')->where('uuid', $outletUuid)->first();
-        } elseif ($currentUser->outlet_id) {
-            $outlet = DB::table('outlets')->where('id', $currentUser->outlet_id)->first();
+            $outletQuery = DB::table('outlets')->where('uuid', $outletUuid);
+            if ($tenantId) {
+                $outletQuery->where('tenant_id', $tenantId);
+            }
+            $outlet = $outletQuery->first();
+        } elseif ($outletId) {
+            $outletQuery = DB::table('outlets')->where('id', $outletId);
+            if ($tenantId) {
+                $outletQuery->where('tenant_id', $tenantId);
+            }
+            $outlet = $outletQuery->first();
         }
 
         $outletStaffCount = 0;
@@ -215,7 +251,7 @@ class AdminController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'role' => $currentUser->role,
+            'role' => $context['role'] ?? $currentUser->role,
             'scope' => 'outlet',
             'data' => [
                 'outlet' => $outlet ? [
@@ -238,8 +274,14 @@ class AdminController extends Controller
     public function users(Request $request)
     {
         $currentUser = $request->user();
-        $callerRole = $currentUser?->role ?? 'user';
-        $callerTenantId = $currentUser?->tenant_id;
+        $context = $this->resolveCallerContext($request);
+        if (!$context) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized.'], 403);
+        }
+
+        $callerRole = $context['role'] ?? 'user';
+        $callerTenantId = $context['tenant_id'] ?? $currentUser?->tenant_id;
+        $isPlatformSuperAdmin = !empty($context['is_platform_super_admin']);
 
         $query = DB::table('users as u')
             ->leftJoin('tenant_users as tu', 'u.id', '=', 'tu.user_id')
@@ -247,24 +289,30 @@ class AdminController extends Controller
             ->leftJoin('tenant_user_outlets as tuo', 'tu.id', '=', 'tuo.tenant_user_id')
             ->leftJoin('outlets as o', 'tuo.outlet_uuid', '=', 'o.uuid')
             ->leftJoin('user_roles as ur', function ($j) {
-                $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                $j->on('u.id', '=', 'ur.user_id')
+                    ->where('ur.is_active', true)
+                    ->where(function ($q) {
+                        $q->whereColumn('ur.tenant_id', 'tu.tenant_id')
+                            ->orWhereNull('ur.tenant_id');
+                    });
             })
             ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id');
 
         // Enforce Role Hierarchy Scoping
-        if ($callerRole === 'super_admin') {
+        if ($isPlatformSuperAdmin) {
             // Super Admin can optionally filter by tenant_id
             if ($request->filled('tenant_id')) {
                 $query->where('tu.tenant_id', $request->tenant_id);
             }
-        } elseif (in_array($callerRole, ['organization', 'admin', 'administrator', 'owner'])) {
+        } elseif (!empty($context['is_super_admin']) || in_array($callerRole, UserAuthorizationService::ADMIN_ROLE_SLUGS, true)) {
             // Organization Admin strictly limited to their own workspace
             $query->where('tu.tenant_id', $callerTenantId);
-        } elseif (in_array($callerRole, ['outlet_manager', 'supervisor'])) {
+        } elseif (in_array($callerRole, ['outlet_manager', 'supervisor', 'store_manager'], true)) {
             // Store Manager strictly limited to their own outlet
             $query->where('tu.tenant_id', $callerTenantId);
-            if (!empty($currentUser->outlet_uuid)) {
-                $query->where('tuo.outlet_uuid', $currentUser->outlet_uuid);
+            $callerOutletUuid = $context['outlet_uuid'] ?? $currentUser?->outlet_uuid;
+            if (!empty($callerOutletUuid)) {
+                $query->where('tuo.outlet_uuid', $callerOutletUuid);
             }
         } else {
             return response()->json(['status' => 'error', 'message' => 'Unauthorized.'], 403);
@@ -311,24 +359,33 @@ class AdminController extends Controller
     public function roles(Request $request)
     {
         $currentUser = $request->user();
-        $callerRole = $currentUser?->role ?? 'user';
-        $callerTenantId = $currentUser?->tenant_id;
+        $context = $this->resolveCallerContext($request);
+        if (!$context) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized.'], 403);
+        }
+
+        $callerRole = $context['role'] ?? 'user';
+        $callerTenantId = $context['tenant_id'] ?? $currentUser?->tenant_id;
+        $isPlatformSuperAdmin = !empty($context['is_platform_super_admin']);
 
         $query = DB::table('roles');
 
-        if ($callerRole === 'super_admin') {
+        if ($isPlatformSuperAdmin) {
             // Super Admin can view and assign all system and tenant roles
             $roles = $query->orderBy('is_system', 'desc')->orderBy('name', 'asc')->get();
-        } elseif (in_array($callerRole, ['organization', 'admin', 'administrator', 'owner'])) {
+        } elseif (!empty($context['is_super_admin']) || in_array($callerRole, UserAuthorizationService::ADMIN_ROLE_SLUGS, true)) {
             // Organization Admin can assign staff roles within their tenant, excluding super_admin
             $query->where('slug', '!=', 'super_admin');
             if ($callerTenantId) {
                 $query->where(function ($q) use ($callerTenantId) {
-                    $q->whereNull('company_id')->orWhere('company_id', $callerTenantId);
+                    $q->where(function ($sysQ) {
+                        $sysQ->whereNull('tenant_id')->whereNull('company_id');
+                    })->orWhere('tenant_id', $callerTenantId)
+                      ->orWhere('company_id', $callerTenantId);
                 });
             }
             $roles = $query->orderBy('name', 'asc')->get();
-        } elseif (in_array($callerRole, ['outlet_manager', 'supervisor'])) {
+        } elseif (in_array($callerRole, ['outlet_manager', 'supervisor', 'store_manager'], true)) {
             // Store Manager can only assign store staff roles
             $allowedStaff = ['cashier', 'supervisor', 'employee', 'user'];
             $roles = $query->whereIn('slug', $allowedStaff)->orderBy('name', 'asc')->get();
@@ -350,9 +407,16 @@ class AdminController extends Controller
     public function tenants(Request $request)
     {
         $currentUser = $request->user();
-        $callerRole = $currentUser?->role ?? 'user';
+        $context = $this->resolveCallerContext($request);
+        if (!$context) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden.'], 403);
+        }
 
-        if ($callerRole === 'super_admin') {
+        $callerRole = $context['role'] ?? 'user';
+        $callerTenantId = $context['tenant_id'] ?? $currentUser?->tenant_id;
+        $isPlatformSuperAdmin = !empty($context['is_platform_super_admin']);
+
+        if ($isPlatformSuperAdmin) {
             $query = DB::table('tenants')->orderBy('created_at', 'desc');
             if ($request->filled('status')) {
                 $query->where('status', $request->status);
@@ -369,8 +433,8 @@ class AdminController extends Controller
             ]);
         }
 
-        if (in_array($callerRole, ['organization', 'admin', 'administrator', 'owner'])) {
-            $tenant = DB::table('tenants')->where('id', $currentUser->tenant_id)->first();
+        if (!empty($context['is_super_admin']) || in_array($callerRole, UserAuthorizationService::ADMIN_ROLE_SLUGS, true)) {
+            $tenant = $callerTenantId ? DB::table('tenants')->where('id', $callerTenantId)->first() : null;
             return response()->json([
                 'status' => 'success',
                 'data' => $tenant ? [$tenant] : [],
@@ -387,20 +451,26 @@ class AdminController extends Controller
     public function auditLogs(Request $request)
     {
         $currentUser = $request->user();
-        $callerRole = $currentUser?->role ?? 'user';
-        $callerTenantId = $currentUser?->tenant_id;
+        $context = $this->resolveCallerContext($request);
+        if (!$context) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden.'], 403);
+        }
+
+        $callerRole = $context['role'] ?? 'user';
+        $callerTenantId = $context['tenant_id'] ?? $currentUser?->tenant_id;
+        $isPlatformSuperAdmin = !empty($context['is_platform_super_admin']);
 
         $query = DB::table('audit_logs as al')
             ->leftJoin('users as u', 'al.user_id', '=', 'u.id')
             ->leftJoin('tenants as t', 'al.tenant_id', '=', 't.id');
 
-        if ($callerRole === 'super_admin') {
+        if ($isPlatformSuperAdmin) {
             if ($request->filled('tenant_id')) {
                 $query->where('al.tenant_id', $request->tenant_id);
             }
-        } elseif (in_array($callerRole, ['organization', 'admin', 'administrator', 'owner'])) {
+        } elseif (!empty($context['is_super_admin']) || in_array($callerRole, UserAuthorizationService::ADMIN_ROLE_SLUGS, true)) {
             $query->where('al.tenant_id', $callerTenantId);
-        } elseif (in_array($callerRole, ['outlet_manager', 'supervisor'])) {
+        } elseif (in_array($callerRole, ['outlet_manager', 'supervisor', 'store_manager'], true)) {
             $query->where('al.tenant_id', $callerTenantId)->where('al.user_id', $currentUser->id);
         } else {
             return response()->json(['status' => 'error', 'message' => 'Forbidden.'], 403);

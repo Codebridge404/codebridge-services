@@ -35,4 +35,11 @@ return [
         ],
     ],
 
+    'auth' => [
+        'url' => rtrim((string) env('AUTH_SERVICE_URL', 'http://auth-service:8000/api/v1'), '/'),
+        'timeout' => (int) env('AUTH_SERVICE_TIMEOUT', 5),
+        'app_key' => env('AUTH_SERVICE_APP_KEY', env('APP_CLIENT_KEY')),
+        'verify_via_http' => filter_var(env('AUTH_VERIFY_VIA_HTTP', false), FILTER_VALIDATE_BOOLEAN),
+    ],
+
 ];

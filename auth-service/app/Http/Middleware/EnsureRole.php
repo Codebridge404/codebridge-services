@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\UserAuthorizationService;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -59,20 +60,47 @@ class EnsureRole
             ], 401);
         }
 
-        // Super Admin bypasses all checks
-        if ($user->role === 'super_admin') {
-            return $next($request);
-        }
+        // Resolve verified tenant-scoped role context behind the Auth authorization contract
+        $claimTenantId = $request->attributes->get('jwt_tenant_id');
+        if (!empty($user->exists) && !empty($user->id)) {
+            $context = UserAuthorizationService::resolveAuthorizationContext(
+                $user,
+                null,
+                is_numeric($claimTenantId) ? (int) $claimTenantId : null,
+                false
+            );
 
-        // Check primary role and any assigned roles from user_roles pivot
-        $userRoles = array_filter([$user->role]);
-        if (method_exists($user, 'roles')) {
-            try {
-                $assignedSlugs = $user->activeRoles()->pluck('slug')->toArray();
-                $userRoles = array_merge($userRoles, $assignedSlugs);
-            } catch (\Throwable $e) {
-                // Database or relation fallback
+            if (!$context['authorized']) {
+                $status = (int) ($context['status'] ?? 403);
+                if ($status === 401) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => $context['code'] ?? 'UNAUTHENTICATED',
+                        'message' => $context['message'] ?? 'Unauthenticated.',
+                    ], 401);
+                }
+
+                return response()->json([
+                    'status' => 'error',
+                    'code' => $context['code'] ?? 'TENANT_ACCESS_DENIED',
+                    'message' => $context['message'] ?? 'Forbidden.',
+                ], $status);
             }
+
+            if (!empty($context['is_super_admin'])) {
+                return $next($request);
+            }
+
+            $userRoles = $context['roles'] ?? [];
+            $primaryRole = $context['role'] ?? 'user';
+            $resolvedTenantId = $context['tenant_id'] ?? $user->tenant_id;
+        } else {
+            if (UserAuthorizationService::isSuperAdmin($user)) {
+                return $next($request);
+            }
+            $userRoles = array_filter([$user->role]);
+            $primaryRole = $user->role ?? 'user';
+            $resolvedTenantId = $user->tenant_id;
         }
 
         // Normalize direct linguistic synonyms (administrator <=> admin) without merging distinct privilege tiers (owner, organization, admin)
@@ -91,15 +119,16 @@ class EnsureRole
                     \App\Models\SecurityEvent::record(
                         eventType: 'role_access_denied',
                         ruleCode: 'SEC_ROLE_DENIED',
-                        summary: "Forbidden: user role [{$user->role}] lacks required roles [" . implode(', ', $roles) . "]",
+                        summary: "Forbidden: user role [{$primaryRole}] lacks required roles [" . implode(', ', $roles) . "]",
                         severity: 'medium',
                         outcome: 'blocked',
                         confidence: 'confirmed',
                         userId: $user->id,
-                        tenantId: $user->tenant_id,
+                        tenantId: $resolvedTenantId,
                         request: $request,
                         metadata: [
-                            'user_role' => $user->role,
+                            'user_role' => $primaryRole,
+                            'scoped_roles' => array_values($effectiveRoles),
                             'required_roles' => $roles,
                         ],
                         statusCode: 403
@@ -109,7 +138,7 @@ class EnsureRole
 
             return response()->json([
                 'status' => 'error',
-                'message' => 'Forbidden. Your role [' . $user->role . '] does not have access to this resource.',
+                'message' => 'Forbidden. Your role [' . $primaryRole . '] does not have access to this resource.',
             ], 403);
         }
 

@@ -44,7 +44,7 @@ class StoreCreditInvoiceController extends Controller
     protected function getTenantId(Request $request): ?string
     {
         $user = $request->user();
-        if ($user && $user->role !== 'super_admin') {
+        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
             return $user->tenant_id ? (string) $user->tenant_id : null;
         }
 
@@ -124,7 +124,7 @@ class StoreCreditInvoiceController extends Controller
     public function showInvoice(Request $request, $invoiceId)
     {
         $query = StoreCreditInvoice::with(['customer', 'cashier'])->where(fn ($q) => $q->where('id', $invoiceId)->orWhere('invoice_number', $invoiceId));
-        if ($request->user()->role !== 'super_admin') $query->where('tenant_id', $request->user()->tenant_id);
+        if (!\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($request->user())) $query->where('tenant_id', $request->user()->tenant_id);
         $invoice = $query->first();
 
         if (!$invoice) {

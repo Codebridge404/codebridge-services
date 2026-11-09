@@ -34,19 +34,94 @@ class AuthServiceClient
 {
     protected string $baseUrl;
     protected int $timeout;
+    protected ?string $appKey;
 
     public function __construct()
     {
-        $this->baseUrl = rtrim(env('AUTH_SERVICE_URL', 'http://auth-service:8000/api/v1'), '/');
-        $this->timeout = (int) env('AUTH_SERVICE_TIMEOUT', 5);
+        $configuredUrl = config('services.auth.url', env('AUTH_SERVICE_URL', 'http://auth-service:8000/api/v1'));
+        $this->baseUrl = rtrim((string) $configuredUrl, '/');
+        $this->timeout = (int) config('services.auth.timeout', env('AUTH_SERVICE_TIMEOUT', 5));
+        $configuredAppKey = config('services.auth.app_key');
+        $this->appKey = is_string($configuredAppKey) && trim($configuredAppKey) !== ''
+            ? trim($configuredAppKey)
+            : null;
     }
 
     /**
-     * Verify a Bearer token with Auth Service (Stateless JWT first, then HTTP fallback)
+     * Resolve and verify the caller's tenant-scoped authorization context from Auth Service.
+     * Consumes the Auth-owned GET /api/v1/auth/authorize-context contract.
+     *
+     * @return array<string, mixed>|null Returns null only on transport/server outage so callers can fail closed or degrade safely.
      */
-    public function verifyToken(string $token): ?array
+    public function authorizeContext(
+        string $token,
+        ?string $requestedTenantId = null,
+        ?string $appKey = null
+    ): ?array {
+        try {
+            $request = Http::timeout($this->timeout)
+                ->withToken($token)
+                ->acceptJson();
+
+            $effectiveAppKey = ($appKey !== null && trim($appKey) !== '')
+                ? trim($appKey)
+                : $this->appKey;
+
+            if ($effectiveAppKey !== null) {
+                $request = $request->withHeaders([
+                    'X-App-Key' => $effectiveAppKey,
+                ]);
+            }
+
+            if ($requestedTenantId !== null && trim($requestedTenantId) !== '') {
+                $request = $request->withHeaders([
+                    'X-Tenant-Id' => trim($requestedTenantId),
+                ]);
+            }
+
+            $response = $request->get("{$this->baseUrl}/auth/authorize-context");
+
+            if ($response->successful() && $response->json('authorized') === true) {
+                $data = $response->json('data');
+                return [
+                    'authorized' => true,
+                    'status' => 200,
+                    'data' => is_array($data) ? $data : [],
+                ];
+            }
+
+            if ($response->clientError()) {
+                return [
+                    'authorized' => false,
+                    'status' => $response->status(),
+                    'code' => (string) ($response->json('code') ?? ($response->status() === 401 ? 'UNAUTHENTICATED' : 'TENANT_ACCESS_DENIED')),
+                    'message' => (string) ($response->json('message') ?? 'Authorization denied by Auth service.'),
+                ];
+            }
+
+            Log::warning("AuthServiceClient: authorize-context returned server status {$response->status()}");
+            return null;
+        } catch (\Throwable $e) {
+            Log::warning("AuthServiceClient: authorize-context request failed: {$e->getMessage()}");
+            return null;
+        }
+    }
+
+    /**
+     * Verify a Bearer token with Auth Service (Auth authorize-context contract + cryptographic JWT fallback).
+     */
+    public function verifyToken(string $token, ?string $requestedTenantId = null, ?string $appKey = null): ?array
     {
-        // 1. Fast-path: Stateless cryptographic JWT verification
+        if (config('services.auth.verify_via_http', false)) {
+            $contract = $this->authorizeContext($token, $requestedTenantId, $appKey);
+            if ($contract === null || empty($contract['authorized'])) {
+                return null;
+            }
+
+            return $contract['data'] ?? null;
+        }
+
+        // Fast-path: Stateless cryptographic JWT verification
         if (substr_count($token, '.') === 2) {
             $claims = app(JwtService::class)->verify($token);
             if ($claims && !empty($claims['sub'])) {
@@ -62,29 +137,24 @@ class AuthServiceClient
             }
         }
 
-        // 2. Fallback: HTTP call to Auth Service /me
-        try {
-            $response = Http::timeout($this->timeout)
-                ->withToken($token)
-                ->acceptJson()
-                ->get("{$this->baseUrl}/me");
-
-            if ($response->successful()) {
-                return $response->json('data') ?? $response->json();
-            }
-
-            return null;
-        } catch (\Throwable $e) {
-            Log::warning("AuthServiceClient: failed to verify token: {$e->getMessage()}");
-            return null;
+        // Fallback: HTTP call to Auth Service authorize-context
+        $contract = $this->authorizeContext($token, $requestedTenantId, $appKey);
+        if ($contract !== null && !empty($contract['authorized'])) {
+            return $contract['data'] ?? null;
         }
+
+        return null;
     }
 
     /**
      * Verify a 4-digit supervisor PIN for high-risk POS operations
      */
-    public function verifySupervisorPin(string $pin, ?string $token = null): bool
-    {
+    public function verifySupervisorPin(
+        string $pin,
+        ?string $token = null,
+        ?string $appKey = null,
+        ?string $tenantId = null
+    ): bool {
         try {
             $request = Http::timeout($this->timeout)->acceptJson();
 
@@ -92,8 +162,19 @@ class AuthServiceClient
                 $request = $request->withToken($token);
             }
 
+            $effectiveAppKey = ($appKey !== null && trim($appKey) !== '')
+                ? trim($appKey)
+                : $this->appKey;
+            if ($effectiveAppKey !== null) {
+                $request = $request->withHeaders(['X-App-Key' => $effectiveAppKey]);
+            }
+
+            if ($tenantId !== null && trim($tenantId) !== '') {
+                $request = $request->withHeaders(['X-Tenant-Id' => trim($tenantId)]);
+            }
+
             $response = $request->post("{$this->baseUrl}/auth/verify-pin", [
-                'pin' => $pin,
+                'pin_code' => $pin,
             ]);
 
             return $response->successful() && ($response->json('status') === 'success' || $response->json('valid') === true);

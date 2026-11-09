@@ -8,7 +8,10 @@ use App\Models\NotificationProvider;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
 
@@ -349,5 +352,176 @@ class NotificationProviderSecurityTest extends TestCase
                 $this->assertStringNotContainsString($plainApiKey, $reqDataStr, "Plaintext api_key leaked in api_request_logs!");
             }
         }
+    }
+
+    public function test_api_creation_and_update_return_sanitized_error_and_leak_no_secrets_when_encryption_fails(): void
+    {
+        $tenant = $this->createTenant('FailClosed API Org');
+        $admin = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenant->id,
+        ]);
+
+        // Seed one valid encrypted provider before simulating failure
+        $existing = NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Original Safe Provider',
+            'channel' => 'email',
+            'provider' => 'smtp',
+            'environment' => 'production',
+            'credentials' => ['password' => 'InitialSecret123!'],
+            'config_version' => 1,
+            'created_by' => $admin->id,
+        ]);
+
+        $originalCiphertext = DB::table('notification_providers')->where('id', $existing->id)->value('credentials');
+        $countBefore = DB::table('notification_providers')->count();
+
+        Log::spy();
+
+        Sanctum::actingAs($admin, ['*']);
+
+        $realEncrypter = Crypt::getFacadeRoot();
+        Crypt::shouldReceive('encryptString')
+            ->twice()
+            ->andThrow(new \RuntimeException('KMS secret leak probe: SuperSensitiveBotToken_999'));
+
+        try {
+            // 1. Creation failure -> HTTP 500 CREDENTIAL_ENCRYPTION_ERROR, 0 new rows, no secret leakage
+            $createRes = $this->postJson('/api/v1/notification-providers', [
+                'name' => 'Failed Telegram Provider',
+                'channel' => 'telegram',
+                'provider' => 'telegram_bot',
+                'environment' => 'production',
+                'credentials' => ['bot_token' => 'SuperSensitiveBotToken_999'],
+            ]);
+
+            $createRes->assertStatus(500)
+                ->assertJson([
+                    'status' => 'error',
+                    'code' => 'CREDENTIAL_ENCRYPTION_ERROR',
+                ]);
+            $this->assertStringNotContainsString('SuperSensitiveBotToken_999', $createRes->getContent());
+            $this->assertSame($countBefore, DB::table('notification_providers')->count());
+
+            // 2. Update failure -> HTTP 500 CREDENTIAL_ENCRYPTION_ERROR, original ciphertext & metadata preserved
+            $updateRes = $this->putJson("/api/v1/notification-providers/{$existing->id}", [
+                'name' => 'Mutated Name Must Roll Back',
+                'credentials' => ['password' => 'NewSecretShouldNotBeSaved_777'],
+            ]);
+
+            $updateRes->assertStatus(500)
+                ->assertJson([
+                    'status' => 'error',
+                    'code' => 'CREDENTIAL_ENCRYPTION_ERROR',
+                ]);
+            $this->assertStringNotContainsString('NewSecretShouldNotBeSaved_777', $updateRes->getContent());
+        } finally {
+            Crypt::swap($realEncrypter);
+        }
+
+        $afterExisting = DB::table('notification_providers')->where('id', $existing->id)->first();
+        $this->assertSame($originalCiphertext, $afterExisting->credentials);
+        $this->assertSame('Original Safe Provider', $afterExisting->name);
+        $this->assertSame(1, (int) $afterExisting->config_version);
+
+        Log::shouldHaveReceived('error')->withArgs(function (string $message, array $context = []) {
+            $serialized = json_encode([$message, $context]);
+            return !str_contains($serialized, 'SuperSensitiveBotToken_999')
+                && !str_contains($serialized, 'NewSecretShouldNotBeSaved_777');
+        })->atLeast()->twice();
+    }
+
+    public function test_api_read_rejects_legacy_plaintext_credentials_until_migrated_by_maintenance_command(): void
+    {
+        $tenant = $this->createTenant('Legacy Migration Org');
+        $admin = User::factory()->inWorkspace()->create([
+            'role' => 'admin',
+            'tenant_id' => $tenant->id,
+        ]);
+
+        $legacySecret = 'LegacyTelegramSecret_2025';
+        $id = DB::table('notification_providers')->insertGetId([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'name' => 'Legacy Plaintext Telegram',
+            'channel' => 'telegram',
+            'provider' => 'telegram_bot',
+            'environment' => 'production',
+            'credentials' => json_encode(['bot_token' => $legacySecret]),
+            'settings' => '[]',
+            'is_enabled' => true,
+            'config_version' => 1,
+            'created_by' => $admin->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        Sanctum::actingAs($admin, ['*']);
+
+        // Fail closed when reading unencrypted row via API
+        $showRes = $this->getJson("/api/v1/notification-providers/{$id}");
+        $showRes->assertStatus(500)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'CREDENTIAL_ENCRYPTION_ERROR',
+            ]);
+        $this->assertStringNotContainsString($legacySecret, $showRes->getContent());
+
+        // Dry-run does not mutate row
+        $this->artisan('notification-providers:encrypt-credentials', ['--dry-run' => true])
+            ->assertExitCode(0);
+        $this->assertStringContainsString(
+            $legacySecret,
+            (string) DB::table('notification_providers')->where('id', $id)->value('credentials')
+        );
+
+        // Actual migration encrypts legacy plaintext row cleanly
+        $this->artisan('notification-providers:encrypt-credentials')
+            ->assertExitCode(0);
+
+        $migratedCiphertext = (string) DB::table('notification_providers')->where('id', $id)->value('credentials');
+        $this->assertStringNotContainsString($legacySecret, $migratedCiphertext);
+
+        // API read succeeds cleanly with masked secret after migration
+        $afterRes = $this->getJson("/api/v1/notification-providers/{$id}")
+            ->assertStatus(200)
+            ->assertJsonPath('data.config_version', 2);
+        $this->assertSame('Leg••••025', $afterRes->json('data.masked_credentials.bot_token'));
+
+        // Re-running maintenance command is idempotent and skips already-encrypted records
+        $this->artisan('notification-providers:encrypt-credentials')
+            ->expectsOutputToContain('already_encrypted=1')
+            ->assertExitCode(0);
+
+        // Unreadable Laravel encrypted envelopes fail command without double-encrypting
+        $unreadableEnvelope = base64_encode(json_encode([
+            'iv' => base64_encode(str_repeat('a', 16)),
+            'value' => base64_encode('corrupted_payload'),
+            'mac' => str_repeat('0', 64),
+        ]));
+        $badId = DB::table('notification_providers')->insertGetId([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => $tenant->id,
+            'name' => 'Corrupted Cipher Provider',
+            'channel' => 'webhook',
+            'provider' => 'custom_webhook',
+            'environment' => 'production',
+            'credentials' => $unreadableEnvelope,
+            'settings' => '[]',
+            'is_enabled' => false,
+            'config_version' => 1,
+            'created_by' => $admin->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->artisan('notification-providers:encrypt-credentials')
+            ->expectsOutputToContain('failed=1')
+            ->assertExitCode(1);
+        $this->assertSame(
+            $unreadableEnvelope,
+            (string) DB::table('notification_providers')->where('id', $badId)->value('credentials')
+        );
     }
 }

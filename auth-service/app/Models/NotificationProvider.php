@@ -2,10 +2,12 @@
 
 namespace App\Models;
 
+use App\Exceptions\CredentialEncryptionException;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class NotificationProvider extends Model
@@ -78,41 +80,73 @@ class NotificationProvider extends Model
     }
 
     /**
-     * Mutator: Encrypt credentials before persisting.
+     * Mutator: Encrypt credentials before persisting (fail-closed, no plaintext fallback).
      */
     public function setCredentialsAttribute($value): void
     {
+        if (is_null($value) || $value === '' || (is_array($value) && empty($value)) || (is_object($value) && empty((array) $value))) {
+            throw new CredentialEncryptionException('Provider credentials must not be empty.');
+        }
+
         if (is_array($value) || is_object($value)) {
-            $payload = json_encode($value);
+            try {
+                $payload = json_encode($value, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
+            } catch (\Throwable $e) {
+                Log::error('Notification provider credential serialization failed.', [
+                    'provider_id' => $this->attributes['id'] ?? null,
+                    'exception' => $e::class,
+                ]);
+                throw new CredentialEncryptionException('Failed to serialize provider credentials for encryption.');
+            }
         } else {
             $payload = (string) $value;
+            if (trim($payload) === '') {
+                throw new CredentialEncryptionException('Provider credentials must not be empty.');
+            }
         }
 
         try {
-            $this->attributes['credentials'] = Crypt::encryptString($payload);
-        } catch (\Throwable) {
-            $this->attributes['credentials'] = $payload;
+            $encrypted = Crypt::encryptString($payload);
+        } catch (\Throwable $e) {
+            Log::error('Notification provider credential encryption failed.', [
+                'provider_id' => $this->attributes['id'] ?? null,
+                'exception' => $e::class,
+            ]);
+            throw new CredentialEncryptionException('Failed to encrypt provider credentials securely.');
         }
+
+        if (!is_string($encrypted) || $encrypted === '') {
+            throw new CredentialEncryptionException('Failed to encrypt provider credentials securely.');
+        }
+
+        $this->attributes['credentials'] = $encrypted;
     }
 
     /**
-     * Decrypt and return credentials array.
+     * Decrypt and return credentials array (fail-closed, rejects plaintext or corrupted ciphertext).
      */
     public function getDecryptedCredentials(): array
     {
-        if (empty($this->attributes['credentials'])) {
-            return [];
+        $raw = $this->attributes['credentials'] ?? null;
+        if (!is_string($raw) || trim($raw) === '') {
+            throw new CredentialEncryptionException('Provider credentials are missing or empty.');
         }
 
-        $raw = $this->attributes['credentials'];
         try {
             $decrypted = Crypt::decryptString($raw);
-            $decoded = json_decode($decrypted, true);
-            return is_array($decoded) ? $decoded : ['raw' => $decrypted];
-        } catch (\Throwable) {
-            $decoded = json_decode($raw, true);
-            return is_array($decoded) ? $decoded : ['raw' => $raw];
+        } catch (\Throwable $e) {
+            Log::error('Notification provider credential decryption failed.', [
+                'provider_id' => $this->attributes['id'] ?? null,
+                'exception' => $e::class,
+            ]);
+            throw new CredentialEncryptionException('Failed to decrypt provider credentials securely.');
         }
+
+        $decoded = json_decode($decrypted, true);
+
+        return (json_last_error() === JSON_ERROR_NONE && is_array($decoded))
+            ? $decoded
+            : ['raw' => $decrypted];
     }
 
     /**

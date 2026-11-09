@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Exception;
@@ -30,6 +32,7 @@ use Exception;
  */
 class RefundController extends Controller
 {
+    use ResolvesTenantContext;
     /**
      * Get return eligibility quote for a sale
      */
@@ -159,8 +162,20 @@ class RefundController extends Controller
         }
 
         // Supervisor PIN Verification (if user is cashier or policy exceeded)
-        $userRole = $user->role ?? 'cashier';
-        if (!in_array($userRole, ['supervisor', 'outlet_manager', 'admin', 'super_admin']) || ($daysElapsed > 7 && !empty($validated['supervisor_pin']))) {
+        $jwtClaims = $request->attributes->get('jwt_claims');
+        $authContext = TenantAuthorizationService::resolveAuthorizationContext(
+            $request,
+            $user,
+            is_array($jwtClaims) ? $jwtClaims : null,
+            false
+        );
+        $scopedRoles = is_array($authContext['roles'] ?? null) ? $authContext['roles'] : [$user->role ?? 'cashier'];
+        $hasSupervisorPriv = TenantAuthorizationService::roleGrantsAccess(
+            $scopedRoles,
+            ['supervisor', 'outlet_manager', 'admin', 'super_admin'],
+            (bool) ($authContext['is_super_admin'] ?? false)
+        );
+        if (!$hasSupervisorPriv || ($daysElapsed > 7 && !empty($validated['supervisor_pin']))) {
             if (empty($validated['supervisor_pin'])) {
                 return response()->json([
                     'status' => 'error',
@@ -168,12 +183,14 @@ class RefundController extends Controller
                 ], 403);
             }
 
-            $supervisor = DB::table('users')
-                ->where('pin_code', $validated['supervisor_pin'])
-                ->whereIn('role', ['supervisor', 'outlet_manager', 'admin', 'super_admin'])
-                ->first();
+            $tenantId = $authContext['tenant_id'] ?? $this->getTenantId($request, false);
+            $validSupervisor = TenantAuthorizationService::verifySupervisorPin(
+                $request,
+                (string) $validated['supervisor_pin'],
+                $tenantId
+            );
 
-            if (!$supervisor) {
+            if (!$validSupervisor) {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'Invalid Supervisor PIN or insufficient privileges.',

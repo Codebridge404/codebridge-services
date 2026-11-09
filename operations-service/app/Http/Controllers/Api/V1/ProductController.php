@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
 use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -241,7 +242,7 @@ class ProductController extends Controller
 
         $tenantId = $this->getTenantId($request, false);
         if ($tenantId && $tenantId !== 'all' && $product->tenant_id !== null) {
-            if ((string) $product->tenant_id !== (string) $tenantId && $request->user()?->role !== 'super_admin') {
+            if ((string) $product->tenant_id !== (string) $tenantId && !TenantAuthorizationService::hasPlatformSuperAdminRole($request->user())) {
                 return response()->json(['status' => 'error', 'message' => 'Product not found'], 404);
             }
         }

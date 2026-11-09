@@ -2,10 +2,13 @@
 
 namespace Tests\Unit;
 
+use App\Exceptions\CredentialEncryptionException;
 use App\Models\NotificationProvider;
 use App\Models\Tenant;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\TestCase;
 
@@ -140,6 +143,106 @@ class NotificationProviderModelTest extends TestCase
         $this->assertEquals($tenant->id, $provider->tenant->id);
         $this->assertEquals($creator->id, $provider->creator->id);
         $this->assertEquals($updater->id, $provider->updater->id);
+    }
+
+    public function test_creation_fails_closed_and_writes_no_row_when_encryption_throws(): void
+    {
+        $tenant = Tenant::create(['name' => 'Enc Fail Tenant', 'slug' => 'enc-fail-create', 'status' => 'active']);
+        $beforeCount = DB::table('notification_providers')->count();
+
+        $realEncrypter = Crypt::getFacadeRoot();
+        Crypt::shouldReceive('encryptString')
+            ->once()
+            ->andThrow(new \RuntimeException('KMS key unavailable'));
+
+        try {
+            NotificationProvider::create([
+                'tenant_id' => $tenant->id,
+                'name' => 'Unencrypted Telegram Bot',
+                'channel' => 'telegram',
+                'provider' => 'telegram_bot',
+                'environment' => 'production',
+                'credentials' => ['bot_token' => '999999:PLAINTEXT_MUST_NOT_BE_SAVED'],
+            ]);
+            $this->fail('Expected CredentialEncryptionException was not thrown.');
+        } catch (CredentialEncryptionException $e) {
+            $this->assertStringNotContainsString('PLAINTEXT_MUST_NOT_BE_SAVED', $e->getMessage());
+        } finally {
+            Crypt::swap($realEncrypter);
+        }
+
+        $this->assertSame($beforeCount, DB::table('notification_providers')->count());
+        $this->assertDatabaseMissing('notification_providers', ['name' => 'Unencrypted Telegram Bot']);
+    }
+
+    public function test_update_fails_closed_and_preserves_previous_ciphertext_when_encryption_throws(): void
+    {
+        $tenant = Tenant::create(['name' => 'Enc Fail Update Tenant', 'slug' => 'enc-fail-update', 'status' => 'active']);
+        $originalCredentials = ['password' => 'OriginalSmtpSecret2026!', 'host' => 'smtp.original.test'];
+
+        $provider = NotificationProvider::create([
+            'tenant_id' => $tenant->id,
+            'name' => 'Resilient SMTP',
+            'channel' => 'email',
+            'provider' => 'smtp',
+            'environment' => 'production',
+            'credentials' => $originalCredentials,
+            'config_version' => 1,
+        ]);
+
+        $originalCiphertext = DB::table('notification_providers')
+            ->where('id', $provider->id)
+            ->value('credentials');
+
+        $realEncrypter = Crypt::getFacadeRoot();
+        Crypt::shouldReceive('encryptString')
+            ->once()
+            ->andThrow(new \RuntimeException('Cipher unavailable during rotation'));
+
+        try {
+            $provider->update([
+                'name' => 'Should Not Persist',
+                'credentials' => ['password' => 'RotatedPlaintextSecret!'],
+            ]);
+            $this->fail('Expected CredentialEncryptionException was not thrown.');
+        } catch (CredentialEncryptionException $e) {
+            $this->assertStringNotContainsString('RotatedPlaintextSecret', $e->getMessage());
+        } finally {
+            Crypt::swap($realEncrypter);
+        }
+
+        $rowAfter = DB::table('notification_providers')->where('id', $provider->id)->first();
+        $this->assertSame($originalCiphertext, $rowAfter->credentials);
+        $this->assertSame('Resilient SMTP', $rowAfter->name);
+        $this->assertStringNotContainsString('RotatedPlaintextSecret', (string) $rowAfter->credentials);
+        $this->assertSame($originalCredentials, $provider->fresh()->getDecryptedCredentials());
+    }
+
+    public function test_reader_rejects_legacy_plaintext_credentials_without_fallback(): void
+    {
+        $id = DB::table('notification_providers')->insertGetId([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => null,
+            'name' => 'Legacy Plaintext Provider',
+            'channel' => 'telegram',
+            'provider' => 'telegram_bot',
+            'environment' => 'production',
+            'credentials' => json_encode(['bot_token' => 'legacy_plaintext_token_123']),
+            'settings' => '[]',
+            'is_enabled' => false,
+            'config_version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $provider = NotificationProvider::findOrFail($id);
+
+        try {
+            $provider->getDecryptedCredentials();
+            $this->fail('Expected CredentialEncryptionException when reading legacy plaintext credentials.');
+        } catch (CredentialEncryptionException $e) {
+            $this->assertStringNotContainsString('legacy_plaintext_token_123', $e->getMessage());
+        }
     }
 }
 

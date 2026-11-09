@@ -2,6 +2,7 @@
 
 namespace App\Traits;
 
+use App\Services\TenantAuthorizationService;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
@@ -9,7 +10,7 @@ use Symfony\Component\HttpKernel\Exception\HttpException;
  * Trait ResolvesTenantContext
  *
  * Enforces strict multi-tenant boundary checks across Operations microservice.
- * Prevents client-side X-Tenant-Id spoofing, cross-tenant data leaks, and unauthorized mutations.
+ * Delegates authenticated resolution through TenantAuthorizationService (Auth contract).
  */
 trait ResolvesTenantContext
 {
@@ -25,60 +26,52 @@ trait ResolvesTenantContext
     protected function getTenantId(Request $request, bool $requireTenant = false): ?string
     {
         $user = $request->user();
-        $headerTenantId = $request->header('X-Tenant-Id');
-        $queryTenantId = $request->query('tenant_id');
-        $clientSuppliedTenantId = $headerTenantId ?: ($queryTenantId ?: null);
 
-        // 1. Authenticated User Flow
+        // 1. Authenticated User Flow (delegated to centralized Auth authorization contract)
         if ($user) {
-            $userTenantId = $user->tenant_id ? (string) $user->tenant_id : null;
+            $jwtClaims = $request->attributes->get('jwt_claims');
+            $context = TenantAuthorizationService::resolveAuthorizationContext(
+                $request,
+                $user,
+                is_array($jwtClaims) ? $jwtClaims : null,
+                $requireTenant
+            );
 
-            // Super Admin may freely manage across tenants or query specific tenant
-            if (($user->role ?? null) === 'super_admin') {
-                if ($clientSuppliedTenantId === 'all') {
-                    return 'all';
-                }
-                return $clientSuppliedTenantId ?: $userTenantId;
+            if (empty($context['authorized'])) {
+                abort((int) ($context['status'] ?? 403), (string) ($context['message'] ?? 'Access denied.'));
             }
 
-            // If user has an explicit tenant_id assigned
-            if (!empty($userTenantId)) {
-                // Client cannot pass 'all' unless super_admin
-                if ($clientSuppliedTenantId === 'all') {
-                    abort(403, 'Access denied: Cross-tenant queries are restricted to super administrators.');
-                }
-                // If a client explicitly passes an X-Tenant-Id or query tenant_id, it MUST match their own
-                if (!empty($clientSuppliedTenantId) && (string) $clientSuppliedTenantId !== $userTenantId) {
-                    abort(403, 'Access denied: You cannot operate on or query another organization.');
-                }
-                return $userTenantId;
+            if (($context['requested_tenant_scope'] ?? null) === 'all') {
+                return 'all';
             }
 
-            // If user has no explicit tenant_id assigned (e.g. unassigned staff or test harness)
-            if (!empty($clientSuppliedTenantId)) {
-                if ($clientSuppliedTenantId === 'all') {
-                    abort(403, 'Access denied: Cross-tenant queries are restricted to super administrators.');
-                }
-                return (string) $clientSuppliedTenantId;
-            }
-
-            return $requireTenant ? '1' : null;
+            return isset($context['tenant_id']) && $context['tenant_id'] !== null
+                ? (string) $context['tenant_id']
+                : null;
         }
 
         // 2. Unauthenticated Public Flow (e.g. public storefronts viewing published catalog)
-        if ($clientSuppliedTenantId === 'all') {
+        $parsed = TenantAuthorizationService::parseRequestedTenant($request);
+        if ($parsed['conflict']) {
+            abort(403, 'Conflicting tenant context supplied between header and query parameter.');
+        }
+        if ($parsed['scope'] === 'all') {
             abort(403, 'Unauthenticated cross-tenant queries are forbidden.');
         }
+        if ($parsed['invalid']) {
+            abort(403, 'Invalid tenant identifier supplied.');
+        }
 
-        if ($requireTenant && empty($clientSuppliedTenantId)) {
+        if ($requireTenant && empty($parsed['scope'])) {
             abort(401, 'Authentication or valid organization identifier is required.');
         }
 
-        return $clientSuppliedTenantId ? (string) $clientSuppliedTenantId : null;
+        return $parsed['scope'];
     }
 
     /**
      * Verify that an existing resource belongs to the current tenant context.
+     * Only platform-wide super_admin may operate across tenant boundaries.
      *
      * @param string|int|null $resourceTenantId
      * @param Request $request
@@ -88,8 +81,22 @@ trait ResolvesTenantContext
     protected function authorizeTenantResource($resourceTenantId, Request $request, string $resourceName = 'Resource'): void
     {
         $user = $request->user();
-        if (($user->role ?? null) === 'super_admin') {
-            return;
+        if ($user) {
+            $jwtClaims = $request->attributes->get('jwt_claims');
+            $context = TenantAuthorizationService::resolveAuthorizationContext(
+                $request,
+                $user,
+                is_array($jwtClaims) ? $jwtClaims : null,
+                false
+            );
+
+            if (empty($context['authorized'])) {
+                abort((int) ($context['status'] ?? 403), (string) ($context['message'] ?? 'Access denied.'));
+            }
+
+            if (!empty($context['is_platform_super_admin'])) {
+                return;
+            }
         }
 
         $tenantId = $this->getTenantId($request, true);
@@ -99,7 +106,7 @@ trait ResolvesTenantContext
             abort(403, "Unauthorized: {$resourceName} belongs to another organization.");
         }
 
-        // Global/template records cannot be modified or deleted by non-superadmins
+        // Global/template records cannot be modified or deleted by non-platform-superadmins
         if ($resourceTenantId === null) {
             abort(403, "Unauthorized: Global template {$resourceName}s cannot be modified directly.");
         }

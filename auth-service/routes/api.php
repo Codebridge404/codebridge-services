@@ -36,7 +36,6 @@ Route::prefix('v1')->group(function () {
     | Public Endpoints & Kiosk Displays
     |--------------------------------------------------------------------------
     */
-    Route::post('/tenants/register', [TenantController::class, 'register']);
     Route::get('/platform-modules', [PlatformModuleController::class, 'index']);
     Route::get('/platform-modules/{id}', [PlatformModuleController::class, 'show']);
     Route::post('/meeting-rooms/{roomId}/issues/public', [MeetingIssueController::class, 'report']);
@@ -50,6 +49,15 @@ Route::prefix('v1')->group(function () {
     |--------------------------------------------------------------------------
     */
     require __DIR__ . '/api/auth.php';
+
+    /*
+    |--------------------------------------------------------------------------
+    | Workspace Provisioning (Authenticated Account Session Required; Pre-Workspace)
+    |--------------------------------------------------------------------------
+    */
+    Route::middleware(['auth:sanctum', 'pos_scope'])->group(function () {
+        Route::post('/tenants/register', [TenantController::class, 'register']);
+    });
 
     /*
     |--------------------------------------------------------------------------

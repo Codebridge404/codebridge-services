@@ -2,9 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\UserAuthorizationService;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 
 class EnsureWorkspace
 {
@@ -13,44 +13,38 @@ class EnsureWorkspace
         $user = $request->user();
         abort_unless($user, 401);
 
-        if (! $user->is_active) {
-            return response()->json([
-                'status' => 'error',
-                'code' => 'ACCOUNT_DEACTIVATED',
-                'message' => 'User account is deactivated.',
-            ], 401);
+        if ($request->attributes->get('jwt_tenant_id_invalid')) {
+            $this->recordTenantDenied($request, $user, 'Token contains an invalid tenant identifier');
+            abort(403, 'Invalid tenant context.');
         }
 
-        if (method_exists($user, 'isLockedOut') && $user->isLockedOut()) {
-            return response()->json([
-                'status' => 'error',
-                'code' => 'ACCOUNT_LOCKED_OUT',
-                'message' => 'User account is temporarily locked out.',
-            ], 401);
+        $claimTenantId = $request->attributes->get('jwt_tenant_id');
+        $context = UserAuthorizationService::resolveAuthorizationContext(
+            $user,
+            null,
+            is_numeric($claimTenantId) ? (int) $claimTenantId : null,
+            true
+        );
+
+        if (!$context['authorized']) {
+            if (($context['status'] ?? 403) === 401) {
+                return response()->json([
+                    'status' => 'error',
+                    'code' => $context['code'] ?? 'UNAUTHENTICATED',
+                    'message' => $context['message'] ?? 'Unauthenticated.',
+                ], 401);
+            }
+
+            $this->recordTenantDenied(
+                $request,
+                $user,
+                $context['message'] ?? 'An active workspace membership is required.',
+                $context['tenant_id'] ?? $user->tenant_id
+            );
+            abort((int) ($context['status'] ?? 403), (string) ($context['message'] ?? 'An active workspace membership is required.'));
         }
 
-        if ($user->role !== 'super_admin') {
-            if (!$user->tenant_id) {
-                $this->recordTenantDenied($request, $user, 'User has no active tenant context assigned');
-                abort(403, 'An active workspace membership is required.');
-            }
-
-            $isMember = DB::table('tenant_users')
-                ->where('tenant_id', $user->tenant_id)
-                ->where('user_id', $user->id)
-                ->where('status', 'active')
-                ->exists();
-            if (!$isMember) {
-                $this->recordTenantDenied($request, $user, 'User is not an active member of this workspace');
-                abort(403, 'An active workspace membership is required.');
-            }
-
-            $tenant = DB::table('tenants')->where('id', $user->tenant_id)->first();
-            if (!$tenant || !in_array($tenant->status, ['active', 'trial'], true)) {
-                $this->recordTenantDenied($request, $user, 'Workspace tenant is suspended or inactive');
-                abort(403, 'Workspace tenant is suspended or inactive.');
-            }
-        }
+        $request->attributes->set('auth_context', $context);
 
         return $next($request);
     }
@@ -58,7 +52,7 @@ class EnsureWorkspace
     /**
      * Record tenant access denial security event.
      */
-    protected function recordTenantDenied(Request $request, $user, string $reason): void
+    protected function recordTenantDenied(Request $request, $user, string $reason, ?int $tenantId = null): void
     {
         try {
             if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
@@ -70,7 +64,7 @@ class EnsureWorkspace
                     outcome: 'blocked',
                     confidence: 'confirmed',
                     userId: $user->id,
-                    tenantId: $user->tenant_id,
+                    tenantId: $tenantId ?? $user->tenant_id,
                     request: $request,
                     statusCode: 403
                 );

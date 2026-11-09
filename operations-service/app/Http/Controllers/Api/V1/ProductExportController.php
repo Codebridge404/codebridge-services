@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
 use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -52,8 +53,8 @@ class ProductExportController extends Controller
             })
             ->where('p.is_active', true);
 
-        // Strict Tenant Scoping: non-superadmins are strictly locked to their own tenant
-        if ($tenantId !== 'all' || $request->user()?->role !== 'super_admin') {
+        // Strict Tenant Scoping: non-platform-superadmins are strictly locked to their own tenant
+        if ($tenantId !== 'all' || !TenantAuthorizationService::hasPlatformSuperAdminRole($request->user())) {
             $query->where('p.tenant_id', $tenantId);
         }
 

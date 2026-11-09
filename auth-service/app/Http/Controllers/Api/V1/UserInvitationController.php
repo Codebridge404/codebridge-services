@@ -20,7 +20,8 @@ class UserInvitationController extends Controller
     public function index(Request $request)
     {
         $currentUser = $request->user();
-        $tenantId = ($currentUser?->role === 'super_admin' && $request->filled('tenant_id'))
+        $isPlatformSuper = UserAuthorizationService::hasPlatformSuperAdminRole($currentUser);
+        $tenantId = ($isPlatformSuper && $request->filled('tenant_id'))
             ? (int) $request->query('tenant_id')
             : (int) $currentUser?->tenant_id;
 
@@ -29,7 +30,7 @@ class UserInvitationController extends Controller
 
         $query = UserInvitation::with(['roleRecord', 'outlet', 'invitedBy']);
 
-        if ($currentUser && $currentUser->role !== 'super_admin' && $tenantId) {
+        if ($currentUser && !$isPlatformSuper && $tenantId) {
             $query->where('tenant_id', $tenantId);
         } elseif ($tenantId) {
             $query->where('tenant_id', $tenantId);
@@ -63,8 +64,9 @@ class UserInvitationController extends Controller
     {
         $validated = $request->validated();
         $currentUser = $request->user();
+        $isPlatformSuper = UserAuthorizationService::hasPlatformSuperAdminRole($currentUser);
 
-        $tenantId = ($currentUser?->role === 'super_admin' && !empty($validated['tenant_id']))
+        $tenantId = ($isPlatformSuper && !empty($validated['tenant_id']))
             ? (int) $validated['tenant_id']
             : (int) $currentUser?->tenant_id;
 
@@ -109,7 +111,11 @@ class UserInvitationController extends Controller
             $roleRecord = DB::table('roles')
                 ->where('slug', $validated['role'])
                 ->where(function ($q) use ($tenantId) {
-                    $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                    $q->where('tenant_id', $tenantId)
+                      ->orWhere('company_id', $tenantId)
+                      ->orWhere(function ($sysQ) {
+                          $sysQ->whereNull('tenant_id')->whereNull('company_id');
+                      });
                 })
                 ->first();
 
@@ -125,7 +131,8 @@ class UserInvitationController extends Controller
             ], 422);
         }
 
-        if ($roleRecord->tenant_id && (int) $roleRecord->tenant_id !== $tenantId) {
+        $roleTenantId = $roleRecord->tenant_id ?? $roleRecord->company_id ?? null;
+        if ($roleTenantId && (int) $roleTenantId !== $tenantId) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'The selected role does not belong to the invited tenant.',
@@ -223,7 +230,7 @@ class UserInvitationController extends Controller
         $currentUser = $request->user();
         $query = UserInvitation::with(['roleRecord', 'outlet', 'invitedBy']);
 
-        if ($currentUser && $currentUser->role !== 'super_admin' && $currentUser->tenant_id) {
+        if ($currentUser && !UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && $currentUser->tenant_id) {
             $query->where('tenant_id', $currentUser->tenant_id);
         }
 
@@ -250,7 +257,7 @@ class UserInvitationController extends Controller
         $currentUser = $request->user();
         $query = UserInvitation::whereNull('accepted_at');
 
-        if ($currentUser && $currentUser->role !== 'super_admin' && $currentUser->tenant_id) {
+        if ($currentUser && !UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && $currentUser->tenant_id) {
             $query->where('tenant_id', $currentUser->tenant_id);
         }
 
@@ -294,7 +301,7 @@ class UserInvitationController extends Controller
         $currentUser = $request->user();
         $query = UserInvitation::query();
 
-        if ($currentUser && $currentUser->role !== 'super_admin' && $currentUser->tenant_id) {
+        if ($currentUser && !UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && $currentUser->tenant_id) {
             $query->where('tenant_id', $currentUser->tenant_id);
         }
 
@@ -326,7 +333,7 @@ class UserInvitationController extends Controller
      */
     private function checkUserLimit($currentUser, $tenantId): ?string
     {
-        if ($currentUser && $currentUser->role !== 'super_admin' && $tenantId) {
+        if ($currentUser && !UserAuthorizationService::isSuperAdmin($currentUser, $tenantId ? (int) $tenantId : null) && $tenantId) {
             $tenant = DB::table('tenants')->where('id', $tenantId)->first();
             $maxUsers = $tenant->max_users ?? 50;
             $count = DB::table('tenant_users')

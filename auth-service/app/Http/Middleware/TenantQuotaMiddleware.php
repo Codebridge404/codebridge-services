@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\UserAuthorizationService;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -30,8 +31,8 @@ class TenantQuotaMiddleware
     {
         $user = $request->user();
 
-        // If user is super_admin, quota checks are bypassed
-        if ($user && $user->role === 'super_admin') {
+        // If user is super_admin in active context, quota checks are bypassed
+        if ($user && UserAuthorizationService::isSuperAdmin($user)) {
             return $next($request);
         }
 
@@ -42,8 +43,10 @@ class TenantQuotaMiddleware
         $tenantQuery = DB::table('tenants');
         if ($tenantId) {
             $tenantQuery->where('id', $tenantId);
-        } elseif (!empty($activeWorkspace) && $activeWorkspace !== 'No Organization Yet! Please Create') {
+        } elseif (!empty($activeWorkspace) && $activeWorkspace !== 'No Organization Yet! Please Create' && UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
             $tenantQuery->where('name', $activeWorkspace)->orWhere('slug', $activeWorkspace);
+        } else {
+            return $next($request);
         }
 
         $tenant = $tenantQuery->first();
@@ -75,8 +78,10 @@ class TenantQuotaMiddleware
         if ($resourceType === 'users') {
             $currentUsersCount = DB::table('tenant_users as tu')
                 ->join('users as u', 'tu.user_id', '=', 'u.id')
-                ->leftJoin('user_roles as ur', function ($j) {
-                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                ->leftJoin('user_roles as ur', function ($j) use ($tenant) {
+                    $j->on('u.id', '=', 'ur.user_id')
+                        ->where('ur.is_active', true)
+                        ->where('ur.tenant_id', $tenant->id);
                 })
                 ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
                 ->where('tu.tenant_id', $tenant->id)

@@ -41,7 +41,7 @@ class AuditLogController extends Controller
         $query = DB::table('audit_logs as a')
             ->leftJoin('users as u', 'a.user_id', '=', 'u.id');
 
-        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user) && !empty($user->tenant_id)) {
             $query->where('a.tenant_id', $user->tenant_id);
         }
 

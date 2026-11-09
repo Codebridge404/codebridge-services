@@ -35,7 +35,7 @@ class AttendanceController extends Controller
     protected function getTenantId(Request $request): ?string
     {
         $user = $request->user();
-        if ($user && $user->role !== 'super_admin') {
+        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
             return $user->tenant_id ? (string) $user->tenant_id : null;
         }
 

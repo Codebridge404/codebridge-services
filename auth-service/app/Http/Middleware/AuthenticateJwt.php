@@ -164,6 +164,16 @@ class AuthenticateJwt
                     }
                 }
                 $request->attributes->set('is_pos_session', !empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos');
+                $request->attributes->set('jwt_claims', $payload);
+                if (array_key_exists('tenant_id', $payload) && $payload['tenant_id'] !== null && $payload['tenant_id'] !== '') {
+                    if (is_numeric($payload['tenant_id'])) {
+                        $claimTenantId = (int) $payload['tenant_id'];
+                        $user->pendingTenantId = $claimTenantId;
+                        $request->attributes->set('jwt_tenant_id', $claimTenantId);
+                    } else {
+                        $request->attributes->set('jwt_tenant_id_invalid', true);
+                    }
+                }
                 Auth::setUser($user);
                 Auth::guard('sanctum')->setUser($user);
                 $request->setUserResolver(fn () => $user);

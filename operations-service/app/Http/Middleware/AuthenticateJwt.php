@@ -4,11 +4,11 @@ namespace App\Http\Middleware;
 
 use App\Models\User;
 use App\Services\JwtService;
+use App\Services\TenantAuthorizationService;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -92,53 +92,65 @@ class AuthenticateJwt
                 }
 
                 $userId = (int) $payload['sub'];
-                $userRole = $payload['role'] ?? 'cashier';
-                $userTenantId = isset($payload['tenant_id']) && $payload['tenant_id'] !== null ? (int) $payload['tenant_id'] : null;
-                $userOutletId = isset($payload['outlet_id']) && $payload['outlet_id'] !== null ? (int) $payload['outlet_id'] : null;
+                $claimRole = is_string($payload['role'] ?? null) ? $payload['role'] : 'user';
+                $claimTenantId = TenantAuthorizationService::normalizeTenantId($payload['tenant_id'] ?? null);
+                $userOutletId = isset($payload['outlet_id']) && is_numeric($payload['outlet_id']) ? (int) $payload['outlet_id'] : null;
 
-                // Reconcile tenant context and elevated roles from auth_db if missing or downgraded in stale token
-                if (($userRole === 'user' || empty($userTenantId)) && $userId) {
-                    try {
-                        if (empty($userTenantId)) {
-                            $liveTenantId = DB::connection('auth_db')
-                                ->table('tenant_users')
-                                ->where('user_id', $userId)
-                                ->where('status', 'active')
-                                ->value('tenant_id');
-                            if ($liveTenantId) {
-                                $userTenantId = (int) $liveTenantId;
-                            }
-                        }
-
-                        $liveRole = DB::connection('auth_db')
-                            ->table('user_roles')
-                            ->join('roles', 'user_roles.role_id', '=', 'roles.id')
-                            ->where('user_roles.user_id', $userId)
-                            ->where('user_roles.is_active', true)
-                            ->value('roles.slug');
-
-                        if ($liveRole && $liveRole !== 'user') {
-                            $userRole = $liveRole;
-                        }
-                    } catch (\Throwable) {}
-                }
-
-                // Construct authenticated user with verified credentials
-                $user = new User([
+                // Construct lightweight candidate user subject before resolving authoritative tenant-scoped Auth context
+                $probeUser = new User();
+                $probeUser->forceFill([
                     'name' => $payload['name'] ?? 'Authorized User',
                     'email' => $payload['email'] ?? '',
-                    'role' => $userRole,
-                    'tenant_id' => $userTenantId,
+                    'role' => $claimRole,
+                    'tenant_id' => $claimTenantId,
                     'outlet_id' => $userOutletId,
                 ]);
-                $user->id = $userId;
+                $probeUser->id = $userId;
+                $probeUser->exists = true;
+                $probeUser->pendingRole = $claimRole;
+                $probeUser->pendingTenantId = $claimTenantId;
+                $probeUser->pendingOutletId = $userOutletId;
+
+                $context = TenantAuthorizationService::resolveAuthorizationContext(
+                    $request,
+                    $probeUser,
+                    $payload,
+                    false
+                );
+
+                if (empty($context['authorized'])) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => $context['code'] ?? 'UNAUTHORIZED',
+                        'message' => $context['message'] ?? 'Unauthorized.',
+                    ], (int) ($context['status'] ?? 403));
+                }
+
+                $dbUser = $context['db_user'] ?? null;
+                $resolvedRole = $context['role'] ?? 'user';
+                $resolvedTenantId = $context['tenant_id'] ?? null;
+                $resolvedOutletId = $context['outlet_id'] ?? $userOutletId;
+
+                // Construct authenticated user with verified tenant-scoped credentials
+                $user = new User();
+                $user->forceFill([
+                    'name' => $dbUser->name ?? ($payload['name'] ?? 'Authorized User'),
+                    'email' => $dbUser->email ?? ($payload['email'] ?? ''),
+                    'role' => $resolvedRole,
+                    'tenant_id' => $resolvedTenantId,
+                    'outlet_id' => $resolvedOutletId,
+                ]);
+                $user->id = (int) ($context['user_id'] ?? $userId);
                 $user->exists = true;
-                if ($userTenantId) {
-                    $user->tenant_id = $userTenantId;
-                }
-                if ($userOutletId) {
-                    $user->outlet_id = $userOutletId;
-                }
+                $user->pendingRole = $resolvedRole;
+                $user->pendingTenantId = $resolvedTenantId;
+                $user->pendingOutletId = $resolvedOutletId;
+                $user->scopedRoles = is_array($context['roles'] ?? null) ? $context['roles'] : [$resolvedRole];
+                $user->isPlatformSuperAdmin = (bool) ($context['is_platform_super_admin'] ?? false);
+                $user->resolvedSuperAdmin = (bool) ($context['is_super_admin'] ?? false);
+
+                $request->attributes->set('jwt_claims', $payload);
+                $request->attributes->set('auth_context', $context);
 
                 // Propagate user across both default and sanctum guards
                 Auth::setUser($user);

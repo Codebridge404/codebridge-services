@@ -136,7 +136,17 @@ class User extends Authenticatable implements MustVerifyEmail
             if (!empty($user->pendingRoleId)) {
                 $roleId = (int) $user->pendingRoleId;
             } elseif (!empty($user->pendingRole)) {
-                $role = Role::where('slug', $user->pendingRole)->first();
+                $role = Role::where('slug', $user->pendingRole)
+                    ->where(function ($q) use ($user) {
+                        $q->where(function ($sysQ) {
+                            $sysQ->whereNull('tenant_id')->whereNull('company_id');
+                        });
+                        if ($user->tenant_id) {
+                            $q->orWhere('tenant_id', $user->tenant_id)
+                              ->orWhere('company_id', $user->tenant_id);
+                        }
+                    })
+                    ->first();
                 if (!$role) {
                     $roleData = [
                         'name' => ucfirst($user->pendingRole),
@@ -144,9 +154,10 @@ class User extends Authenticatable implements MustVerifyEmail
                         'is_system' => true,
                     ];
                     if (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'tenant_id')) {
-                        $roleData['tenant_id'] = $user->tenant_id;
-                    } elseif (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'company_id')) {
-                        $roleData['company_id'] = $user->tenant_id;
+                        $roleData['tenant_id'] = null;
+                    }
+                    if (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'company_id')) {
+                        $roleData['company_id'] = null;
                     }
                     $role = Role::create($roleData);
                 }
@@ -154,17 +165,46 @@ class User extends Authenticatable implements MustVerifyEmail
             }
 
             if ($roleId) {
-                \Illuminate\Support\Facades\DB::table('user_roles')->where('user_id', $user->id)
-                    ->where('tenant_id', $user->tenant_id)->update(['is_active' => false]);
-                \Illuminate\Support\Facades\DB::table('user_roles')->updateOrInsert(
-                    ['user_id' => $user->id, 'role_id' => $roleId],
-                    [
-                        'tenant_id' => $user->tenant_id,
+                $roleRecord = Role::find($roleId);
+                $isPlatformSuperAdminRole = $roleRecord
+                    && $roleRecord->slug === 'super_admin'
+                    && $roleRecord->tenant_id === null
+                    && $roleRecord->company_id === null;
+                $effectiveRoleTenantId = $isPlatformSuperAdminRole
+                    ? null
+                    : ($user->pendingTenantId ?? $user->tenant_id);
+                $deactivateQuery = \Illuminate\Support\Facades\DB::table('user_roles')->where('user_id', $user->id);
+                if ($effectiveRoleTenantId === null) {
+                    $deactivateQuery->whereNull('tenant_id');
+                } else {
+                    $deactivateQuery->where('tenant_id', $effectiveRoleTenantId);
+                }
+                $deactivateQuery->update(['is_active' => false]);
+
+                $existingQuery = \Illuminate\Support\Facades\DB::table('user_roles')
+                    ->where('user_id', $user->id)
+                    ->where('role_id', $roleId);
+                if ($effectiveRoleTenantId === null) {
+                    $existingQuery->whereNull('tenant_id');
+                } else {
+                    $existingQuery->where('tenant_id', $effectiveRoleTenantId);
+                }
+
+                if ($existingQuery->exists()) {
+                    $existingQuery->update([
+                        'is_active' => true,
+                        'updated_at' => now(),
+                    ]);
+                } else {
+                    \Illuminate\Support\Facades\DB::table('user_roles')->insert([
+                        'tenant_id' => $effectiveRoleTenantId,
+                        'user_id' => $user->id,
+                        'role_id' => $roleId,
                         'is_active' => true,
                         'created_at' => now(),
                         'updated_at' => now(),
-                    ]
-                );
+                    ]);
+                }
             }
 
             // Dual-sync to new ERD tables (tenant_users, tenant_user_outlets, user_pos_pins)
@@ -214,12 +254,12 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getTenantIdAttribute(): ?int
     {
-        if (array_key_exists('tenant_id', $this->attributes) && !is_null($this->attributes['tenant_id'])) {
-            return (int) $this->attributes['tenant_id'];
-        }
-
         if (!empty($this->pendingTenantId)) {
             return (int) $this->pendingTenantId;
+        }
+
+        if (array_key_exists('tenant_id', $this->attributes) && !is_null($this->attributes['tenant_id'])) {
+            return (int) $this->attributes['tenant_id'];
         }
 
         if ($this->relationLoaded('tenantUsers')) {
@@ -245,19 +285,24 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getOutletUuidAttribute(): ?string
     {
-        if (array_key_exists('outlet_uuid', $this->attributes) && !is_null($this->attributes['outlet_uuid'])) {
-            return $this->attributes['outlet_uuid'];
-        }
-
         if (!empty($this->pendingOutletUuid)) {
             return $this->pendingOutletUuid;
+        }
+
+        if (array_key_exists('outlet_uuid', $this->attributes) && !is_null($this->attributes['outlet_uuid'])) {
+            return $this->attributes['outlet_uuid'];
         }
 
         if (!$this->exists) {
             return null;
         }
 
-        $tenantUser = $this->tenantUsers()->first();
+        $tenantUserQuery = $this->tenantUsers();
+        if ($this->tenant_id) {
+            $tenantUserQuery->where('tenant_id', $this->tenant_id);
+        }
+        $tenantUser = $tenantUserQuery->where('status', 'active')->first()
+            ?? ($this->tenant_id ? null : $this->tenantUsers()->first());
         if ($tenantUser) {
             return $tenantUser->outlets()->where('is_active', true)->value('outlet_uuid')
                 ?? $tenantUser->outlets()->value('outlet_uuid');
@@ -314,9 +359,24 @@ class User extends Authenticatable implements MustVerifyEmail
         }
 
         if ($this->relationLoaded('roles')) {
-            $activeRole = $this->roles->first(fn ($role) => $role->pivot->is_active && ($role->pivot->tenant_id === null || (int) $role->pivot->tenant_id === $this->tenant_id));
-            if ($activeRole) {
-                return $activeRole->slug;
+            $tenantId = $this->tenant_id;
+            $matchingRoles = $this->roles->filter(function ($role) use ($tenantId) {
+                if (!$role->pivot->is_active) {
+                    return false;
+                }
+                if ($role->slug === 'super_admin' && $role->pivot->tenant_id === null && $role->tenant_id === null) {
+                    return true;
+                }
+                if ($tenantId !== null) {
+                    return (int) $role->pivot->tenant_id === (int) $tenantId;
+                }
+                return $role->pivot->tenant_id === null;
+            });
+            $sortedSlugs = \App\Services\UserAuthorizationService::sortRoleSlugs(
+                $matchingRoles->pluck('slug')->filter()->all()
+            );
+            if (!empty($sortedSlugs)) {
+                return $sortedSlugs[0];
             }
         }
 
@@ -329,9 +389,12 @@ class User extends Authenticatable implements MustVerifyEmail
             return $activeRole->slug;
         }
 
-        // Dynamically resolve organization role if user owns a tenant
-        if ($this->exists && !empty($this->id)) {
-            $isTenantOwner = \Illuminate\Support\Facades\DB::table('tenants')->where('owner_user_id', $this->id)->exists();
+        // Dynamically resolve organization role ONLY if user owns the active tenant context
+        if ($this->exists && !empty($this->id) && !empty($this->tenant_id)) {
+            $isTenantOwner = \Illuminate\Support\Facades\DB::table('tenants')
+                ->where('id', $this->tenant_id)
+                ->where('owner_user_id', $this->id)
+                ->exists();
             if ($isTenantOwner) {
                 return 'organization';
             }
@@ -354,7 +417,24 @@ class User extends Authenticatable implements MustVerifyEmail
         }
 
         if ($this->relationLoaded('roles')) {
-            $activeRole = $this->roles->first(fn ($role) => $role->pivot->is_active && ($role->pivot->tenant_id === null || (int) $role->pivot->tenant_id === $this->tenant_id));
+            $tenantId = $this->tenant_id;
+            $matchingRoles = $this->roles->filter(function ($role) use ($tenantId) {
+                if (!$role->pivot->is_active) {
+                    return false;
+                }
+                if ($role->slug === 'super_admin' && $role->pivot->tenant_id === null && $role->tenant_id === null) {
+                    return true;
+                }
+                if ($tenantId !== null) {
+                    return (int) $role->pivot->tenant_id === (int) $tenantId;
+                }
+                return $role->pivot->tenant_id === null;
+            });
+            $sortedSlugs = \App\Services\UserAuthorizationService::sortRoleSlugs(
+                $matchingRoles->pluck('slug')->filter()->all()
+            );
+            $primarySlug = $sortedSlugs[0] ?? null;
+            $activeRole = $primarySlug ? $matchingRoles->firstWhere('slug', $primarySlug) : null;
             return $activeRole?->id;
         }
 
@@ -421,24 +501,60 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function hasRole(string $role): bool
     {
-        return $this->role === $role || $this->activeRoles()->where('slug', $role)->exists();
+        return $this->role === $role || $this->activeRoles()->where('roles.slug', $role)->exists();
     }
 
     /**
-     * Assign a role to this user in user_roles.
+     * Assign a role to this user in user_roles scoped to tenant context.
      */
-    public function assignRole(string|int|Role $role, bool $isActive = true): void
+    public function assignRole(string|int|Role $role, bool $isActive = true, ?int $tenantId = null): void
     {
-        $roleId = $role instanceof Role ? $role->id : (is_numeric($role) ? (int) $role : Role::where('slug', $role)->value('id'));
+        $effectiveTenantId = $tenantId ?? $this->tenant_id;
+        if ($role instanceof Role) {
+            $roleId = $role->id;
+        } elseif (is_numeric($role)) {
+            $roleId = (int) $role;
+        } else {
+            $roleId = Role::where('slug', $role)
+                ->where(function ($q) use ($effectiveTenantId) {
+                    $q->where(function ($sysQ) {
+                        $sysQ->whereNull('tenant_id')->whereNull('company_id');
+                    });
+                    if ($effectiveTenantId !== null) {
+                        $q->orWhere('tenant_id', $effectiveTenantId)
+                          ->orWhere('company_id', $effectiveTenantId);
+                    }
+                })
+                ->value('id');
+        }
         if ($roleId) {
-            $this->roles()->syncWithoutDetaching([
-                $roleId => [
-                    'tenant_id' => $this->tenant_id,
+            $existingQuery = \Illuminate\Support\Facades\DB::table('user_roles')
+                ->where('user_id', $this->id)
+                ->where('role_id', $roleId);
+            if ($effectiveTenantId === null) {
+                $existingQuery->whereNull('tenant_id');
+            } else {
+                $existingQuery->where('tenant_id', $effectiveTenantId);
+            }
+
+            if ($existingQuery->exists()) {
+                $existingQuery->update([
+                    'is_active' => $isActive,
+                    'updated_at' => now(),
+                ]);
+            } else {
+                \Illuminate\Support\Facades\DB::table('user_roles')->insert([
+                    'tenant_id' => $effectiveTenantId,
+                    'user_id' => $this->id,
+                    'role_id' => $roleId,
                     'is_active' => $isActive,
                     'created_at' => now(),
                     'updated_at' => now(),
-                ]
-            ]);
+                ]);
+            }
+
+            $this->unsetRelation('roles');
+            $this->unsetRelation('userRoles');
         }
     }
 
@@ -541,16 +657,46 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function activeRoles()
     {
+        $tenantId = $this->tenant_id;
+
         return $this->roles()->wherePivot('is_active', true)
-            ->where(function ($query) {
-                $query->whereNull('user_roles.tenant_id');
-                if ($this->tenant_id) $query->orWhere('user_roles.tenant_id', $this->tenant_id);
-            });
+            ->where(function ($query) use ($tenantId) {
+                if ($tenantId) {
+                    $query->where('user_roles.tenant_id', $tenantId)
+                        ->orWhere(function ($q) {
+                            $q->whereNull('user_roles.tenant_id')
+                              ->where('roles.slug', 'super_admin')
+                              ->whereNull('roles.tenant_id');
+                        });
+                } else {
+                    $query->whereNull('user_roles.tenant_id');
+                }
+            })
+            ->orderByRaw("CASE
+                WHEN roles.slug = 'super_admin' THEN 1
+                WHEN roles.slug = 'organization' THEN 2
+                WHEN roles.slug = 'organization_owner' THEN 3
+                WHEN roles.slug = 'owner' THEN 4
+                WHEN roles.slug = 'admin' THEN 5
+                WHEN roles.slug = 'administrator' THEN 6
+                WHEN roles.slug = 'tenant_admin' THEN 7
+                WHEN roles.slug = 'outlet_manager' THEN 8
+                WHEN roles.slug = 'supervisor' THEN 9
+                WHEN roles.slug = 'store_manager' THEN 10
+                WHEN roles.slug = 'accountant' THEN 11
+                WHEN roles.slug = 'inventory_clerk' THEN 12
+                WHEN roles.slug = 'cashier' THEN 13
+                WHEN roles.slug = 'meeting_organizer' THEN 14
+                WHEN roles.slug = 'employee' THEN 15
+                WHEN roles.slug = 'user' THEN 16
+                ELSE 100
+            END ASC")
+            ->orderBy('roles.slug', 'asc');
     }
 
     public function getAllPermissions()
     {
-        if (in_array($this->role, ['super_admin', 'organization', 'admin', 'administrator', 'owner'], true)) {
+        if (in_array($this->role, array_merge(['super_admin'], \App\Services\UserAuthorizationService::ADMIN_ROLE_SLUGS), true)) {
             return collect([(object) ['name' => '*']]);
         }
         return Permission::query()->whereIn('id', function ($query) {

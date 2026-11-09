@@ -48,6 +48,7 @@ Route::middleware('auth_throttle:10,1')->group(function () {
 */
 Route::middleware(['auth:sanctum', 'pos_scope'])->group(function () {
     require __DIR__ . '/sessions.php';
+    Route::get('/auth/authorize-context', [AuthController::class, 'authorizeContext']);
     Route::get('/me', [AuthController::class, 'me']);
     Route::match(['put', 'post'], '/auth/profile', [AuthController::class, 'update']);
     Route::post('/auth/upload-profile', [AuthController::class, 'uploadProfile']);

@@ -10,13 +10,14 @@ class RestrictPosSession
     public function handle(Request $request, Closure $next)
     {
         $token = $request->user()?->currentAccessToken();
-        $abilities = $token?->abilities ?? [];
+        $abilities = is_array($token?->abilities ?? null) ? $token->abilities : [];
         $isPos = $request->attributes->get('is_pos_session', false)
-            || (in_array('pos:access', $abilities, true) && !in_array('*', $abilities, true));
+            || (in_array('pos:access', $abilities, true) && !in_array('*', $abilities, true))
+            || ($token && method_exists($token, 'can') && $token->can('pos:access') && !$token->can('*'));
         if ($isPos) {
             // POS sessions may identify the cashier, end the session, or authorize a supervisor PIN.
             // Administrative, workspace, and account-security APIs require full authentication.
-            $posLookup = $request->isMethod('GET') && in_array($request->path(), ['api/v1/customers', 'api/v1/outlets'], true);
+            $posLookup = $request->isMethod('GET') && in_array($request->path(), ['api/v1/customers', 'api/v1/outlets', 'api/v1/auth/authorize-context'], true);
             $isAllowed = $posLookup || in_array($request->path(), [
                 'api/v1/me', 'api/v1/auth/logout', 'api/v1/auth/verify-pin',
             ], true);

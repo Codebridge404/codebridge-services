@@ -1146,9 +1146,8 @@ class AuthController extends Controller
             );
 
             DB::table('user_roles')->updateOrInsert(
-                ['user_id' => $user->id, 'role_id' => $roleId],
+                ['tenant_id' => $invitation->tenant_id, 'user_id' => $user->id, 'role_id' => $roleId],
                 [
-                    'tenant_id' => $invitation->tenant_id,
                     'is_active' => true,
                     'created_at' => now(),
                     'updated_at' => now(),
@@ -1206,6 +1205,12 @@ class AuthController extends Controller
                         'code' => ResponseCode::TWO_FACTOR_REQUIRED,
                     ]
                 );
+            }
+
+            // Bind accepted workspace context before issuing JWTs and building UserResource
+            $user->pendingTenantId = (int) $invitation->tenant_id;
+            if (!empty($outletUuid)) {
+                $user->pendingOutletUuid = $outletUuid;
             }
 
             /** @var JwtService $jwtService */
@@ -1740,6 +1745,130 @@ class AuthController extends Controller
                 'user' => new UserResource($user),
             ]
         );
+    }
+
+    /**
+     * Resolve and verify the caller's tenant-scoped authorization context.
+     * Auth-owned authorization contract for downstream microservices and session introspection.
+     * GET /api/v1/auth/authorize-context
+     */
+    public function authorizeContext(Request $request)
+    {
+        $user = $request->user();
+        if (!$user) {
+            return $this->unauthorizedResponse();
+        }
+
+        $recordDenied = function (string $reason, int $statusCode, ?int $tenantId = null) use ($request, $user): void {
+            try {
+                if (Schema::hasTable('security_events')) {
+                    \App\Models\SecurityEvent::record(
+                        eventType: 'tenant_access_denied',
+                        ruleCode: 'SEC_TENANT_ACCESS_DENIED',
+                        summary: "Authorization context denied: {$reason}",
+                        severity: 'medium',
+                        outcome: 'blocked',
+                        confidence: 'confirmed',
+                        userId: $user->id,
+                        tenantId: $tenantId ?? $user->tenant_id,
+                        request: $request,
+                        statusCode: $statusCode
+                    );
+                }
+            } catch (\Throwable) {}
+        };
+
+        if ($request->attributes->get('jwt_tenant_id_invalid')) {
+            $recordDenied('Token contains an invalid tenant claim', 403);
+            return response()->json([
+                'status' => 'error',
+                'authorized' => false,
+                'code' => 'INVALID_TENANT_CONTEXT',
+                'message' => 'Token contains an invalid tenant identifier.',
+            ], 403);
+        }
+
+        $rawRequestedTenant = $request->header('X-Tenant-Id');
+        if ($rawRequestedTenant === null || $rawRequestedTenant === '') {
+            $rawRequestedTenant = $request->query('tenant_id');
+        }
+
+        $requestedTenantId = null;
+        $requestedTenantScope = null;
+
+        if ($rawRequestedTenant !== null && $rawRequestedTenant !== '') {
+            $trimmedTenant = trim((string) $rawRequestedTenant);
+            if ($trimmedTenant === 'all') {
+                if (!\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
+                    $recordDenied('Non-super-admin requested cross-tenant wildcard scope', 403);
+                    return response()->json([
+                        'status' => 'error',
+                        'authorized' => false,
+                        'code' => 'TENANT_CONTEXT_MISMATCH',
+                        'message' => 'Access denied: Cross-tenant queries are restricted to super administrators.',
+                    ], 403);
+                }
+                $requestedTenantScope = 'all';
+            } elseif (ctype_digit($trimmedTenant) && (int) $trimmedTenant > 0) {
+                $requestedTenantId = (int) $trimmedTenant;
+            } else {
+                $recordDenied('Malformed tenant identifier supplied', 403);
+                return response()->json([
+                    'status' => 'error',
+                    'authorized' => false,
+                    'code' => 'INVALID_TENANT_CONTEXT',
+                    'message' => 'Invalid tenant identifier supplied.',
+                ], 403);
+            }
+        }
+
+        $claimTenantId = $request->attributes->get('jwt_tenant_id');
+        $context = \App\Services\UserAuthorizationService::resolveAuthorizationContext(
+            $user,
+            $requestedTenantId,
+            is_numeric($claimTenantId) ? (int) $claimTenantId : null,
+            $requestedTenantScope !== 'all'
+        );
+
+        if (!$context['authorized']) {
+            $statusCode = (int) ($context['status'] ?? 403);
+            if ($statusCode === 403) {
+                $recordDenied(
+                    (string) ($context['message'] ?? 'Tenant context denied'),
+                    403,
+                    isset($context['tenant_id']) ? (int) $context['tenant_id'] : null
+                );
+            }
+
+            return response()->json([
+                'status' => 'error',
+                'authorized' => false,
+                'code' => $context['code'] ?? 'UNAUTHORIZED',
+                'message' => $context['message'] ?? 'Unauthorized.',
+            ], $statusCode);
+        }
+
+        $isPosSession = (bool) $request->attributes->get('is_pos_session', false);
+
+        return response()->json([
+            'status' => 'success',
+            'authorized' => true,
+            'data' => [
+                'user_id' => $context['user_id'],
+                'tenant_id' => $requestedTenantScope === 'all' ? null : $context['tenant_id'],
+                'tenant_status' => $requestedTenantScope === 'all' ? null : $context['tenant_status'],
+                'requested_tenant_scope' => $requestedTenantScope,
+                'membership_status' => $context['membership_status'],
+                'outlet_id' => $context['outlet_id'],
+                'outlet_uuid' => $context['outlet_uuid'],
+                'role' => $context['role'],
+                'roles' => $context['roles'],
+                'is_super_admin' => $context['is_super_admin'],
+                'is_platform_super_admin' => $context['is_platform_super_admin'],
+                'permissions' => $context['permissions'],
+                'is_pos_session' => $isPosSession,
+            ],
+        ], 200);
     }
 
     /**

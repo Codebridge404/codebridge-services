@@ -39,7 +39,7 @@ class OutletController extends Controller
         $query = DB::table('outlets as o');
 
         // Multi-tenant scoping: Non-super-admin users only see outlets belonging to their tenant/workspace
-        if ($user && $user->role !== 'super_admin') {
+        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
             if (!empty($user->tenant_id)) {
                 $query->where('o.tenant_id', $user->tenant_id);
             } elseif (!empty($user->outlet_id)) {
@@ -135,7 +135,7 @@ class OutletController extends Controller
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
-        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user) && !empty($user->tenant_id)) {
             if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
                 return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
             }
@@ -224,7 +224,7 @@ class OutletController extends Controller
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
-        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user) && !empty($user->tenant_id)) {
             if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
                 return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
             }
@@ -324,7 +324,7 @@ class OutletController extends Controller
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
-        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user) && !empty($user->tenant_id)) {
             if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
                 return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
             }
@@ -414,7 +414,7 @@ class OutletController extends Controller
         if (!$outlet) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
-        if ($user && $user->role !== 'super_admin' && !empty($user->tenant_id)) {
+        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user) && !empty($user->tenant_id)) {
             if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
                 return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
             }

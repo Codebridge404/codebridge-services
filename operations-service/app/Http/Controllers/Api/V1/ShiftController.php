@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Mail\EndOfDayZReportMail;
 use App\Models\ShiftVarianceAlert;
 use App\Services\CashDrawerNotificationService;
+use App\Services\TenantAuthorizationService;
+use App\Traits\ResolvesTenantContext;
 use Dedoc\Scramble\Attributes\Group;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -35,6 +37,8 @@ use Illuminate\Support\Str;
 #[Group('Shifts & Cash Drawer')]
 class ShiftController extends Controller
 {
+    use ResolvesTenantContext;
+
     public function __construct(
         protected CashDrawerNotificationService $notificationService
     ) {}
@@ -178,8 +182,21 @@ class ShiftController extends Controller
 
         if (abs($cashVariance) > 5.00) {
             $supervisorPin = $request->input('supervisor_pin');
-            $userRole = $request->user()->role ?? 'cashier';
-            if (!in_array($userRole, ['supervisor', 'outlet_manager', 'admin', 'super_admin'])) {
+            $jwtClaims = $request->attributes->get('jwt_claims');
+            $authContext = TenantAuthorizationService::resolveAuthorizationContext(
+                $request,
+                $request->user(),
+                is_array($jwtClaims) ? $jwtClaims : null,
+                false
+            );
+            $scopedRoles = is_array($authContext['roles'] ?? null) ? $authContext['roles'] : [$request->user()->role ?? 'cashier'];
+            $hasSupervisorPriv = TenantAuthorizationService::roleGrantsAccess(
+                $scopedRoles,
+                ['supervisor', 'outlet_manager', 'admin', 'super_admin'],
+                (bool) ($authContext['is_super_admin'] ?? false)
+            );
+
+            if (!$hasSupervisorPriv) {
                 if (empty($supervisorPin)) {
                     return response()->json([
                         'status' => 'error',
@@ -187,7 +204,14 @@ class ShiftController extends Controller
                         'cash_variance' => $cashVariance,
                     ], 403);
                 }
-                $validPin = DB::table('users')->where('pin_code', $supervisorPin)->whereIn('role', ['supervisor', 'outlet_manager', 'admin', 'super_admin'])->exists();
+
+                $tenantId = $authContext['tenant_id'] ?? $this->getTenantId($request, false);
+                $validPin = TenantAuthorizationService::verifySupervisorPin(
+                    $request,
+                    (string) $supervisorPin,
+                    $tenantId
+                );
+
                 if (!$validPin) {
                     return response()->json(['status' => 'error', 'message' => 'Invalid Supervisor PIN code.'], 403);
                 }
@@ -517,7 +541,7 @@ class ShiftController extends Controller
      */
     public function zReport(Request $request)
     {
-        $tenantId = $request->header('X-Tenant-Id') ?? $request->user()?->tenant_id ?? $request->query('tenant_id');
+        $tenantId = $this->getTenantId($request, false);
         $outletId = $request->input('outlet_id') ?? $request->query('outlet_id');
         $date = $request->input('date') ?? $request->query('date');
         $closeOpenRegisters = (bool) ($request->input('close_open_registers') ?? $request->query('close_open_registers', false));
@@ -542,7 +566,12 @@ class ShiftController extends Controller
      */
     public function eodDispatch(Request $request)
     {
-        $rawTid = $request->header('X-Tenant-Id') ?? $request->user()?->tenant_id ?? $request->input('tenant_id');
+        $resolvedTid = $this->getTenantId($request, false);
+        $rawInputTid = $request->input('tenant_id');
+        if ($rawInputTid !== null && $rawInputTid !== '' && $resolvedTid !== null && $resolvedTid !== 'all' && (string) $rawInputTid !== (string) $resolvedTid && !TenantAuthorizationService::hasPlatformSuperAdminRole($request->user())) {
+            abort(403, 'Access denied: You cannot dispatch EOD reports for another organization.');
+        }
+        $rawTid = $resolvedTid !== null ? $resolvedTid : $rawInputTid;
         $tenantId = (!empty($rawTid) && is_numeric($rawTid)) ? (int) $rawTid : null;
         $outletId = $request->input('outlet_id') ? (int) $request->input('outlet_id') : ($request->user()?->outlet_id ?? null);
         $date = $request->input('date') ?? date('Y-m-d');

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\ApiKey\StoreApiKeyRequest;
 use App\Http\Resources\ApiKey\ApiKeyResource;
 use App\Models\ApiKey;
+use App\Services\UserAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -38,7 +39,7 @@ class ApiKeyController extends Controller
 
         $query = DB::table('api_keys');
 
-        if ($user->role !== 'super_admin' && $tenantId) {
+        if (!UserAuthorizationService::hasPlatformSuperAdminRole($user) && $tenantId) {
             $query->where('tenant_id', $tenantId);
         }
 
@@ -128,7 +129,7 @@ class ApiKeyController extends Controller
         $user = $request->user();
 
         $query = DB::table('api_keys')->where('id', $id);
-        if ($user->role !== 'super_admin' && $user->tenant_id) {
+        if (!UserAuthorizationService::hasPlatformSuperAdminRole($user) && $user->tenant_id) {
             $query->where('tenant_id', $user->tenant_id);
         }
 
@@ -156,7 +157,7 @@ class ApiKeyController extends Controller
         $user = $request->user();
 
         $query = DB::table('api_keys')->where('id', $id);
-        if ($user->role !== 'super_admin' && $user->tenant_id) {
+        if (!UserAuthorizationService::hasPlatformSuperAdminRole($user) && $user->tenant_id) {
             $query->where('tenant_id', $user->tenant_id);
         }
 

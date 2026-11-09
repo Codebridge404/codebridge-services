@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Tenant\UpdateModulesRequest;
+use App\Services\UserAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -49,7 +50,7 @@ class TenantModuleController extends Controller
 
         $query = DB::table('tenants');
 
-        if ($authUser->role === 'super_admin') {
+        if (UserAuthorizationService::hasPlatformSuperAdminRole($authUser)) {
             if ($tenantId) {
                 $query->where('id', $tenantId);
             } elseif ($orgName) {
@@ -153,7 +154,7 @@ class TenantModuleController extends Controller
 
         $query = DB::table('tenants');
 
-        if ($authUser->role === 'super_admin') {
+        if (UserAuthorizationService::hasPlatformSuperAdminRole($authUser)) {
             if ($tenantId) {
                 $query->where('id', $tenantId);
             } elseif ($orgName) {
@@ -225,7 +226,7 @@ class TenantModuleController extends Controller
         }
         $modules = array_values(array_unique($modules));
 
-        if ($authUser->role !== 'super_admin') {
+        if (!UserAuthorizationService::isSuperAdmin($authUser, (int) $tenant->id)) {
             $isTrial = ($tenant->status === 'trial') || ($tenant->trial_ends_at && \Carbon\Carbon::parse($tenant->trial_ends_at)->isFuture());
 
             if ($isTrial) {

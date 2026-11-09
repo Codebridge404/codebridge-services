@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Jobs\ExportTaxAuditJob;
 use App\Services\ExchangeRateService;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -27,6 +28,8 @@ use Illuminate\Support\Str;
  */
 class ReportController extends Controller
 {
+    use ResolvesTenantContext;
+
     public function __construct(
         protected ExchangeRateService $exchangeRateService
     ) {}
@@ -209,7 +212,8 @@ class ReportController extends Controller
         $taxableSales = (float) $sales->sum('subtotal');
         $vatCollected = (float) $sales->sum('tax_total');
         $grandTotalUsd = (float) $sales->sum('grand_total');
-        $activeRate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $request->header('X-Tenant-Id'));
+        $tenantId = $this->getTenantId($request, false);
+        $activeRate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $tenantId);
         $khrEquivalent = round($grandTotalUsd * $activeRate);
         $vatKhrEquivalent = round($vatCollected * $activeRate);
 
@@ -288,7 +292,8 @@ class ReportController extends Controller
             $query->where('s.outlet_id', $outletId);
         }
 
-        $rate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $request->header('X-Tenant-Id'));
+        $tenantId = $this->getTenantId($request, false);
+        $rate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $tenantId);
         if (!$rate || $rate <= 0) {
             $rate = 4100;
         }
@@ -455,7 +460,7 @@ class ReportController extends Controller
         $startDate = $request->input('from_date', $request->input('start_date', now()->startOfMonth()->toDateString()));
         $endDate = $request->input('to_date', $request->input('end_date', now()->toDateString()));
         $outletId = $request->input('outlet_id');
-        $tenantId = $request->header('X-Tenant-Id');
+        $tenantId = $this->getTenantId($request, false);
         $user = $request->user();
         $userId = $user ? (string) $user->id : null;
 

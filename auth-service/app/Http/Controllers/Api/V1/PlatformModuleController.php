@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Platform\StorePlatformModuleRequest;
 use App\Http\Requests\Platform\UpdatePlatformModuleRequest;
+use App\Services\UserAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -38,7 +39,7 @@ class PlatformModuleController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
-        $isSuperAdmin = $user && $user->role === 'super_admin';
+        $isSuperAdmin = UserAuthorizationService::hasPlatformSuperAdminRole($user);
         $showAll = $request->boolean('all', $isSuperAdmin);
 
         $query = DB::table('platform_modules');

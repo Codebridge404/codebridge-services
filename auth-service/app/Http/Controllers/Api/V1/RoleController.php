@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Role\StoreRoleRequest;
 use App\Http\Requests\Role\UpdateRoleRequest;
 use App\Http\Resources\Role\RoleResource;
+use App\Services\UserAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -34,7 +35,7 @@ class RoleController extends Controller
         $currentUser = $request->user();
         $query = DB::table('roles');
 
-        if ($currentUser && $currentUser->role !== 'super_admin' && !empty($currentUser->tenant_id)) {
+        if ($currentUser && !UserAuthorizationService::isSuperAdmin($currentUser) && !empty($currentUser->tenant_id)) {
             $query->where(function ($q) use ($currentUser) {
                 $q->whereNull('company_id')->orWhere('company_id', $currentUser->tenant_id);
             });
@@ -66,7 +67,15 @@ class RoleController extends Controller
     {
 
         $currentUser = $request->user();
+        $isSuperAdmin = UserAuthorizationService::isSuperAdmin($currentUser);
         $slug = \Illuminate\Support\Str::slug($request->name, '_');
+
+        if ($slug === 'super_admin' && !$isSuperAdmin) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Only a super administrator may create or reserve the super_admin role.',
+            ], 403);
+        }
 
         // Ensure unique slug
         $existing = DB::table('roles')->where('slug', $slug)->first();
@@ -74,7 +83,7 @@ class RoleController extends Controller
             $slug .= '_' . substr(md5(microtime()), 0, 4);
         }
 
-        $companyId = ($currentUser && $currentUser->role === 'super_admin')
+        $companyId = $isSuperAdmin
             ? ($request->company_id ?? $currentUser->tenant_id)
             : ($currentUser?->tenant_id ?? null);
         $parentRole = $request->parent_role ?? 'employee';
@@ -155,7 +164,7 @@ class RoleController extends Controller
         }
 
         $currentUser = $request->user();
-        if ($currentUser && $currentUser->role !== 'super_admin' && !empty($currentUser->tenant_id)) {
+        if ($currentUser && !UserAuthorizationService::isSuperAdmin($currentUser) && !empty($currentUser->tenant_id)) {
             if ($role->company_id && $role->company_id != $currentUser->tenant_id) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized to modify role for another organization.'], 403);
             }
@@ -205,7 +214,7 @@ class RoleController extends Controller
         }
 
         $currentUser = $request->user();
-        if ($currentUser && $currentUser->role !== 'super_admin' && !empty($currentUser->tenant_id)) {
+        if ($currentUser && !UserAuthorizationService::isSuperAdmin($currentUser) && !empty($currentUser->tenant_id)) {
             if ($role->company_id && $role->company_id != $currentUser->tenant_id) {
                 return response()->json(['success' => false, 'message' => 'Unauthorized to delete role for another organization.'], 403);
             }
