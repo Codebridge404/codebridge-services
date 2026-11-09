@@ -42,8 +42,9 @@ class DatabaseBackupCommand extends Command
             $encrypted = Crypt::encrypt($compressed, false);
             $checksum = hash('sha256', $encrypted);
             $timestamp = now()->format('Ymd_His');
-            $filename = "backup_{$database}_{$timestamp}.sql.gz.enc";
-            $checksumFilename = "backup_{$database}_{$timestamp}.sha256";
+            $cleanDbName = preg_replace('/[^A-Za-z0-9_\-]/', '_', basename((string) $database)) ?: 'database';
+            $filename = "backup_{$cleanDbName}_{$timestamp}.sql.gz.enc";
+            $checksumFilename = "backup_{$cleanDbName}_{$timestamp}.sha256";
 
             $backupDir = 'backups';
             $fullBackupPath = "{$backupDir}/{$filename}";

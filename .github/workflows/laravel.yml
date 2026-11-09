@@ -35,6 +35,8 @@ jobs:
           DB_DATABASE: database/database.sqlite
           CACHE_STORE: array
           CACHE_DRIVER: array
+          SESSION_DRIVER: array
+          FILESYSTEM_DISK: local
           JWT_SECRET: testing_jwt_secret_key_minimum_32_characters_long_for_security
           JWT_ISSUER: codebridge-auth-service
           JWT_ALGO: HS256

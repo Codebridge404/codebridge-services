@@ -51,8 +51,9 @@ class DatabaseBackupCommand extends Command
             // 4. Integrity Checksum
             $checksum = hash('sha256', $encrypted);
             $timestamp = now()->format('Ymd_His');
-            $filename = "backup_{$database}_{$timestamp}.sql.gz.enc";
-            $checksumFilename = "backup_{$database}_{$timestamp}.sha256";
+            $cleanDbName = preg_replace('/[^A-Za-z0-9_\-]/', '_', basename((string) $database)) ?: 'database';
+            $filename = "backup_{$cleanDbName}_{$timestamp}.sql.gz.enc";
+            $checksumFilename = "backup_{$cleanDbName}_{$timestamp}.sha256";
 
             // 5. Store File
             $backupDir = 'backups';
