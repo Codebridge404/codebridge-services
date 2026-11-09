@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Supplier\StoreSupplierRequest;
 use App\Http\Requests\Supplier\UpdateSupplierRequest;
 use App\Http\Resources\Supplier\SupplierResource;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -68,20 +69,28 @@ class SupplierController extends Controller
         }
 
         if (!empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                  ->orWhere('company_name', 'like', "%{$search}%")
-                  ->orWhere('phone', 'like', "%{$search}%")
-                  ->orWhere('email', 'like', "%{$search}%")
-                  ->orWhere('address', 'like', "%{$search}%");
+            $escaped = SchemaGuard::escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('name', 'like', "%{$escaped}%")
+                  ->orWhere('company_name', 'like', "%{$escaped}%")
+                  ->orWhere('phone', 'like', "%{$escaped}%")
+                  ->orWhere('email', 'like', "%{$escaped}%")
+                  ->orWhere('address', 'like', "%{$escaped}%");
             });
         }
 
-        $suppliers = $query->orderBy('name', 'asc')->get();
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->orderBy('name', 'asc')->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => SupplierResource::collection($suppliers),
+            'data' => SupplierResource::collection($paginator->items()),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 

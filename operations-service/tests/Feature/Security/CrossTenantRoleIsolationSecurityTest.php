@@ -243,6 +243,7 @@ class CrossTenantRoleIsolationSecurityTest extends TestCase
     {
         $payload = array_merge([
             'iss' => config('jwt.issuer', 'codebridge-auth-service'),
+            'aud' => config('jwt.audience', 'codebridge-api'),
             'sub' => (string) $userId,
             'name' => 'Multi Tenant User',
             'email' => "user{$userId}@example.com",
@@ -692,9 +693,10 @@ class CrossTenantRoleIsolationSecurityTest extends TestCase
             'selling_price' => 11.00,
         ])->assertStatus(201);
 
-        // Call 4: Auth outage (500) -> fails closed with 401 and zero mutations
+        // Call 4: Fresh token hits Auth outage (500) -> fails closed with 401 and zero mutations
+        $tokenAOutage = $this->mintJwt($userId, $this->tenantAId, 'admin');
         $this->withHeaders([
-            'Authorization' => "Bearer {$tokenA}",
+            'Authorization' => "Bearer {$tokenAOutage}",
         ])->postJson('/api/v1/products', [
             'name' => 'Blocked On Outage',
             'sku' => 'HTTP-ERR-1',

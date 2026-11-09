@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
+use App\Support\TenantCatalogCache;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * [BD-0100] Supplier Purchase Orders, Goods Receipt & Cost Tracking Controller
@@ -32,46 +34,92 @@ use Illuminate\Support\Facades\Schema;
  */
 class PurchaseController extends Controller
 {
-    use \App\Traits\ResolvesTenantContext;
+    use ResolvesTenantContext;
+
+    private function writeTenantId(?string $tenantId): ?string
+    {
+        return ($tenantId === null || $tenantId === 'all') ? null : $tenantId;
+    }
+
+    private function isSuperAdminAll(Request $request, ?string $tenantId): bool
+    {
+        return $tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+    }
+
+    private function assertOutletBelongsToTenant($outletId, ?string $writeTenantId, bool $isSuperAdminAll): void
+    {
+        if (empty($outletId) || $isSuperAdminAll || $writeTenantId === null) {
+            return;
+        }
+        $outlet = DB::table('outlets')->where('id', $outletId)->first();
+        if ($outlet && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== (string) $writeTenantId) {
+            abort(403, 'Unauthorized: Outlet belongs to another organization.');
+        }
+    }
+
+    private function assertProductBelongsToTenant($productId, ?string $writeTenantId, bool $isSuperAdminAll): void
+    {
+        if (empty($productId) || $isSuperAdminAll || $writeTenantId === null) {
+            return;
+        }
+        $product = DB::table('products')->where('id', $productId)->first();
+        if ($product && $product->tenant_id !== null && (string) $product->tenant_id !== (string) $writeTenantId) {
+            abort(403, 'Unauthorized: Product belongs to another organization.');
+        }
+    }
 
     public function purchases(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $tenantId);
+        $perPage = min(100, max(1, (int) $request->query('per_page', 30)));
         $query = DB::table('purchases');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            if (Schema::hasColumn('purchases', 'tenant_id')) {
-                $query->where('tenant_id', $tenantId);
-            }
+        if (!$isSuperAdminAll) {
+            $query->where('tenant_id', $tenantId);
         }
 
-        $purchases = $query->orderBy('created_at', 'desc')->get();
-        return response()->json(['status' => 'success', 'data' => $purchases]);
+        $paginator = $query->orderBy('created_at', 'desc')->paginate($perPage);
+        return response()->json([
+            'status' => 'success',
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ]);
     }
 
     public function purchaseOrders(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $tenantId);
+        $perPage = min(100, max(1, (int) $request->query('per_page', 30)));
         $query = DB::table('purchase_orders');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenant = DB::table('purchase_orders')->where('tenant_id', $tenantId)->exists();
-            if ($hasTenant) {
-                $query->where('tenant_id', $tenantId);
-            } else {
-                $query->where(function ($q) use ($tenantId) {
-                    $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-                });
-            }
+        if (!$isSuperAdminAll) {
+            $query->where('tenant_id', $tenantId);
         }
 
-        $orders = $query->orderBy('created_at', 'desc')->get();
-        return response()->json(['status' => 'success', 'data' => $orders]);
+        $paginator = $query->orderBy('created_at', 'desc')->paginate($perPage);
+        return response()->json([
+            'status' => 'success',
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ]);
     }
 
     public function store(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $writeTenantId = $this->writeTenantId($resolvedTenantId);
         $validated = $request->validate([
             'supplier' => 'required|string|max:255',
             'po_number' => 'nullable|string|max:100',
@@ -84,7 +132,7 @@ class PurchaseController extends Controller
         $poNumber = $validated['po_number'] ?? ('PO-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -4)));
 
         $id = DB::table('purchase_orders')->insertGetId([
-            'tenant_id' => $tenantId,
+            'tenant_id' => $writeTenantId,
             'po_number' => $poNumber,
             'supplier' => $validated['supplier'],
             'items_count' => $validated['items_count'] ?? 1,
@@ -101,6 +149,15 @@ class PurchaseController extends Controller
 
     public function updateStatus(Request $request, $id)
     {
+        $this->getTenantId($request, true);
+
+        $po = DB::table('purchase_orders')->where('id', $id)->first();
+        if (!$po) {
+            return response()->json(['status' => 'error', 'message' => 'PO not found'], 404);
+        }
+
+        $this->authorizeTenantResource($po->tenant_id, $request, 'Purchase order');
+
         $validated = $request->validate([
             'status' => 'required|string|in:pending,ordered,approved,received,cancelled',
         ]);
@@ -116,29 +173,53 @@ class PurchaseController extends Controller
 
     public function receive(Request $request, $id)
     {
-        $tenantId = $this->getTenantId($request);
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $resolvedTenantId);
+
         $po = DB::table('purchase_orders')->where('id', $id)->first();
 
         if (!$po) {
             return response()->json(['status' => 'error', 'message' => 'PO not found'], 404);
         }
 
-        $userId = $request->user()?->id ?? 1;
-        $items = $request->input('items', []);
-        $outletId = $request->input('outlet_id');
+        $this->authorizeTenantResource($po->tenant_id, $request, 'Purchase order');
 
-        if (empty($outletId)) {
-            $firstOutlet = DB::table('outlets')->first();
-            $outletId = $firstOutlet?->id ?? '0d612401-62c2-4e9e-9857-69e40f24c86d';
+        $validated = $request->validate([
+            'outlet_id' => 'nullable|integer|min:1',
+            'items' => 'nullable|array',
+            'items.*.product_id' => 'required_with:items|integer|min:1',
+            'items.*.quantity' => 'required_with:items|integer|min:1',
+            'items.*.unit_cost' => 'nullable|numeric|min:0',
+        ]);
+
+        $writeTenantId = $po->tenant_id !== null
+            ? (string) $po->tenant_id
+            : $this->writeTenantId($resolvedTenantId);
+
+        $userId = $request->user()?->id ?? 1;
+        $items = $validated['items'] ?? [];
+        $outletId = $validated['outlet_id'] ?? null;
+
+        if ($outletId !== null) {
+            $this->assertOutletBelongsToTenant($outletId, $writeTenantId, $isSuperAdminAll);
+        } else {
+            $outletId = DB::table('outlets')
+                ->when($writeTenantId !== null, fn ($q) => $q->where('tenant_id', $writeTenantId))
+                ->value('id') ?? 1;
         }
 
-        DB::transaction(function () use ($po, $id, $tenantId, $userId, $outletId, $items) {
+        foreach ($items as $item) {
+            $this->assertProductBelongsToTenant($item['product_id'], $writeTenantId, $isSuperAdminAll);
+        }
+
+        DB::transaction(function () use ($po, $id, $writeTenantId, $userId, $outletId, $items) {
             DB::table('purchase_orders')->where('id', $id)->update([
                 'status' => 'received',
                 'updated_at' => now(),
             ]);
 
             DB::table('purchases')->insert([
+                'tenant_id' => $writeTenantId,
                 'purchase_ref' => $po->po_number,
                 'supplier' => $po->supplier,
                 'invoice_no' => 'INV-' . strtoupper(substr(uniqid(), -6)),
@@ -150,8 +231,6 @@ class PurchaseController extends Controller
             ]);
 
             foreach ($items as $item) {
-                if (empty($item['product_id']) || empty($item['quantity'])) continue;
-
                 $productId = $item['product_id'];
                 $qty = (int) $item['quantity'];
                 $unitCost = $item['unit_cost'] ?? 0;
@@ -159,6 +238,7 @@ class PurchaseController extends Controller
                 $balance = DB::table('inventory_balances')
                     ->where('outlet_id', $outletId)
                     ->where('product_id', $productId)
+                    ->when($writeTenantId !== null, fn ($q) => $q->where('tenant_id', $writeTenantId))
                     ->first();
 
                 if ($balance) {
@@ -167,18 +247,19 @@ class PurchaseController extends Controller
                         ->increment('on_hand', $qty);
                 } else {
                     DB::table('inventory_balances')->insert([
-                        'tenant_id' => $tenantId,
+                        'tenant_id' => $writeTenantId,
                         'outlet_id' => $outletId,
                         'product_id' => $productId,
                         'on_hand' => $qty,
                         'reserved' => 0,
+                        'available' => $qty,
                         'created_at' => now(),
                         'updated_at' => now(),
                     ]);
                 }
 
                 DB::table('inventory_movements')->insert([
-                    'tenant_id' => $tenantId,
+                    'tenant_id' => $writeTenantId,
                     'outlet_id' => $outletId,
                     'product_id' => $productId,
                     'user_id' => $userId,
@@ -194,6 +275,10 @@ class PurchaseController extends Controller
             }
         });
 
+        if (!empty($items)) {
+            TenantCatalogCache::invalidate($writeTenantId, 'products');
+        }
+
         $updated = DB::table('purchase_orders')->where('id', $id)->first();
         return response()->json(['status' => 'success', 'data' => $updated, 'message' => 'PO received and stock updated.']);
     }
@@ -204,8 +289,12 @@ class PurchaseController extends Controller
      */
     public function reorderSuggestions(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $resolvedTenantId);
+        $writeTenantId = $this->writeTenantId($resolvedTenantId);
         $outletId = $request->query('outlet_id');
+
+        $this->assertOutletBelongsToTenant($outletId, $writeTenantId, $isSuperAdminAll);
 
         $productsQuery = DB::table('products as p')
             ->leftJoin('brands as b', 'p.brand_id', '=', 'b.id')
@@ -213,10 +302,8 @@ class PurchaseController extends Controller
             ->where('p.is_active', true)
             ->where('p.min_reorder_point', '>', 0);
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $productsQuery->where(function ($q) use ($tenantId) {
-                $q->where('p.tenant_id', $tenantId)->orWhereNull('p.tenant_id');
-            });
+        if (!$isSuperAdminAll) {
+            $productsQuery->where('p.tenant_id', $resolvedTenantId);
         }
 
         $products = $productsQuery->select(
@@ -230,21 +317,33 @@ class PurchaseController extends Controller
             'p.min_reorder_point',
             'b.name as brand_name',
             'c.name as category_name'
-        )->get();
+        )->limit(500)->get();
 
-        $defaultSupplier = DB::table('suppliers')->where('is_active', true)->first();
+        $defaultSupplier = DB::table('suppliers')
+            ->where('is_active', true)
+            ->when(!$isSuperAdminAll, fn ($q) => $q->where('tenant_id', $resolvedTenantId))
+            ->first();
         $defaultSupplierName = $defaultSupplier?->name ?? 'Standard Distribution Co.';
+
+        $productIds = $products->pluck('id')->all();
+        $balancesByProduct = [];
+        if (!empty($productIds)) {
+            $balancesByProduct = DB::table('inventory_balances')
+                ->whereIn('product_id', $productIds)
+                ->when(!$isSuperAdminAll, fn ($q) => $q->where('tenant_id', $resolvedTenantId))
+                ->when(!empty($outletId), fn ($q) => $q->where('outlet_id', $outletId))
+                ->select('product_id', DB::raw('COALESCE(SUM(on_hand), 0) as total_on_hand'))
+                ->groupBy('product_id')
+                ->pluck('total_on_hand', 'product_id')
+                ->all();
+        }
 
         $suggestionsBySupplier = [];
         $totalSuggestedItems = 0;
         $totalEstReplenishmentCost = 0;
 
         foreach ($products as $product) {
-            $balanceQuery = DB::table('inventory_balances')->where('product_id', $product->id);
-            if ($outletId) {
-                $balanceQuery->where('outlet_id', $outletId);
-            }
-            $currentOnHand = (int) $balanceQuery->sum('on_hand');
+            $currentOnHand = (int) ($balancesByProduct[$product->id] ?? 0);
 
             if ($currentOnHand <= $product->min_reorder_point) {
                 $targetSafetyStock = max($product->min_reorder_point * 2, 10);
@@ -303,7 +402,8 @@ class PurchaseController extends Controller
      */
     public function autoReorder(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $writeTenantId = $this->writeTenantId($resolvedTenantId);
         $selectedSuppliers = $request->input('suppliers', []);
 
         $suggestionsResponse = $this->reorderSuggestions($request)->getData(true);
@@ -319,7 +419,7 @@ class PurchaseController extends Controller
 
         $createdPOs = [];
 
-        DB::transaction(function () use ($suppliersData, $selectedSuppliers, $tenantId, &$createdPOs) {
+        DB::transaction(function () use ($suppliersData, $selectedSuppliers, $writeTenantId, &$createdPOs) {
             foreach ($suppliersData as $suppData) {
                 $supplierName = $suppData['supplier'];
 
@@ -330,7 +430,7 @@ class PurchaseController extends Controller
                 $poNumber = 'PO-AUTO-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -4));
 
                 $id = DB::table('purchase_orders')->insertGetId([
-                    'tenant_id' => $tenantId,
+                    'tenant_id' => $writeTenantId,
                     'po_number' => $poNumber,
                     'supplier' => $supplierName,
                     'items_count' => $suppData['items_count'],

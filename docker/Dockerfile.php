@@ -11,7 +11,7 @@ RUN apk add --no-cache \
     unzip \
     mysql-client \
     linux-headers \
-    && docker-php-ext-install pdo_mysql bcmath zip sockets
+    && docker-php-ext-install pdo_mysql bcmath pcntl zip sockets
 
 # Install Composer
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer

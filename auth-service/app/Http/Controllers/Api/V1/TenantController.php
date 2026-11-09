@@ -15,11 +15,11 @@ use App\Http\Requests\Tenant\UpdateTenantModulesRequest;
 use App\Http\Requests\Tenant\UpdateTenantProfileRequest;
 use App\Http\Requests\Tenant\UpdateTenantRequest;
 use App\Http\Resources\Tenant\TenantResource;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
@@ -164,7 +164,7 @@ class TenantController extends Controller
                 'updated_at'     => now(),
             ]);
 
-            if (Schema::hasTable('registers')) {
+            if (SchemaGuard::hasTable('registers')) {
                 DB::table('registers')->insert([
                     'outlet_id'  => $outletId,
                     'name'       => 'Register #1 (Main)',
@@ -176,7 +176,7 @@ class TenantController extends Controller
             }
 
             // Insert active membership in tenant_users for authenticated owner
-            if (Schema::hasTable('tenant_users')) {
+            if (SchemaGuard::hasTable('tenant_users')) {
                 DB::table('tenant_users')->updateOrInsert(
                     ['tenant_id' => $id, 'user_id' => $authUser->id],
                     [
@@ -192,7 +192,7 @@ class TenantController extends Controller
                     ->where('user_id', $authUser->id)
                     ->value('id');
 
-                if ($tenantUserId && Schema::hasTable('tenant_user_outlets')) {
+                if ($tenantUserId && SchemaGuard::hasTable('tenant_user_outlets')) {
                     DB::table('tenant_user_outlets')->updateOrInsert(
                         ['tenant_user_id' => $tenantUserId, 'outlet_uuid' => $outletUuid],
                         ['is_active' => true, 'created_at' => now(), 'updated_at' => now()]
@@ -201,7 +201,7 @@ class TenantController extends Controller
             }
 
             // Link organization role scoped strictly to this tenant without touching roles in other tenants or super_admin
-            if (Schema::hasTable('user_roles')) {
+            if (SchemaGuard::hasTable('user_roles')) {
                 $roleId = DB::table('roles')->where('slug', 'organization')->value('id');
                 if (!$roleId) {
                     $roleId = DB::table('roles')->whereIn('slug', ['admin', 'owner', 'tenant_admin'])->value('id');
@@ -227,13 +227,13 @@ class TenantController extends Controller
 
             // Update legacy users table columns only if they exist
             $legacyUpdates = ['updated_at' => now()];
-            if (Schema::hasColumn('users', 'tenant_id')) {
+            if (SchemaGuard::hasColumn('users', 'tenant_id')) {
                 $legacyUpdates['tenant_id'] = $id;
             }
-            if (Schema::hasColumn('users', 'outlet_id')) {
+            if (SchemaGuard::hasColumn('users', 'outlet_id')) {
                 $legacyUpdates['outlet_id'] = $outletId;
             }
-            if (Schema::hasColumn('users', 'role') && !\App\Services\UserAuthorizationService::isSuperAdmin($authUser)) {
+            if (SchemaGuard::hasColumn('users', 'role') && !\App\Services\UserAuthorizationService::isSuperAdmin($authUser)) {
                 $legacyUpdates['role'] = 'organization';
             }
             if (count($legacyUpdates) > 1) {
@@ -316,7 +316,7 @@ class TenantController extends Controller
         }
 
         if ($request->filled('q')) {
-            $q = $request->q;
+            $q = SchemaGuard::escapeLike(trim((string) $request->q));
             $query->where(function ($sub) use ($q) {
                 $sub->where('name', 'like', "%$q%")
                     ->orWhere('email', 'like', "%$q%")
@@ -324,84 +324,148 @@ class TenantController extends Controller
             });
         }
 
-        $tenants = $query->get();
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->paginate($perPage);
+        $tenants = collect($paginator->items());
+        $tenantIds = $tenants->pluck('id')->all();
 
-        // Attach subscription and owner info
-        foreach ($tenants as $tenant) {
-            $tenant->owner = null;
-            $tenant->subscription = DB::table('tenant_subscriptions')
-                ->where('tenant_id', $tenant->id)
+        // Batch-load subscriptions, counts, and candidate owners in constant query count
+        $subscriptionsByTenant = empty($tenantIds)
+            ? collect()
+            : DB::table('tenant_subscriptions')
+                ->whereIn('tenant_id', $tenantIds)
                 ->orderBy('created_at', 'desc')
-                ->first();
-            $tenant->subscriptions = $tenant->subscription ? [$tenant->subscription] : [];
+                ->get()
+                ->groupBy('tenant_id');
 
-            // Try finding owner via owner_user_id (ERD standard)
-            if (!empty($tenant->owner_user_id)) {
-                $tenant->owner = DB::table('users as u')
-                    ->leftJoin('user_roles as ur', function ($j) use ($tenant) {
-                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $tenant->id);
-                    })
-                    ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                    ->where('u.id', $tenant->owner_user_id)
-                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
-                    ->first();
-            }
-
-            if (!$tenant->owner) {
-                $tenant->owner = DB::table('users as u')
-                    ->join('tenant_users as tu', function ($j) use ($tenant) {
-                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $tenant->id)->where('tu.status', 'active');
-                    })
-                    ->leftJoin('user_roles as ur', function ($j) use ($tenant) {
-                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $tenant->id);
-                    })
-                    ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                    ->where(function ($q) {
-                        $q->whereIn('r.slug', ['organization', 'admin', 'administrator', 'owner']);
-                    })
-                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
-                    ->first();
-            }
-
-            if (!$tenant->owner) {
-                $tenant->owner = DB::table('users as u')
-                    ->join('tenant_users as tu', function ($j) use ($tenant) {
-                        $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $tenant->id)->where('tu.status', 'active');
-                    })
-                    ->leftJoin('user_roles as ur', function ($j) use ($tenant) {
-                        $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $tenant->id);
-                    })
-                    ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
-                    ->select('u.id', 'u.name', 'u.email', 'u.phone', DB::raw("COALESCE(r.slug, 'organization') as role"), 'u.is_active', 'u.created_at')
-                    ->orderBy('u.created_at', 'asc')
-                    ->first();
-            }
-
+        $usersCountByTenant = collect();
+        if (!empty($tenantIds)) {
             try {
-                $tenant->users_count = DB::table('tenant_users')->where('tenant_id', $tenant->id)->where('status', 'active')->count();
-            } catch (\Throwable $e) {
-                $tenant->users_count = 1;
-            }
-            try {
-                $tenant->outlets_count = DB::table('outlets')->where('tenant_id', $tenant->id)->count();
-            } catch (\Throwable $e) {
-                $tenant->outlets_count = 1;
+                $usersCountByTenant = DB::table('tenant_users')
+                    ->whereIn('tenant_id', $tenantIds)
+                    ->where('status', 'active')
+                    ->groupBy('tenant_id')
+                    ->selectRaw('tenant_id, COUNT(*) as aggregate_count')
+                    ->pluck('aggregate_count', 'tenant_id');
+            } catch (\Throwable) {
+                $usersCountByTenant = collect();
             }
         }
 
+        $outletsCountByTenant = collect();
+        if (!empty($tenantIds)) {
+            try {
+                $outletsCountByTenant = DB::table('outlets')
+                    ->whereIn('tenant_id', $tenantIds)
+                    ->groupBy('tenant_id')
+                    ->selectRaw('tenant_id, COUNT(*) as aggregate_count')
+                    ->pluck('aggregate_count', 'tenant_id');
+            } catch (\Throwable) {
+                $outletsCountByTenant = collect();
+            }
+        }
+
+        $ownerUserIds = $tenants->pluck('owner_user_id')->filter()->unique()->values()->all();
+        $explicitOwnersByUser = empty($ownerUserIds)
+            ? collect()
+            : DB::table('users as u')
+                ->leftJoin('user_roles as ur', function ($j) {
+                    $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true);
+                })
+                ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                ->whereIn('u.id', $ownerUserIds)
+                ->select(
+                    'u.id',
+                    'u.name',
+                    'u.email',
+                    'u.phone',
+                    'ur.tenant_id as role_tenant_id',
+                    DB::raw("COALESCE(r.slug, 'organization') as role"),
+                    'u.is_active',
+                    'u.created_at'
+                )
+                ->get()
+                ->groupBy('id');
+
+        $memberOwnersByTenant = empty($tenantIds)
+            ? collect()
+            : DB::table('tenant_users as tu')
+                ->join('users as u', 'tu.user_id', '=', 'u.id')
+                ->leftJoin('user_roles as ur', function ($j) {
+                    $j->on('u.id', '=', 'ur.user_id')
+                        ->where('ur.is_active', true)
+                        ->on('ur.tenant_id', '=', 'tu.tenant_id');
+                })
+                ->leftJoin('roles as r', 'ur.role_id', '=', 'r.id')
+                ->whereIn('tu.tenant_id', $tenantIds)
+                ->where('tu.status', 'active')
+                ->select(
+                    'tu.tenant_id',
+                    'u.id',
+                    'u.name',
+                    'u.email',
+                    'u.phone',
+                    DB::raw("COALESCE(r.slug, 'organization') as role"),
+                    'u.is_active',
+                    'u.created_at'
+                )
+                ->orderBy('u.created_at', 'asc')
+                ->get()
+                ->groupBy('tenant_id');
+
+        foreach ($tenants as $tenant) {
+            $tenant->owner = null;
+            $tenant->subscription = $subscriptionsByTenant->get($tenant->id)?->first();
+            $tenant->subscriptions = $tenant->subscription ? [$tenant->subscription] : [];
+
+            if (!empty($tenant->owner_user_id)) {
+                $candidates = $explicitOwnersByUser->get($tenant->owner_user_id, collect());
+                $matched = $candidates->firstWhere('role_tenant_id', $tenant->id) ?? $candidates->first();
+                if ($matched) {
+                    $ownerObj = clone $matched;
+                    unset($ownerObj->role_tenant_id);
+                    $tenant->owner = $ownerObj;
+                }
+            }
+
+            if (!$tenant->owner) {
+                $members = $memberOwnersByTenant->get($tenant->id, collect());
+                $adminMember = $members->first(fn ($m) => in_array($m->role, ['organization', 'admin', 'administrator', 'owner'], true));
+                $chosen = $adminMember ?? $members->first();
+                if ($chosen) {
+                    $ownerObj = clone $chosen;
+                    unset($ownerObj->tenant_id);
+                    $tenant->owner = $ownerObj;
+                }
+            }
+
+            $tenant->users_count = (int) ($usersCountByTenant[$tenant->id] ?? 0);
+            $tenant->outlets_count = (int) ($outletsCountByTenant[$tenant->id] ?? 0);
+        }
+
+        $statsRow = DB::table('tenants')
+            ->selectRaw("COUNT(*) as total, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active_count, SUM(CASE WHEN status = 'trial' THEN 1 ELSE 0 END) as trial_count, SUM(CASE WHEN status = 'suspended' THEN 1 ELSE 0 END) as suspended_count, SUM(CASE WHEN client_tier = 'enterprise_org' THEN 1 ELSE 0 END) as enterprise_org_count, SUM(CASE WHEN client_tier = 'business_runner' THEN 1 ELSE 0 END) as business_runner_count, SUM(CASE WHEN client_tier = 'free_personal' THEN 1 ELSE 0 END) as free_personal_count")
+            ->first();
+
         $stats = [
-            'total'          => DB::table('tenants')->count(),
-            'active'         => DB::table('tenants')->where('status', 'active')->count(),
-            'trial'          => DB::table('tenants')->where('status', 'trial')->count(),
-            'suspended'      => DB::table('tenants')->where('status', 'suspended')->count(),
-            'enterprise_org' => DB::table('tenants')->where('client_tier', 'enterprise_org')->count(),
-            'business_runner'=> DB::table('tenants')->where('client_tier', 'business_runner')->count(),
-            'free_personal'  => DB::table('tenants')->where('client_tier', 'free_personal')->count(),
+            'total'          => (int) ($statsRow->total ?? 0),
+            'active'         => (int) ($statsRow->active_count ?? 0),
+            'trial'          => (int) ($statsRow->trial_count ?? 0),
+            'suspended'      => (int) ($statsRow->suspended_count ?? 0),
+            'enterprise_org' => (int) ($statsRow->enterprise_org_count ?? 0),
+            'business_runner'=> (int) ($statsRow->business_runner_count ?? 0),
+            'free_personal'  => (int) ($statsRow->free_personal_count ?? 0),
         ];
 
         return response()->json([
             'success' => true,
             'data'    => TenantResource::collection($tenants),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
             'stats'   => $stats,
         ]);
     }
@@ -533,10 +597,10 @@ class TenantController extends Controller
                         'phone'     => $request->owner_phone ?? $existingUser->phone,
                         'updated_at'=> now(),
                     ];
-                    if (Schema::hasColumn('users', 'tenant_id')) {
+                    if (SchemaGuard::hasColumn('users', 'tenant_id')) {
                         $ownerUpdate['tenant_id'] = $id;
                     }
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+                    if (SchemaGuard::hasColumn('users', 'role')) {
                         $ownerUpdate['role'] = 'organization';
                     }
                     DB::table('users')->where('id', $existingUser->id)->update($ownerUpdate);
@@ -552,10 +616,10 @@ class TenantController extends Controller
                         'created_at' => now(),
                         'updated_at' => now(),
                     ];
-                    if (Schema::hasColumn('users', 'tenant_id')) {
+                    if (SchemaGuard::hasColumn('users', 'tenant_id')) {
                         $ownerInsert['tenant_id'] = $id;
                     }
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'role')) {
+                    if (SchemaGuard::hasColumn('users', 'role')) {
                         $ownerInsert['role'] = 'organization';
                     }
                     $ownerId = DB::table('users')->insertGetId($ownerInsert);
@@ -608,7 +672,7 @@ class TenantController extends Controller
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
 
-        if (Schema::hasColumn('users', 'tenant_id')) {
+        if (SchemaGuard::hasColumn('users', 'tenant_id')) {
             DB::table('users')->where('tenant_id', $id)->update(['tenant_id' => null]);
         }
         DB::table('tenant_users')->where('tenant_id', $id)->delete();
@@ -713,7 +777,7 @@ class TenantController extends Controller
         $maxOutlets = $tenant->max_outlets ?? ($tier === 'enterprise_org' ? 50 : ($tier === 'business_runner' ? 5 : 1));
         $maxRegisters = $tenant->max_registers ?? ($tier === 'enterprise_org' ? 200 : ($tier === 'business_runner' ? 15 : 2));
 
-        $usersCount = ($tenant && Schema::hasTable('tenant_users')) ? DB::table('tenant_users as tu')
+        $usersCount = ($tenant && SchemaGuard::hasTable('tenant_users')) ? DB::table('tenant_users as tu')
             ->join('users as u', 'tu.user_id', '=', 'u.id')
             ->leftJoin('user_roles as ur', function ($j) use ($tenant) {
                 $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $tenant->id);
@@ -726,8 +790,8 @@ class TenantController extends Controller
             })
             ->distinct()
             ->count('u.id') : 0;
-        $outletsCount = ($tenant && Schema::hasTable('outlets')) ? DB::table('outlets')->where('tenant_id', $tenant->id)->count() : 0;
-        $registersCount = ($tenant && Schema::hasTable('registers')) ? DB::table('registers')->join('outlets', 'registers.outlet_id', '=', 'outlets.id')->where('outlets.tenant_id', $tenant->id)->count() : 0;
+        $outletsCount = ($tenant && SchemaGuard::hasTable('outlets')) ? DB::table('outlets')->where('tenant_id', $tenant->id)->count() : 0;
+        $registersCount = ($tenant && SchemaGuard::hasTable('registers')) ? DB::table('registers')->join('outlets', 'registers.outlet_id', '=', 'outlets.id')->where('outlets.tenant_id', $tenant->id)->count() : 0;
 
         return response()->json([
             'status' => 'success',
@@ -916,21 +980,50 @@ class TenantController extends Controller
         }
 
         // Handle uploaded file or direct logo URL / Base64 Data URL (stored to MinIO S3 WebP)
-        if ($request->hasFile('logo') || ($request->has('logo_url') && !empty($request->logo_url))) {
-            $logoSource = $request->file('logo') ?? $request->logo_url;
+        if ($request->hasFile('logo')) {
             try {
                 /** @var \App\Services\ImageService $imageService */
                 $imageService = app(\App\Services\ImageService::class);
-                $updateData['logo_url'] = $imageService->storeLogo($logoSource, $tenant->id, $tenant->logo_url ?? null);
+                $updateData['logo_url'] = $imageService->storeLogo($request->file('logo'), $tenant->id, $tenant->logo_url ?? null);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 422);
             } catch (\Throwable $e) {
-                Log::warning('[TenantController] Logo upload failed, falling back: ' . $e->getMessage());
-                if ($request->hasFile('logo')) {
-                    $file = $request->file('logo');
-                    $ext = $file->getClientOriginalExtension() ?: 'png';
-                    $filename = 'logo_' . $tenant->id . '_' . time() . '.' . $ext;
-                    $file->storeAs('logos', $filename, 'public');
-                    $updateData['logo_url'] = '/storage/logos/' . $filename;
+                Log::warning('[TenantController] Logo upload failed: ' . $e->getMessage());
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to store organization logo.',
+                ], 500);
+            }
+        } elseif ($request->has('logo_url') && !empty($request->logo_url)) {
+            $logoUrlInput = (string) $request->logo_url;
+            if (!\App\Services\ImageService::isSafeImageUrlOrDataUri($logoUrlInput)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unsupported or unsafe organization logo URL/data URI format.',
+                ], 422);
+            }
+            if (stripos(trim($logoUrlInput), 'data:') === 0) {
+                try {
+                    /** @var \App\Services\ImageService $imageService */
+                    $imageService = app(\App\Services\ImageService::class);
+                    $updateData['logo_url'] = $imageService->storeLogo($logoUrlInput, $tenant->id, $tenant->logo_url ?? null);
+                } catch (\InvalidArgumentException $e) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => $e->getMessage(),
+                    ], 422);
+                } catch (\Throwable $e) {
+                    Log::warning('[TenantController] Base64 logo upload failed: ' . $e->getMessage());
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to process organization logo data.',
+                    ], 422);
                 }
+            } else {
+                $updateData['logo_url'] = $logoUrlInput;
             }
         }
 

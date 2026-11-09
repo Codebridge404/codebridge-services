@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
 
@@ -24,7 +25,7 @@ class RestrictPosSession
 
             if (!$isAllowed) {
                 try {
-                    if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    if (SchemaGuard::hasTable('security_events')) {
                         \App\Models\SecurityEvent::record(
                             eventType: 'pos_scope_violation',
                             ruleCode: 'SEC_POS_SCOPE_VIOLATION',

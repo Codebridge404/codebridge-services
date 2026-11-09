@@ -38,23 +38,30 @@ class ProductExportController extends Controller
     public function export(Request $request)
     {
         $tenantId = $this->getTenantId($request, true);
-        $outletId = $request->query('outlet_id', 1);
+        $outletId = max(1, (int) $request->query('outlet_id', 1));
         $categoryId = $request->query('category_id');
         $brandId = $request->query('brand_id');
         $search = $request->query('q') ?? $request->query('search');
         $stockStatus = $request->query('stock_status');
+        $isPlatformSuperAdmin = TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
 
         $query = DB::table('products as p')
             ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
             ->leftJoin('brands as b', 'p.brand_id', '=', 'b.id')
-            ->leftJoin('inventory_balances as ib', function ($join) use ($outletId) {
+            ->leftJoin('inventory_balances as ib', function ($join) use ($outletId, $tenantId) {
                 $join->on('p.id', '=', 'ib.product_id')
                     ->where('ib.outlet_id', '=', $outletId);
+                if ($tenantId !== 'all') {
+                    $join->where(function ($j) use ($tenantId) {
+                        $j->where('ib.tenant_id', '=', $tenantId)
+                          ->orWhereNull('ib.tenant_id');
+                    });
+                }
             })
             ->where('p.is_active', true);
 
         // Strict Tenant Scoping: non-platform-superadmins are strictly locked to their own tenant
-        if ($tenantId !== 'all' || !TenantAuthorizationService::hasPlatformSuperAdminRole($request->user())) {
+        if ($tenantId !== 'all' || !$isPlatformSuperAdmin) {
             $query->where('p.tenant_id', $tenantId);
         }
 
@@ -67,7 +74,7 @@ class ProductExportController extends Controller
         }
 
         if (!empty($search)) {
-            $searchTerm = trim((string) $search);
+            $searchTerm = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim((string) $search));
             $query->where(function ($q) use ($searchTerm) {
                 $q->where('p.name', 'like', "%{$searchTerm}%")
                   ->orWhere('p.sku', 'like', "%{$searchTerm}%")

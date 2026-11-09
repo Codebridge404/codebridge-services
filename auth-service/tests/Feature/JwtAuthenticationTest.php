@@ -4,7 +4,10 @@ namespace Tests\Feature;
 
 use App\Models\User;
 use App\Services\JwtService;
+use App\Services\PinService;
+use Firebase\JWT\JWT;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
@@ -45,6 +48,105 @@ class JwtAuthenticationTest extends TestCase
         $this->assertEquals((string) $user->id, $payload['sub']);
         $this->assertEquals('jwt_user@codebridges.io', $payload['email']);
         $this->assertEquals('admin', $payload['role']);
+        $this->assertEquals(config('jwt.audience', 'codebridge-api'), $payload['aud']);
+        $this->assertSame('access', $payload['token_use']);
+    }
+
+    public function test_jwt_ttl_respects_short_configured_ttl_without_1440_floor(): void
+    {
+        config(['jwt.ttl' => 15]);
+        $jwtService = new JwtService();
+        $user = User::factory()->create(['role' => 'cashier']);
+
+        $token = $jwtService->generateTokenForUser($user);
+        $payload = $jwtService->verify($token);
+
+        $this->assertNotNull($payload);
+        $this->assertLessThanOrEqual(900, $payload['exp'] - $payload['iat']);
+        $this->assertGreaterThan(0, $payload['exp'] - $payload['iat']);
+    }
+
+    public function test_jwt_with_wrong_audience_or_missing_token_use_is_rejected(): void
+    {
+        $user = User::factory()->create(['role' => 'supervisor']);
+        $secret = (string) config('jwt.secret');
+        $algo = (string) config('jwt.algo', 'HS256');
+        $now = time();
+
+        $wrongAudienceJwt = JWT::encode([
+            'iss' => config('jwt.issuer', 'codebridge-auth-service'),
+            'aud' => 'wrong-audience',
+            'sub' => (string) $user->id,
+            'token_use' => 'access',
+            'iat' => $now,
+            'exp' => $now + 900,
+        ], $secret, $algo);
+
+        $this->withHeaders(['Authorization' => "Bearer {$wrongAudienceJwt}"])
+            ->getJson('/api/v1/me')
+            ->assertStatus(401);
+
+        $missingTokenUseJwt = JWT::encode([
+            'iss' => config('jwt.issuer', 'codebridge-auth-service'),
+            'aud' => config('jwt.audience', 'codebridge-api'),
+            'sub' => (string) $user->id,
+            'iat' => $now,
+            'exp' => $now + 900,
+        ], $secret, $algo);
+
+        $this->withHeaders(['Authorization' => "Bearer {$missingTokenUseJwt}"])
+            ->getJson('/api/v1/me')
+            ->assertStatus(401)
+            ->assertJson(['code' => 'INVALID_TOKEN_TYPE']);
+    }
+
+    public function test_user_controller_store_and_update_hash_pin_with_bcrypt_and_reject_plaintext(): void
+    {
+        $this->assertFalse(PinService::matches('1234', '1234'));
+
+        $admin = User::factory()->inWorkspace()->create(['role' => 'admin']);
+        DB::table('roles')->insertOrIgnore([
+            'tenant_id' => null,
+            'name' => 'Supervisor',
+            'slug' => 'supervisor',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $jwt = app(JwtService::class)->generateTokenForUser($admin);
+
+        $createRes = $this->withHeaders(['Authorization' => "Bearer {$jwt}"])
+            ->postJson('/api/v1/users', [
+                'name' => 'Created Supervisor',
+                'email' => 'pin.sup@codebridges.io',
+                'password' => 'SecretPass123!',
+                'role' => 'supervisor',
+                'pin_code' => '2468',
+            ]);
+        $createRes->assertStatus(201);
+        $createdId = $createRes->json('data.id');
+
+        $storedHash = DB::table('user_pos_pins')->where('user_id', $createdId)->value('pin_hash');
+        $this->assertNotNull($storedHash);
+        $this->assertTrue(str_starts_with($storedHash, '$2') || str_starts_with($storedHash, '$argon2'));
+        $this->assertTrue(Hash::check('2468', $storedHash));
+
+        $this->withHeaders(['Authorization' => "Bearer {$jwt}"])
+            ->postJson('/api/v1/auth/verify-pin', ['pin_code' => '2468'])
+            ->assertStatus(200);
+
+        $this->withHeaders(['Authorization' => "Bearer {$jwt}"])
+            ->putJson("/api/v1/users/{$createdId}", [
+                'pin_code' => '9753',
+            ])
+            ->assertStatus(200);
+
+        $updatedHash = DB::table('user_pos_pins')->where('user_id', $createdId)->value('pin_hash');
+        $this->assertTrue(str_starts_with($updatedHash, '$2') || str_starts_with($updatedHash, '$argon2'));
+        $this->assertTrue(Hash::check('9753', $updatedHash));
+
+        $this->withHeaders(['Authorization' => "Bearer {$jwt}"])
+            ->postJson('/api/v1/auth/verify-pin', ['pin_code' => '9753'])
+            ->assertStatus(200);
     }
 
     public function test_protected_routes_accept_jwt_bearer_token(): void

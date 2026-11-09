@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\RateLimiter;
@@ -53,7 +54,7 @@ class RateLimitAuthMiddleware
             $seconds = max(1, RateLimiter::availableIn($throttleKey));
 
             try {
-                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'auth_rate_limit_exceeded',
                         ruleCode: 'SEC_AUTH_RATE_LIMIT',

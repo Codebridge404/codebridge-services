@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\TenantCatalogCache;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
@@ -33,4 +34,33 @@ class TenantOperationSetting extends Model
         'default_tax_percent' => 'decimal:4',
         'auto_lock_minutes' => 'integer',
     ];
+
+    protected static function booted(): void
+    {
+        static::saved(function (self $setting): void {
+            self::invalidateForTenant($setting->tenant_id !== null ? (string) $setting->tenant_id : null);
+        });
+
+        static::deleted(function (self $setting): void {
+            self::invalidateForTenant($setting->tenant_id !== null ? (string) $setting->tenant_id : null);
+        });
+    }
+
+    public static function getForTenant(?string $tenantId): ?self
+    {
+        return TenantCatalogCache::remember(
+            'settings',
+            $tenantId,
+            ['tenant' => $tenantId ?? 'global'],
+            fn () => $tenantId !== null
+                ? self::where('tenant_id', $tenantId)->first()
+                : self::whereNull('tenant_id')->first(),
+            300
+        );
+    }
+
+    public static function invalidateForTenant(?string $tenantId): void
+    {
+        TenantCatalogCache::invalidate($tenantId, 'settings');
+    }
 }

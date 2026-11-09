@@ -3,18 +3,28 @@
 namespace App\Mail;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
-class EndOfDayZReportMail extends Mailable
+class EndOfDayZReportMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
 
+    public int $tries = 3;
+
+    /**
+     * @var array<int, int>
+     */
+    public array $backoff = [10, 60];
+
     public function __construct(
         public array $reportData
-    ) {}
+    ) {
+        $this->onQueue('notifications');
+    }
 
     public function envelope(): Envelope
     {

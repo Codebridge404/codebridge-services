@@ -58,11 +58,14 @@ kubectl -n "$NAMESPACE" set image deployment/operations-service "operations-serv
 for service in auth-service operations-service; do
     kubectl -n "$NAMESPACE" rollout status "deployment/$service" --timeout=180s
     kubectl -n "$NAMESPACE" exec "deployment/$service" -- php artisan migrate --force
-    kubectl -n "$NAMESPACE" exec "deployment/$service" -- php artisan optimize:clear
+    kubectl -n "$NAMESPACE" exec "deployment/$service" -- php artisan optimize
 done
 kubectl -n "$NAMESPACE" set image deployment/auth-horizon "worker=$AUTH_IMAGE"
 kubectl -n "$NAMESPACE" set image deployment/operations-horizon "worker=$OPS_IMAGE"
 kubectl -n "$NAMESPACE" set image cronjob/auth-scheduler "scheduler=$AUTH_IMAGE"
+kubectl -n "$NAMESPACE" set image cronjob/operations-scheduler "scheduler=$OPS_IMAGE" 2>/dev/null || true
+kubectl -n "$NAMESPACE" set image cronjob/auth-db-backup "db-backup=$AUTH_IMAGE" 2>/dev/null || true
+kubectl -n "$NAMESPACE" set image cronjob/operations-db-backup "db-backup=$OPS_IMAGE" 2>/dev/null || true
 
 # The shared gateway rejects unknown Host headers, including a probe's pod IP.
 kubectl -n "$NAMESPACE" patch deployment gateway --type=strategic -p '{"spec":{"template":{"spec":{"containers":[{"name":"nginx","readinessProbe":{"httpGet":{"httpHeaders":[{"name":"Host","value":"localhost"}]}},"livenessProbe":{"httpGet":{"httpHeaders":[{"name":"Host","value":"localhost"}]}}}]}}}}'

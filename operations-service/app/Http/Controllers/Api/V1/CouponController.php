@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -31,23 +33,39 @@ use Illuminate\Support\Facades\DB;
  */
 class CouponController extends Controller
 {
+    use ResolvesTenantContext;
+
     /**
      * Validate Coupon Code & Compute Discount
      */
     public function validateCoupon(Request $request)
     {
+        $tenantId = $this->getTenantId($request, false);
+        $isPlatformSuperAdmin = $request->user() && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+
         $validated = $request->validate([
-            'code' => 'required|string',
+            'code' => 'required|string|max:100',
             'subtotal' => 'required|numeric|min:0',
         ]);
 
         $code = strtoupper(trim($validated['code']));
         $subtotal = (float) $validated['subtotal'];
 
-        $coupon = DB::table('coupons')
+        $couponQuery = DB::table('coupons')
             ->where(DB::raw('UPPER(code)'), $code)
-            ->where('is_active', true)
-            ->first();
+            ->where('is_active', true);
+
+        if (!empty($tenantId) && $tenantId !== 'all') {
+            $couponQuery->where(function ($q) use ($tenantId) {
+                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+            })->orderByRaw('CASE WHEN tenant_id IS NULL THEN 1 ELSE 0 END ASC');
+        } elseif ($tenantId === 'all' && $isPlatformSuperAdmin) {
+            // Super admin cross-tenant lookup
+        } else {
+            $couponQuery->whereNull('tenant_id');
+        }
+
+        $coupon = $couponQuery->first();
 
         if (!$coupon) {
             return response()->json([

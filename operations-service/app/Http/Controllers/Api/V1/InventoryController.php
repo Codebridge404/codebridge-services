@@ -9,6 +9,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
+use App\Support\TenantCatalogCache;
 use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -37,48 +39,87 @@ class InventoryController extends Controller
 {
     use ResolvesTenantContext;
 
+    private function escapeLike(string $value): string
+    {
+        return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $value);
+    }
+
+    private function writeTenantId(?string $tenantId): ?string
+    {
+        return ($tenantId === null || $tenantId === 'all') ? null : $tenantId;
+    }
+
+    private function isSuperAdminAll(Request $request, ?string $tenantId): bool
+    {
+        return $tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+    }
+
+    private function assertOutletBelongsToTenant($outletId, ?string $writeTenantId, bool $isSuperAdminAll): void
+    {
+        if (empty($outletId) || $isSuperAdminAll || $writeTenantId === null) {
+            return;
+        }
+        $outlet = DB::table('outlets')->where('id', $outletId)->first();
+        if ($outlet && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== (string) $writeTenantId) {
+            abort(403, 'Unauthorized: Outlet belongs to another organization.');
+        }
+    }
+
+    private function assertProductBelongsToTenant($productId, ?string $writeTenantId, bool $isSuperAdminAll): void
+    {
+        if (empty($productId) || $isSuperAdminAll || $writeTenantId === null) {
+            return;
+        }
+        $product = DB::table('products')->where('id', $productId)->first();
+        if ($product && $product->tenant_id !== null && (string) $product->tenant_id !== (string) $writeTenantId) {
+            abort(403, 'Unauthorized: Product belongs to another organization.');
+        }
+    }
+
     public function balances(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $tenantId);
+        $writeTenantId = $this->writeTenantId($tenantId);
+
         $outletId = $request->query('outlet_id');
         $status = $request->query('status');
         $search = $request->query('q');
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+
+        $this->assertOutletBelongsToTenant($outletId, $writeTenantId, $isSuperAdminAll);
 
         $query = DB::table('products as p')
-            ->leftJoin('inventory_balances as ib', function ($join) use ($outletId) {
+            ->leftJoin('inventory_balances as ib', function ($join) use ($outletId, $isSuperAdminAll, $tenantId) {
                 $join->on('p.id', '=', 'ib.product_id');
-                if (! empty($outletId)) {
+                if (!$isSuperAdminAll) {
+                    $join->where('ib.tenant_id', '=', $tenantId);
+                }
+                if (!empty($outletId)) {
                     $join->where('ib.outlet_id', '=', $outletId);
                 }
             })
             ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
-            ->leftJoin('outlets as o', function ($join) {
+            ->leftJoin('outlets as o', function ($join) use ($isSuperAdminAll, $tenantId) {
                 $join->on('ib.outlet_id', '=', 'o.id');
+                if (!$isSuperAdminAll) {
+                    $join->where(function ($q) use ($tenantId) {
+                        $q->where('o.tenant_id', '=', $tenantId)->orWhereNull('o.tenant_id');
+                    });
+                }
             })
             ->where('p.is_active', true);
 
-        // Scope to tenant organization
-        if (! empty($tenantId) && $tenantId !== 'all') {
-            $hasTenantProducts = DB::table('products')
-                ->where('tenant_id', $tenantId)
-                ->where('is_active', true)
-                ->exists();
-
-            if ($hasTenantProducts) {
-                $query->where('p.tenant_id', $tenantId);
-            } else {
-                $query->where(function ($q) use ($tenantId) {
-                    $q->where('p.tenant_id', $tenantId)
-                        ->orWhereNull('p.tenant_id');
-                });
-            }
+        if (!$isSuperAdminAll) {
+            $query->where('p.tenant_id', $tenantId);
         }
 
-        if (! empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('p.name', 'like', "%{$search}%")
-                    ->orWhere('p.sku', 'like', "%{$search}%")
-                    ->orWhere('p.barcode', 'like', "%{$search}%");
+        if (!empty($search)) {
+            $escaped = $this->escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('p.name', 'like', "%{$escaped}%")
+                    ->orWhere('p.sku', 'like', "%{$escaped}%")
+                    ->orWhere('p.barcode', 'like', "%{$escaped}%");
             });
         }
 
@@ -90,10 +131,9 @@ class InventoryController extends Controller
             $query->whereRaw('COALESCE(ib.on_hand, 0) > 0');
         }
 
-        $escapedOutletId = addslashes((string) ($outletId ?? '1'));
-        $balances = $query->select(
+        $fallbackOutletId = is_numeric($outletId) ? (int) $outletId : 1;
+        $paginator = $query->select(
             DB::raw('COALESCE(ib.id, p.id) as balance_id'),
-            DB::raw("COALESCE(ib.outlet_id, '{$escapedOutletId}') as outlet_id"),
             DB::raw("COALESCE(o.name, 'Main Outlet') as outlet_name"),
             'p.id as product_id',
             'p.tenant_id',
@@ -110,58 +150,65 @@ class InventoryController extends Controller
             DB::raw('(COALESCE(ib.on_hand, 0) - COALESCE(ib.reserved, 0)) as available'),
             DB::raw('CASE WHEN COALESCE(p.min_reorder_point, 0) > 0 AND COALESCE(ib.on_hand, 0) <= p.min_reorder_point THEN 1 ELSE 0 END as is_low_stock')
         )
+            ->selectRaw('COALESCE(ib.outlet_id, ?) as outlet_id', [$fallbackOutletId])
             ->orderBy('p.name', 'asc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => $balances,
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 
     public function movements(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $tenantId);
+        $writeTenantId = $this->writeTenantId($tenantId);
+
         $outletId = $request->query('outlet_id');
         $movementType = $request->query('type');
         $search = $request->query('q');
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+
+        $this->assertOutletBelongsToTenant($outletId, $writeTenantId, $isSuperAdminAll);
 
         $query = DB::table('inventory_movements as im')
             ->join('products as p', 'im.product_id', '=', 'p.id')
             ->join('outlets as o', 'im.outlet_id', '=', 'o.id')
             ->leftJoin('users as u', 'im.user_id', '=', 'u.id');
 
-        // Scope to tenant organization
-        if (! empty($tenantId) && $tenantId !== 'all') {
-            $hasTenantMovements = DB::table('inventory_movements')->where('tenant_id', $tenantId)->exists();
-            if ($hasTenantMovements) {
-                $query->where('im.tenant_id', $tenantId);
-            } else {
-                $query->where(function ($q) use ($tenantId) {
-                    $q->where('im.tenant_id', $tenantId)->orWhereNull('im.tenant_id');
-                });
-            }
+        if (!$isSuperAdminAll) {
+            $query->where('im.tenant_id', $tenantId);
         }
 
-        if (! empty($outletId)) {
+        if (!empty($outletId)) {
             $query->where('im.outlet_id', $outletId);
         }
 
-        if (! empty($movementType)) {
+        if (!empty($movementType)) {
             $query->where('im.movement_type', $movementType);
         }
 
-        if (! empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('p.name', 'like', "%{$search}%")
-                    ->orWhere('p.sku', 'like', "%{$search}%")
-                    ->orWhere('im.reference_id', 'like', "%{$search}%")
-                    ->orWhere('im.notes', 'like', "%{$search}%");
+        if (!empty($search)) {
+            $escaped = $this->escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('p.name', 'like', "%{$escaped}%")
+                    ->orWhere('p.sku', 'like', "%{$escaped}%")
+                    ->orWhere('im.reference_id', 'like', "%{$escaped}%")
+                    ->orWhere('im.notes', 'like', "%{$escaped}%");
             });
         }
 
-        $movements = $query->select(
+        $paginator = $query->select(
             'im.id',
+            'im.tenant_id',
             'im.outlet_id',
             'o.name as outlet_name',
             'im.product_id',
@@ -177,33 +224,46 @@ class InventoryController extends Controller
             'im.created_at'
         )
             ->orderBy('im.created_at', 'desc')
-            ->limit(100)
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => $movements,
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 
     public function receive(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $resolvedTenantId);
+        $writeTenantId = $this->writeTenantId($resolvedTenantId);
+
         $validated = $request->validate([
-            'outlet_id' => 'required',
+            'outlet_id' => 'required|integer|min:1',
             'po_number' => 'nullable|string|max:100',
             'supplier_name' => 'nullable|string|max:255',
             'items' => 'required|array|min:1',
-            'items.*.product_id' => 'required',
+            'items.*.product_id' => 'required|integer|min:1',
             'items.*.quantity' => 'required|integer|min:1',
             'items.*.unit_cost' => 'nullable|numeric|min:0',
         ]);
+
+        $this->assertOutletBelongsToTenant($validated['outlet_id'], $writeTenantId, $isSuperAdminAll);
+        foreach ($validated['items'] as $item) {
+            $this->assertProductBelongsToTenant($item['product_id'], $writeTenantId, $isSuperAdminAll);
+        }
 
         $userId = $request->user() ? $request->user()->id : 1;
         $outletId = $validated['outlet_id'];
         $poNumber = $validated['po_number'] ?? ('PO-'.strtoupper(substr(uniqid(), -6)));
 
-        DB::transaction(function () use ($validated, $tenantId, $userId, $outletId, $poNumber) {
+        DB::transaction(function () use ($validated, $writeTenantId, $userId, $outletId, $poNumber) {
             foreach ($validated['items'] as $item) {
                 $productId = $item['product_id'];
                 $qty = $item['quantity'];
@@ -213,6 +273,7 @@ class InventoryController extends Controller
                 $balance = DB::table('inventory_balances')
                     ->where('outlet_id', $outletId)
                     ->where('product_id', $productId)
+                    ->when($writeTenantId !== null, fn ($q) => $q->where('tenant_id', $writeTenantId))
                     ->first();
 
                 if ($balance) {
@@ -221,7 +282,7 @@ class InventoryController extends Controller
                         ->increment('on_hand', $qty);
                 } else {
                     DB::table('inventory_balances')->insert([
-                        'tenant_id' => $tenantId,
+                        'tenant_id' => $writeTenantId,
                         'outlet_id' => $outletId,
                         'product_id' => $productId,
                         'on_hand' => $qty,
@@ -233,7 +294,7 @@ class InventoryController extends Controller
 
                 // Append to movements ledger
                 DB::table('inventory_movements')->insert([
-                    'tenant_id' => $tenantId,
+                    'tenant_id' => $writeTenantId,
                     'outlet_id' => $outletId,
                     'product_id' => $productId,
                     'user_id' => $userId,
@@ -248,6 +309,8 @@ class InventoryController extends Controller
             }
         });
 
+        TenantCatalogCache::invalidate($writeTenantId, 'products');
+
         return response()->json([
             'status' => 'success',
             'message' => 'Stock received successfully and ledger updated.',
@@ -257,15 +320,21 @@ class InventoryController extends Controller
 
     public function adjust(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $resolvedTenantId);
+        $writeTenantId = $this->writeTenantId($resolvedTenantId);
+
         $validated = $request->validate([
-            'outlet_id' => 'required',
-            'product_id' => 'required',
+            'outlet_id' => 'required|integer|min:1',
+            'product_id' => 'required|integer|min:1',
             'quantity' => 'required|integer|min:1',
             'type' => 'required|string|in:increment,decrement',
             'reason' => 'required|string|in:spoilage,damaged,count_variance,found,other',
             'notes' => 'nullable|string|max:500',
         ]);
+
+        $this->assertOutletBelongsToTenant($validated['outlet_id'], $writeTenantId, $isSuperAdminAll);
+        $this->assertProductBelongsToTenant($validated['product_id'], $writeTenantId, $isSuperAdminAll);
 
         $userId = $request->user() ? $request->user()->id : 1;
         $outletId = $validated['outlet_id'];
@@ -274,10 +343,11 @@ class InventoryController extends Controller
         $isIncrement = $validated['type'] === 'increment';
         $deltaQty = $isIncrement ? $qty : -$qty;
 
-        DB::transaction(function () use ($validated, $tenantId, $userId, $outletId, $productId, $deltaQty) {
+        DB::transaction(function () use ($validated, $writeTenantId, $userId, $outletId, $productId, $deltaQty) {
             $balance = DB::table('inventory_balances')
                 ->where('outlet_id', $outletId)
                 ->where('product_id', $productId)
+                ->when($writeTenantId !== null, fn ($q) => $q->where('tenant_id', $writeTenantId))
                 ->first();
 
             if ($balance) {
@@ -288,7 +358,7 @@ class InventoryController extends Controller
                 }
             } else {
                 DB::table('inventory_balances')->insert([
-                    'tenant_id' => $tenantId,
+                    'tenant_id' => $writeTenantId,
                     'outlet_id' => $outletId,
                     'product_id' => $productId,
                     'on_hand' => max(0, $deltaQty),
@@ -300,7 +370,7 @@ class InventoryController extends Controller
 
             // Append to movements ledger
             DB::table('inventory_movements')->insert([
-                'tenant_id' => $tenantId,
+                'tenant_id' => $writeTenantId,
                 'outlet_id' => $outletId,
                 'product_id' => $productId,
                 'user_id' => $userId,
@@ -313,6 +383,8 @@ class InventoryController extends Controller
             ]);
         });
 
+        TenantCatalogCache::invalidate($writeTenantId, 'products');
+
         return response()->json([
             'status' => 'success',
             'message' => 'Stock adjustment recorded successfully.',
@@ -321,25 +393,46 @@ class InventoryController extends Controller
 
     public function expired(Request $request)
     {
-        $outletId = $request->query('outlet_id', 1);
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $tenantId);
+        $writeTenantId = $this->writeTenantId($tenantId);
+
+        $requestedOutletId = $request->query('outlet_id');
+        if (!empty($requestedOutletId)) {
+            $this->assertOutletBelongsToTenant($requestedOutletId, $writeTenantId, $isSuperAdminAll);
+            $outletId = $requestedOutletId;
+        } else {
+            $outletId = $request->user()?->outlet_id
+                ?? DB::table('outlets')->when(!$isSuperAdminAll, fn ($q) => $q->where('tenant_id', $tenantId))->value('id')
+                ?? 1;
+        }
         $status = $request->query('status'); // 'expired', 'expiring_soon'
         $search = $request->query('q');
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
 
         $today = now()->toDateString();
         $soonThreshold = now()->addDays(30)->toDateString();
 
         $query = DB::table('products as p')
-            ->leftJoin('inventory_balances as ib', function ($join) use ($outletId) {
+            ->leftJoin('inventory_balances as ib', function ($join) use ($outletId, $isSuperAdminAll, $tenantId) {
                 $join->on('p.id', '=', 'ib.product_id')
                     ->where('ib.outlet_id', '=', $outletId);
+                if (!$isSuperAdminAll) {
+                    $join->where('ib.tenant_id', '=', $tenantId);
+                }
             })
             ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
             ->whereNotNull('p.expiry_date');
 
-        if (! empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('p.name', 'like', "%{$search}%")
-                    ->orWhere('p.sku', 'like', "%{$search}%");
+        if (!$isSuperAdminAll) {
+            $query->where('p.tenant_id', $tenantId);
+        }
+
+        if (!empty($search)) {
+            $escaped = $this->escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('p.name', 'like', "%{$escaped}%")
+                    ->orWhere('p.sku', 'like', "%{$escaped}%");
             });
         }
 
@@ -355,8 +448,9 @@ class InventoryController extends Controller
             ? "CAST(julianday(p.expiry_date) - julianday('now') AS INTEGER) as days_left"
             : 'DATEDIFF(p.expiry_date, CURDATE()) as days_left';
 
-        $items = $query->select(
+        $paginator = $query->select(
             'p.id as product_id',
+            'p.tenant_id',
             'p.name as product_name',
             'p.sku',
             'p.barcode',
@@ -366,15 +460,21 @@ class InventoryController extends Controller
             'p.expiry_date',
             'c.name as category_name',
             DB::raw('COALESCE(ib.on_hand, 0) as on_hand'),
-            DB::raw($daysLeftSql),
-            DB::raw("CASE WHEN p.expiry_date < '{$today}' THEN 'expired' ELSE 'expiring_soon' END as status")
+            DB::raw($daysLeftSql)
         )
+            ->selectRaw("CASE WHEN p.expiry_date < ? THEN 'expired' ELSE 'expiring_soon' END as status", [$today])
             ->orderBy('p.expiry_date', 'asc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => $items,
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 
@@ -385,7 +485,8 @@ class InventoryController extends Controller
     {
         $productId = $request->query('product_id');
         $search = $request->query('q') ?? $request->query('search');
-        $tenantId = $this->getTenantId($request, false);
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $tenantId);
 
         if (empty($productId) && empty($search)) {
             return response()->json([
@@ -395,24 +496,23 @@ class InventoryController extends Controller
         }
 
         $productQuery = DB::table('products')->where('is_active', true);
-        if (! empty($tenantId) && $tenantId !== 'all') {
-            $productQuery->where(function ($q) use ($tenantId) {
-                $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-            });
+        if (!$isSuperAdminAll) {
+            $productQuery->where('tenant_id', $tenantId);
         }
 
-        if (! empty($productId)) {
+        if (!empty($productId)) {
             $productQuery->where('id', $productId);
         } else {
-            $productQuery->where(function ($q) use ($search) {
-                $q->where('name', 'like', "%{$search}%")
-                    ->orWhere('sku', 'like', "%{$search}%")
-                    ->orWhere('barcode', 'like', "%{$search}%");
+            $escaped = $this->escapeLike(trim((string) $search));
+            $productQuery->where(function ($q) use ($escaped) {
+                $q->where('name', 'like', "%{$escaped}%")
+                    ->orWhere('sku', 'like', "%{$escaped}%")
+                    ->orWhere('barcode', 'like', "%{$escaped}%");
             });
         }
 
         $product = $productQuery->first();
-        if (! $product) {
+        if (!$product) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Product not found.',
@@ -421,9 +521,12 @@ class InventoryController extends Controller
 
         // Fetch all active branch outlets with their respective inventory balance scoped by tenant
         $branchesQuery = DB::table('outlets as o')
-            ->leftJoin('inventory_balances as ib', function ($join) use ($product) {
+            ->leftJoin('inventory_balances as ib', function ($join) use ($product, $isSuperAdminAll, $tenantId) {
                 $join->on('o.id', '=', 'ib.outlet_id')
                     ->where('ib.product_id', '=', $product->id);
+                if (!$isSuperAdminAll) {
+                    $join->where('ib.tenant_id', '=', $tenantId);
+                }
             })
             ->select(
                 'o.id as outlet_id',
@@ -437,10 +540,8 @@ class InventoryController extends Controller
             )
             ->where('o.is_active', true);
 
-        if (! empty($tenantId) && $tenantId !== 'all') {
-            $branchesQuery->where(function ($q) use ($tenantId) {
-                $q->where('o.tenant_id', $tenantId)->orWhereNull('o.tenant_id');
-            });
+        if (!$isSuperAdminAll) {
+            $branchesQuery->where('o.tenant_id', $tenantId);
         }
 
         $branches = $branchesQuery->orderBy('o.name', 'asc')->get();
@@ -474,15 +575,21 @@ class InventoryController extends Controller
      */
     public function internalConsumption(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $resolvedTenantId);
+        $writeTenantId = $this->writeTenantId($resolvedTenantId);
+
         $validated = $request->validate([
-            'outlet_id' => 'required',
-            'product_id' => 'required',
+            'outlet_id' => 'required|integer|min:1',
+            'product_id' => 'required|integer|min:1',
             'quantity' => 'required|integer|min:1',
             'category' => 'nullable|string|max:100',
             'reason' => 'nullable|string|max:200',
             'notes' => 'nullable|string|max:500',
         ]);
+
+        $this->assertOutletBelongsToTenant($validated['outlet_id'], $writeTenantId, $isSuperAdminAll);
+        $this->assertProductBelongsToTenant($validated['product_id'], $writeTenantId, $isSuperAdminAll);
 
         $userId = $request->user() ? $request->user()->id : 1;
         $outletId = $validated['outlet_id'];
@@ -491,17 +598,18 @@ class InventoryController extends Controller
         $category = $validated['category'] ?? 'packaging';
         $refId = 'EXP-SUP-'.strtoupper(substr(uniqid(), -6));
 
-        DB::transaction(function () use ($validated, $tenantId, $userId, $outletId, $productId, $qty, $refId, $category) {
+        DB::transaction(function () use ($validated, $writeTenantId, $userId, $outletId, $productId, $qty, $refId, $category) {
             $balance = DB::table('inventory_balances')
                 ->where('outlet_id', $outletId)
                 ->where('product_id', $productId)
+                ->when($writeTenantId !== null, fn ($q) => $q->where('tenant_id', $writeTenantId))
                 ->first();
 
             if ($balance) {
                 DB::table('inventory_balances')->where('id', $balance->id)->decrement('on_hand', $qty);
             } else {
                 DB::table('inventory_balances')->insert([
-                    'tenant_id' => $tenantId,
+                    'tenant_id' => $writeTenantId,
                     'outlet_id' => $outletId,
                     'product_id' => $productId,
                     'on_hand' => 0,
@@ -512,7 +620,7 @@ class InventoryController extends Controller
             }
 
             DB::table('inventory_movements')->insert([
-                'tenant_id' => $tenantId,
+                'tenant_id' => $writeTenantId,
                 'outlet_id' => $outletId,
                 'product_id' => $productId,
                 'user_id' => $userId,
@@ -524,6 +632,8 @@ class InventoryController extends Controller
                 'created_at' => now(),
             ]);
         });
+
+        TenantCatalogCache::invalidate($writeTenantId, 'products');
 
         return response()->json([
             'status' => 'success',
@@ -542,8 +652,20 @@ class InventoryController extends Controller
      */
     public function batches(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
-        $outletId = $request->query('outlet_id') ?? ($request->user()?->outlet_id ?? 1);
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = $this->isSuperAdminAll($request, $tenantId);
+        $writeTenantId = $this->writeTenantId($tenantId);
+
+        $requestedOutletId = $request->query('outlet_id');
+        if (!empty($requestedOutletId)) {
+            $this->assertOutletBelongsToTenant($requestedOutletId, $writeTenantId, $isSuperAdminAll);
+            $outletId = $requestedOutletId;
+        } else {
+            $outletId = $request->user()?->outlet_id
+                ?? DB::table('outlets')->when(!$isSuperAdminAll, fn ($q) => $q->where('tenant_id', $tenantId))->value('id')
+                ?? 1;
+        }
+
         $search = $request->query('q') ?? $request->query('search');
         $status = $request->query('status');
 
@@ -552,23 +674,25 @@ class InventoryController extends Controller
         $urgentThreshold = now()->addDays(7)->toDateString();
 
         $query = DB::table('products as p')
-            ->leftJoin('inventory_balances as ib', function ($join) use ($outletId) {
+            ->leftJoin('inventory_balances as ib', function ($join) use ($outletId, $isSuperAdminAll, $tenantId) {
                 $join->on('p.id', '=', 'ib.product_id')
                     ->where('ib.outlet_id', '=', $outletId);
+                if (!$isSuperAdminAll) {
+                    $join->where('ib.tenant_id', '=', $tenantId);
+                }
             })
             ->leftJoin('categories as c', 'p.category_id', '=', 'c.id');
 
-        if (! empty($tenantId) && $tenantId !== 'all') {
-            $query->where(function ($q) use ($tenantId) {
-                $q->where('p.tenant_id', $tenantId)->orWhereNull('p.tenant_id');
-            });
+        if (!$isSuperAdminAll) {
+            $query->where('p.tenant_id', $tenantId);
         }
 
-        if (! empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('p.name', 'like', "%{$search}%")
-                    ->orWhere('p.sku', 'like', "%{$search}%")
-                    ->orWhere('p.barcode', 'like', "%{$search}%");
+        if (!empty($search)) {
+            $escaped = $this->escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('p.name', 'like', "%{$escaped}%")
+                    ->orWhere('p.sku', 'like', "%{$escaped}%")
+                    ->orWhere('p.barcode', 'like', "%{$escaped}%");
             });
         }
 
@@ -591,13 +715,14 @@ class InventoryController extends Controller
             DB::raw($daysLeftSql)
         )
             ->orderByRaw('CASE WHEN p.expiry_date IS NULL THEN 1 ELSE 0 END, p.expiry_date ASC')
+            ->limit(500)
             ->get();
 
         $batches = $rawItems->map(function ($item) use ($today, $urgentThreshold, $soonThreshold) {
             $expiry = $item->expiry_date;
             $daysLeft = (int) ($item->days_left ?? 90);
 
-            if (! $expiry) {
+            if (!$expiry) {
                 $fefoStatus = 'fresh';
                 $badgeText = 'No Expiry Set';
             } elseif ($expiry < $today) {
@@ -651,5 +776,4 @@ class InventoryController extends Controller
             ],
         ]);
     }
-
 }

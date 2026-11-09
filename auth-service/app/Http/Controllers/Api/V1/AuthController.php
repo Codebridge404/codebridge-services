@@ -32,6 +32,7 @@ use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
 use App\Services\DeviceDetectorService;
 use App\Services\JwtService;
+use App\Support\SchemaGuard;
 use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -40,7 +41,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
 
@@ -287,13 +287,13 @@ class AuthController extends Controller
             'device_name' => $deviceName,
             'last_used_at' => now(),
         ];
-        if (Schema::hasColumn('personal_access_tokens', 'browser')) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'browser')) {
             $tokenMetadata['browser'] = $browser;
         }
-        if (Schema::hasColumn('personal_access_tokens', 'platform')) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'platform')) {
             $tokenMetadata['platform'] = $platform;
         }
-        if (Schema::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
             $tokenMetadata['location'] = $location;
         }
 
@@ -482,13 +482,13 @@ class AuthController extends Controller
             'device_name' => $deviceName,
             'last_used_at' => now(),
         ];
-        if (Schema::hasColumn('personal_access_tokens', 'browser')) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'browser')) {
             $posTokenMetadata['browser'] = $browser;
         }
-        if (Schema::hasColumn('personal_access_tokens', 'platform')) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'platform')) {
             $posTokenMetadata['platform'] = $platform;
         }
-        if (Schema::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
             $posTokenMetadata['location'] = $location;
         }
 
@@ -1761,7 +1761,7 @@ class AuthController extends Controller
 
         $recordDenied = function (string $reason, int $statusCode, ?int $tenantId = null) use ($request, $user): void {
             try {
-                if (Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'tenant_access_denied',
                         ruleCode: 'SEC_TENANT_ACCESS_DENIED',
@@ -1955,6 +1955,8 @@ class AuthController extends Controller
                 /** @var \App\Services\ImageService $imageService */
                 $imageService = app(\App\Services\ImageService::class);
                 $uploadedUrl = $imageService->storeAvatar($avatarFile, $user->id, $user->avatar_url);
+            } catch (\InvalidArgumentException $e) {
+                return $this->errorResponse($e->getMessage(), HttpStatus::UNPROCESSABLE_ENTITY, ResponseCode::VALIDATION_ERROR);
             } catch (\Throwable $e) {
                 Log::error('[updateProfile] Avatar upload failed: ' . $e->getMessage());
                 return $this->serverErrorResponse('Failed to store avatar image.');
@@ -1965,12 +1967,14 @@ class AuthController extends Controller
         // 3. Create / Update Avatar from Direct URL or Base64 (converts Base64 to .webp -> MinIO)
         elseif ($request->has('avatar_url') && !empty($request->avatar_url) && is_string($request->avatar_url)) {
             $url = $request->avatar_url;
-            if (str_starts_with($url, 'data:')) {
-                abort_unless(preg_match('#^data:image/(png|jpeg|webp|gif);base64,#', $url), 422, 'Unsupported avatar image.');
+            abort_unless(\App\Services\ImageService::isSafeImageUrlOrDataUri($url), 422, 'Unsupported avatar image.');
+            if (stripos(trim($url), 'data:') === 0) {
                 try {
                     /** @var \App\Services\ImageService $imageService */
                     $imageService = app(\App\Services\ImageService::class);
                     $url = $imageService->storeAvatar($url, $user->id, $user->avatar_url);
+                } catch (\InvalidArgumentException $e) {
+                    return $this->errorResponse($e->getMessage(), HttpStatus::UNPROCESSABLE_ENTITY, ResponseCode::VALIDATION_ERROR);
                 } catch (\Throwable $e) {
                     Log::error('[updateProfile] Base64 avatar upload failed: ' . $e->getMessage());
                     return $this->serverErrorResponse('Failed to process avatar image.');
@@ -2065,6 +2069,8 @@ class AuthController extends Controller
             /** @var \App\Services\ImageService $imageService */
             $imageService = app(\App\Services\ImageService::class);
             $uploadedUrl = $imageService->storeAvatar($avatarFile, $user->id, $user->avatar_url);
+        } catch (\InvalidArgumentException $e) {
+            return $this->errorResponse($e->getMessage(), HttpStatus::UNPROCESSABLE_ENTITY, ResponseCode::VALIDATION_ERROR);
         } catch (\Throwable $e) {
             Log::error('[uploadProfile] Avatar upload failed: ' . $e->getMessage());
             return $this->serverErrorResponse('Failed to store avatar image.');
@@ -2254,7 +2260,7 @@ class AuthController extends Controller
             return null;
         }
 
-        $frontendUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:3000'));
+        $frontendUrl = config('app.frontend_url', 'http://localhost:3000');
         $allowedHosts = array_filter([
             parse_url($frontendUrl, PHP_URL_HOST),
             'codebridge-service.vercel.app',

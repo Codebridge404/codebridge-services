@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -28,11 +29,13 @@ class EnsureApiClient
         // Support both X-App-Key and legacy/alias X-Client-Key
         $appKey = $request->header('X-App-Key');
         $clientKey = $request->header('X-Client-Key');
-        $key = ($clientKey && $appKey === 'client_test_suite_key') ? $clientKey : ($appKey ?? $clientKey);
+        $key = (app()->environment('testing') && $clientKey && $appKey === 'client_test_suite_key')
+            ? $clientKey
+            : ($appKey ?? $clientKey);
 
         if (!is_string($key) || $key === '' || strlen($key) > 100) {
             try {
-                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'app_key_missing',
                         ruleCode: 'SEC_APP_KEY_REQUIRED',
@@ -63,7 +66,7 @@ class EnsureApiClient
 
         if (!$client || !hash_equals((string) $client->client_key, $hashedKey)) {
             try {
-                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'app_key_invalid',
                         ruleCode: 'SEC_APP_KEY_INVALID',

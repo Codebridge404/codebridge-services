@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Route;
 | Corporate Finance, Expenses & Bank Accounts (Protected)
 |--------------------------------------------------------------------------
 */
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'role:organization,organization_owner,owner,admin,super_admin,outlet_manager,accountant,supervisor'])->group(function () {
     Route::get('/expenses', [FinanceController::class, 'expenses']);
     Route::post('/expenses', [FinanceController::class, 'storeExpense']);
     Route::get('/income', [FinanceController::class, 'incomes']);

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Services\TenantAuthorizationService;
+use App\Support\TenantCatalogCache;
 use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -33,11 +34,44 @@ use Exception;
 class RefundController extends Controller
 {
     use ResolvesTenantContext;
+
+    public function index(Request $request)
+    {
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+        $perPage = min(100, max(1, (int) $request->query('per_page', 30)));
+
+        $query = DB::table('refunds as r')
+            ->leftJoin('sales as s', 'r.sale_id', '=', 's.id')
+            ->leftJoin('users as u', 'r.user_id', '=', 'u.id')
+            ->select('r.*', 's.receipt_number', 'u.name as processed_by')
+            ->orderByDesc('r.created_at');
+
+        if (!$isSuperAdminAll) {
+            $query->where('r.tenant_id', $tenantId);
+        }
+
+        $paginator = $query->paginate($perPage);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ]);
+    }
+
     /**
      * Get return eligibility quote for a sale
      */
     public function returnQuote(Request $request, $id)
     {
+        $this->getTenantId($request, true);
+
         $sale = DB::table('sales')->where('id', $id)->first();
         if (!$sale) {
             $sale = DB::table('sales')->where('receipt_number', $id)->first();
@@ -49,6 +83,8 @@ class RefundController extends Controller
                 'message' => 'Sale transaction not found.',
             ], 404);
         }
+
+        $this->authorizeTenantResource($sale->tenant_id, $request, 'Sale');
 
         $lines = DB::table('sale_lines')->where('sale_id', $sale->id)->get();
 
@@ -120,6 +156,7 @@ class RefundController extends Controller
      */
     public function refund(Request $request, $id)
     {
+        $resolvedTenantId = $this->getTenantId($request, true);
         $user = $request->user();
 
         $sale = DB::table('sales')->where('id', $id)->first();
@@ -131,11 +168,13 @@ class RefundController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Sale record not found.'], 404);
         }
 
+        $this->authorizeTenantResource($sale->tenant_id, $request, 'Sale');
+
         $validated = $request->validate([
             'supervisor_pin' => 'nullable|string',
             'reason' => 'required|string|max:255',
             'items' => 'required|array|min:1',
-            'items.*.sale_line_id' => 'required',
+            'items.*.sale_line_id' => 'required|integer',
             'items.*.quantity' => 'required|numeric|min:0.01',
             'items.*.restock_decision' => 'required|string|in:restock,wastage,non_returnable,resellable,damaged,expired',
             'items.*.reason' => 'nullable|string|max:255',
@@ -146,6 +185,7 @@ class RefundController extends Controller
             if ($item['restock_decision'] === 'resellable') $item['restock_decision'] = 'restock';
             if (in_array($item['restock_decision'], ['damaged', 'expired'])) $item['restock_decision'] = 'wastage';
         }
+        unset($item);
 
         // 7-day return policy window enforcement
         $saleDate = \Carbon\Carbon::parse($sale->created_at);
@@ -183,11 +223,13 @@ class RefundController extends Controller
                 ], 403);
             }
 
-            $tenantId = $authContext['tenant_id'] ?? $this->getTenantId($request, false);
+            $pinTenantId = $sale->tenant_id !== null
+                ? (string) $sale->tenant_id
+                : ($authContext['tenant_id'] ?? ($resolvedTenantId !== 'all' ? $resolvedTenantId : null));
             $validSupervisor = TenantAuthorizationService::verifySupervisorPin(
                 $request,
                 (string) $validated['supervisor_pin'],
-                $tenantId
+                $pinTenantId
             );
 
             if (!$validSupervisor) {
@@ -198,7 +240,10 @@ class RefundController extends Controller
             }
         }
 
-        return DB::transaction(function () use ($sale, $validated, $user) {
+        $saleTenantId = $sale->tenant_id ?? ($resolvedTenantId === 'all' ? null : $resolvedTenantId);
+        $restockedAny = false;
+
+        $payload = DB::transaction(function () use ($sale, $saleTenantId, $validated, $user, &$restockedAny) {
 
             // Calculate returnable balances
             $previousRefunds = DB::table('refunds')->where('sale_id', $sale->id)->pluck('id');
@@ -221,9 +266,13 @@ class RefundController extends Controller
             }
 
             foreach ($validated['items'] as $item) {
-                $line = DB::table('sale_lines')->where('id', $item['sale_line_id'])->first();
+                // Strictly bind sale_line_id to this verified sale->id to prevent cross-sale/cross-tenant IDOR
+                $line = DB::table('sale_lines')
+                    ->where('id', $item['sale_line_id'])
+                    ->where('sale_id', $sale->id)
+                    ->first();
                 if (!$line) {
-                    throw new Exception("Sale line ID {$item['sale_line_id']} not found.");
+                    abort(422, "Sale line ID {$item['sale_line_id']} not found on this sale.");
                 }
 
                 $alreadyReturned = $alreadyReturnedMap[$line->id] ?? 0;
@@ -231,7 +280,7 @@ class RefundController extends Controller
                 $requestedQty = (float) $item['quantity'];
 
                 if ($requestedQty > $maxReturnable) {
-                    throw new Exception("Requested refund quantity ({$requestedQty}) exceeds returnable limit ({$maxReturnable}) for {$line->product_name}.");
+                    abort(422, "Requested refund quantity ({$requestedQty}) exceeds returnable limit ({$maxReturnable}) for {$line->product_name}.");
                 }
 
                 $lineRefundSubtotal = $requestedQty * (float) $line->unit_price;
@@ -247,9 +296,10 @@ class RefundController extends Controller
                 ];
             }
 
-            // Insert Refund Record Header
+            // Insert Refund Record Header (tenant-scoped)
             $payment = DB::table('payments')->where('sale_id', $sale->id)->first();
             $refundId = DB::table('refunds')->insertGetId([
+                'tenant_id' => $saleTenantId,
                 'sale_id' => $sale->id,
                 'payment_id' => $payment ? $payment->id : null,
                 'user_id' => $user->id,
@@ -265,6 +315,7 @@ class RefundController extends Controller
                 $requestedQty = $rData['requested_qty'];
 
                 DB::table('refund_lines')->insert([
+                    'tenant_id' => $saleTenantId,
                     'refund_id' => $refundId,
                     'sale_line_id' => $line->id,
                     'product_id' => $line->product_id,
@@ -278,17 +329,37 @@ class RefundController extends Controller
                 ]);
 
                 if ($rData['restock_decision'] === 'restock') {
-                    DB::table('inventory_balances')
+                    $restockedAny = true;
+                    $balance = DB::table('inventory_balances')
                         ->where('outlet_id', $sale->outlet_id)
                         ->where('product_id', $line->product_id)
-                        ->increment('on_hand', $requestedQty);
+                        ->when($saleTenantId !== null, fn ($q) => $q->where('tenant_id', $saleTenantId))
+                        ->lockForUpdate()
+                        ->first();
 
-                    DB::table('inventory_balances')
-                        ->where('outlet_id', $sale->outlet_id)
-                        ->where('product_id', $line->product_id)
-                        ->increment('available', $requestedQty);
+                    if ($balance) {
+                        DB::table('inventory_balances')
+                            ->where('id', $balance->id)
+                            ->update([
+                                'on_hand' => (float) $balance->on_hand + $requestedQty,
+                                'available' => (float) $balance->available + $requestedQty,
+                                'updated_at' => now(),
+                            ]);
+                    } else {
+                        DB::table('inventory_balances')->insert([
+                            'tenant_id' => $saleTenantId,
+                            'outlet_id' => $sale->outlet_id,
+                            'product_id' => $line->product_id,
+                            'on_hand' => $requestedQty,
+                            'reserved' => 0,
+                            'available' => $requestedQty,
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
+                    }
 
                     DB::table('inventory_movements')->insert([
+                        'tenant_id' => $saleTenantId,
                         'outlet_id' => $sale->outlet_id,
                         'product_id' => $line->product_id,
                         'variant_id' => $line->variant_id ?? null,
@@ -302,6 +373,7 @@ class RefundController extends Controller
                     ]);
                 } elseif ($rData['restock_decision'] === 'wastage') {
                     DB::table('inventory_movements')->insert([
+                        'tenant_id' => $saleTenantId,
                         'outlet_id' => $sale->outlet_id,
                         'product_id' => $line->product_id,
                         'variant_id' => $line->variant_id ?? null,
@@ -316,8 +388,9 @@ class RefundController extends Controller
                 }
             }
 
-            // Record Refund Payment Tender Record
+            // Record Refund Payment Tender Record (tenant-scoped)
             DB::table('payments')->insert([
+                'tenant_id' => $saleTenantId,
                 'sale_id' => $sale->id,
                 'tender_type' => $payment->tender_type ?? 'cash',
                 'amount' => -$totalRefundAmount,
@@ -330,12 +403,15 @@ class RefundController extends Controller
 
             // Update Sale Status
             $newStatus = ($totalItemsRequested >= $totalItemsPurchased) ? 'refunded' : 'partially_refunded';
-            DB::table('sales')->where('id', $sale->id)->update([
-                'status' => $newStatus,
-                'updated_at' => now(),
-            ]);
+            DB::table('sales')
+                ->where('id', $sale->id)
+                ->when($saleTenantId !== null, fn ($q) => $q->where('tenant_id', $saleTenantId))
+                ->update([
+                    'status' => $newStatus,
+                    'updated_at' => now(),
+                ]);
 
-            return response()->json([
+            return [
                 'status' => 'success',
                 'message' => 'Refund processed successfully and inventory updated.',
                 'data' => [
@@ -343,7 +419,13 @@ class RefundController extends Controller
                     'refund_amount' => $totalRefundAmount,
                     'new_sale_status' => $newStatus,
                 ],
-            ], 201);
+            ];
         });
+
+        if ($restockedAny) {
+            TenantCatalogCache::invalidate($saleTenantId !== null ? (string) $saleTenantId : null, 'products');
+        }
+
+        return response()->json($payload, 201);
     }
 }

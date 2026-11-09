@@ -92,10 +92,12 @@ if [ "${READY}" != "true" ]; then
     exit 1
 fi
 
-# 6. Run Additive, Backward-Compatible Database Migrations
-echo -e "\n${YELLOW}[Step 5/7] Executing backward-compatible database migrations...${NC}"
+# 6. Run Additive, Backward-Compatible Database Migrations & Optimize Framework Caches
+echo -e "\n${YELLOW}[Step 5/7] Executing backward-compatible database migrations & Laravel optimize...${NC}"
 compose exec -T "auth-service-${TARGET_SLOT}" php artisan migrate --force
+compose exec -T "auth-service-${TARGET_SLOT}" php artisan optimize
 compose exec -T "operations-service-${TARGET_SLOT}" php artisan migrate --force
+compose exec -T "operations-service-${TARGET_SLOT}" php artisan optimize
 
 # Re-verify health after migrations
 compose exec -T "auth-service-${TARGET_SLOT}" php artisan about >/dev/null

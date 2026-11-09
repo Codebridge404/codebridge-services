@@ -36,25 +36,35 @@ COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
+ARG INSTALL_DEV=false
+
 COPY composer.json composer.lock ./
 
-RUN composer install \
-    --no-interaction \
-    --prefer-dist \
-    --no-scripts
+RUN if [ "$INSTALL_DEV" = "true" ]; then \
+        composer install --no-interaction --prefer-dist --no-scripts --optimize-autoloader; \
+    else \
+        composer install --no-dev --no-interaction --prefer-dist --no-scripts --optimize-autoloader; \
+    fi
 
 COPY . .
 
-RUN composer dump-autoload
+RUN if [ "$INSTALL_DEV" = "true" ]; then \
+        composer dump-autoload --optimize; \
+    else \
+        composer dump-autoload --no-dev --optimize; \
+    fi \
+    && mkdir -p \
+        storage/app/public/products \
+        storage/app/private/backups \
+        storage/framework/cache \
+        storage/framework/sessions \
+        storage/framework/views \
+        storage/logs \
+        bootstrap/cache \
+    && chown -R 33:33 storage bootstrap/cache \
+    && chmod -R u+rwX,g+rwX storage bootstrap/cache
 
-RUN mkdir -p \
-    storage/app/public/products \
-    storage/framework/cache \
-    storage/framework/sessions \
-    storage/framework/views \
-    storage/logs \
-    bootstrap/cache \
-    && chown -R www-data:www-data storage bootstrap/cache
+USER 33:33
 
 EXPOSE 9000
 

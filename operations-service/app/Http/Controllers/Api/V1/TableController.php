@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -31,16 +33,33 @@ use Illuminate\Support\Facades\DB;
  */
 class TableController extends Controller
 {
+    use ResolvesTenantContext;
+
     /**
      * Get Restaurant Floor Plan Tables
      */
     public function index(Request $request)
     {
-        $tables = DB::table('restaurant_tables')->orderBy('name', 'asc')->get();
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+
+        $query = DB::table('restaurant_tables')->orderBy('name', 'asc');
+        if (!$isSuperAdminAll) {
+            $query->where('tenant_id', $tenantId);
+        }
+
+        $paginator = $query->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => $tables,
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 
@@ -49,12 +68,22 @@ class TableController extends Controller
      */
     public function updateStatus(Request $request, $id)
     {
+        $this->getTenantId($request, true);
+
+        $table = DB::table('restaurant_tables')->where('id', $id)->first();
+        if (!$table) {
+            return response()->json(['status' => 'error', 'message' => 'Table not found.'], 404);
+        }
+
+        $this->authorizeTenantResource($table->tenant_id, $request, 'Table');
+
         $validated = $request->validate([
             'status' => 'required|in:vacant,occupied,reserved,bill_requested',
         ]);
 
         DB::table('restaurant_tables')
             ->where('id', $id)
+            ->when($table->tenant_id !== null, fn ($q) => $q->where('tenant_id', $table->tenant_id))
             ->update([
                 'status' => $validated['status'],
                 'updated_at' => now(),
@@ -71,13 +100,26 @@ class TableController extends Controller
      */
     public function store(Request $request)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $writeTenantId = $tenantId === 'all' ? null : $tenantId;
+
         $validated = $request->validate([
             'name' => 'required|string|max:50',
             'zone' => 'nullable|string|max:50',
             'capacity' => 'nullable|integer|min:1|max:50',
+            'outlet_id' => 'nullable|integer',
         ]);
 
+        if (!empty($validated['outlet_id']) && $writeTenantId !== null) {
+            $outlet = DB::table('outlets')->where('id', $validated['outlet_id'])->first();
+            if ($outlet && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== (string) $writeTenantId) {
+                return response()->json(['status' => 'error', 'message' => 'Selected outlet belongs to another organization.'], 403);
+            }
+        }
+
         $id = DB::table('restaurant_tables')->insertGetId([
+            'tenant_id' => $writeTenantId,
+            'outlet_id' => $validated['outlet_id'] ?? ($request->user()?->outlet_id ?? 1),
             'name' => $validated['name'],
             'zone' => $validated['zone'] ?? 'Main Dining',
             'capacity' => $validated['capacity'] ?? 4,

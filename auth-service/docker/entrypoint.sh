@@ -10,4 +10,8 @@ mkdir -p /var/www/html/storage/app/public/avatars \
 
 chown -R www-data:www-data /var/www/html/storage /var/www/html/bootstrap/cache 2>/dev/null || true
 
+if [ "${APP_ENV:-local}" = "production" ] || [ "${APP_ENV:-local}" = "staging" ]; then
+    php /var/www/html/artisan optimize --no-interaction >/dev/null 2>&1 || true
+fi
+
 exec "$@"

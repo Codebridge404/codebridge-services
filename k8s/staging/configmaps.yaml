@@ -20,6 +20,7 @@ data:
   LOG_CHANNEL: "stack"
   LOG_LEVEL: "info"
   BCRYPT_ROUNDS: "12"
+  TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1,::1"
   CORS_ALLOWED_ORIGINS: "https://codebridge-service.vercel.app,https://staging-codebridge-docs.servicefixit.me,https://staging-codebridge-api.servicefixit.me,https://staging-codebridge.servicefixit.me,https://staging.codebridge.servicefixit.me,http://localhost:3000,http://localhost:5173,http://localhost:8080"
 
   # Database & Cache hostnames resolve via K8s Services
@@ -32,6 +33,15 @@ data:
   REDIS_CLIENT: "phpredis"
   REDIS_HOST: "auth-redis"
   REDIS_PORT: "6379"
+  CACHE_STORE: "redis"
+  CACHE_PREFIX: "codebridge-staging-auth-"
+  SESSION_DRIVER: "redis"
+  QUEUE_CONNECTION: "redis"
+  REVOCATION_ENABLED: "true"
+  REVOCATION_REDIS_HOST: "auth-redis"
+  REVOCATION_REDIS_PORT: "6379"
+  REVOCATION_REDIS_DB: "2"
+  REVOCATION_REDIS_PREFIX: "cb-revocation:"
 
   # S3 MinIO Object Storage
   AWS_DEFAULT_REGION: "us-east-1"
@@ -53,6 +63,11 @@ data:
   JWT_ACCESS_TTL: "15"
   JWT_REFRESH_TTL: "43200"
   JWT_ALGO: "HS256"
+
+  TELEMETRY_ENABLED: "true"
+  TELEMETRY_SLOW_QUERY_MS: "100"
+  TELEMETRY_SLOW_REQUEST_MS: "250"
+  TELEMETRY_EMIT_ALL_REQUESTS: "false"
 
   REVERB_APP_ID: "codebridge-staging-app"
   REVERB_SERVER_HOST: "0.0.0.0"
@@ -83,6 +98,7 @@ data:
   LOG_CHANNEL: "stack"
   LOG_LEVEL: "info"
   BCRYPT_ROUNDS: "12"
+  TRUSTED_PROXIES: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1,::1"
   CORS_ALLOWED_ORIGINS: "https://codebridge-service.vercel.app,https://staging-codebridge-docs.servicefixit.me,https://staging-codebridge-api.servicefixit.me,https://staging-codebridge.servicefixit.me,https://staging.codebridge.servicefixit.me,http://localhost:3000,http://localhost:5173,http://localhost:8080"
 
   # Database & Cache hostnames resolve via K8s Services
@@ -101,6 +117,19 @@ data:
   REDIS_CLIENT: "phpredis"
   REDIS_HOST: "operations-redis"
   REDIS_PORT: "6379"
+  CACHE_STORE: "redis"
+  CACHE_PREFIX: "codebridge-staging-ops-"
+  SESSION_DRIVER: "redis"
+  QUEUE_CONNECTION: "redis"
+  REVOCATION_ENABLED: "true"
+  REVOCATION_REDIS_HOST: "auth-redis"
+  REVOCATION_REDIS_PORT: "6379"
+  REVOCATION_REDIS_DB: "2"
+  REVOCATION_REDIS_PREFIX: "cb-revocation:"
+  AUTH_VERIFY_VIA_HTTP: "true"
+  AUTH_SERVICE_URL: "http://gateway/api/v1"
+  AUTH_SERVICE_TIMEOUT: "5"
+  AUTH_CONTEXT_CACHE_TTL: "30"
 
   # S3 MinIO Object Storage
   AWS_DEFAULT_REGION: "us-east-1"
@@ -120,6 +149,11 @@ data:
 
   JWT_ISSUER: "codebridge-auth-service"
   JWT_ALGO: "HS256"
+
+  TELEMETRY_ENABLED: "true"
+  TELEMETRY_SLOW_QUERY_MS: "100"
+  TELEMETRY_SLOW_REQUEST_MS: "250"
+  TELEMETRY_EMIT_ALL_REQUESTS: "false"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -138,9 +172,18 @@ data:
     http {
         include       mime.types;
         default_type  application/octet-stream;
+        server_tokens off;
         sendfile        on;
         keepalive_timeout 65;
+        client_body_timeout 15s;
+        client_header_timeout 15s;
+        send_timeout 30s;
         client_max_body_size 64M;
+        fastcgi_buffers 16 16k;
+        fastcgi_buffer_size 32k;
+        fastcgi_read_timeout 120s;
+        fastcgi_send_timeout 120s;
+        fastcgi_connect_timeout 10s;
         resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
 
         absolute_redirect off;
@@ -156,11 +199,34 @@ data:
         }
 
         # Real IP configuration for Cloudflare & Traefik Ingress
+        set_real_ip_from 173.245.48.0/20;
+        set_real_ip_from 103.21.244.0/22;
+        set_real_ip_from 103.22.200.0/22;
+        set_real_ip_from 103.31.4.0/22;
+        set_real_ip_from 141.101.64.0/18;
+        set_real_ip_from 108.162.192.0/18;
+        set_real_ip_from 190.93.240.0/20;
+        set_real_ip_from 188.114.96.0/20;
+        set_real_ip_from 197.234.240.0/22;
+        set_real_ip_from 198.41.128.0/17;
+        set_real_ip_from 162.158.0.0/15;
+        set_real_ip_from 104.16.0.0/13;
+        set_real_ip_from 104.24.0.0/14;
+        set_real_ip_from 172.64.0.0/13;
+        set_real_ip_from 131.0.72.0/22;
         set_real_ip_from 10.0.0.0/8;
         set_real_ip_from 172.16.0.0/12;
         set_real_ip_from 192.168.0.0/16;
+        set_real_ip_from 127.0.0.1;
         real_ip_header X-Forwarded-For;
         real_ip_recursive on;
+
+        # Rate limiting & concurrency zones (consistent with Nginx gateway)
+        limit_req_zone $binary_remote_addr zone=auth_limit:10m rate=5r/s;
+        limit_req_zone $binary_remote_addr zone=api_limit:10m rate=50r/s;
+        limit_conn_zone $binary_remote_addr zone=conn_limit:10m;
+        limit_req_status 429;
+        limit_conn_status 429;
 
         # WAF & Security Layer: Scanner & Exploit Tools Blocker
         map $http_user_agent $bad_client {
@@ -174,6 +240,52 @@ data:
         map $http_x_forwarded_proto $fastcgi_https {
             default $https;
             https   on;
+        }
+
+        map $fastcgi_https $hsts_header {
+            default "";
+            "on"    "max-age=31536000; includeSubDomains";
+        }
+
+        map $http_x_request_id $req_id {
+            default $http_x_request_id;
+            ""      $request_id;
+        }
+
+        # Client Identification Layer: Enforce X-App-Key on API Routes
+        map "$http_x_app_key:$http_x_client_key" $has_app_key {
+            default 1;
+            ":"     0;
+        }
+
+        map $uri $is_api_route {
+            default 0;
+            ~*^/api/ 1;
+            ~*^/v1/  1;
+        }
+
+        map $uri $is_exempt_api {
+            default 0;
+            ~*^/api/v1/health$ 1;
+            ~*^/health$ 1;
+            ~*^/up$ 1;
+            ~*^/docs 1;
+            ~*^/sanctum/csrf-cookie$ 1;
+            ~*^/api/v1/auth/email/verify/ 1;
+            ~*^/api/v1/payment-callbacks 1;
+            ~*^/api/v1/payments/webhook 1;
+            ~*^/api/v1/payments/callback 1;
+            ~*^/api/v1/reconciliation 1;
+        }
+
+        map "$is_api_route:$is_exempt_api:$request_method:$has_app_key" $app_key_block {
+            default 0;
+            "1:0:GET:0"     1;
+            "1:0:POST:0"    1;
+            "1:0:PUT:0"     1;
+            "1:0:PATCH:0"   1;
+            "1:0:DELETE:0"  1;
+            "1:0:HEAD:0"    1;
         }
 
         # ==============================================================================
@@ -197,13 +309,16 @@ data:
 
         server {
             listen 80;
-            server_name localhost 127.0.0.1 codebridge-api.servicefixit.me staging-codebridge-api.servicefixit.me codebridge-docs.servicefixit.me staging-codebridge-docs.servicefixit.me *.servicefixit.me;
+            server_name localhost 127.0.0.1 gateway api-gateway codebridge-api-gateway codebridge-staging-gateway codebridge-api.servicefixit.me staging-codebridge-api.servicefixit.me codebridge-docs.servicefixit.me staging-codebridge-docs.servicefixit.me *.servicefixit.me;
 
-            # Hardened Security Headers
+            # Hardened Security Headers & Request Traceability
             add_header X-Frame-Options "SAMEORIGIN" always;
             add_header X-Content-Type-Options "nosniff" always;
             add_header X-XSS-Protection "1; mode=block" always;
             add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+            add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+            add_header Strict-Transport-Security $hsts_header always;
+            add_header X-Request-ID $req_id always;
 
             # 1. Block Known Attacker Tools & Vulnerability Scanners
             if ($bad_client = 1) {
@@ -225,6 +340,16 @@ data:
             location ~* \.(php_bak|bak|old|orig|save|swp|sh|bash|env)$ {
                 deny all;
                 return 404;
+            }
+
+            # 5. Enforce X-App-Key across all Microservice APIs
+            if ($app_key_block = 1) {
+                return 401 '{"code":"APP_KEY_REQUIRED","message":"A valid X-App-Key header is required."}\n';
+            }
+
+            # Backward-compatible alias: rewrite /v1/... to /api/v1/...
+            location /v1/ {
+                rewrite ^/v1/(.*)$ /api/v1/$1 last;
             }
 
             # Redirect docs subdomains root directly to interactive API docs
@@ -325,7 +450,14 @@ data:
             }
 
             # Auth Service Routes
+            location = /api/v1/auth/authorize-context {
+                limit_req zone=api_limit burst=100 nodelay;
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
             location /api/v1/auth {
+                limit_req zone=auth_limit burst=10 nodelay;
+                limit_conn conn_limit 10;
                 fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
@@ -334,30 +466,120 @@ data:
                 include /etc/nginx/fastcgi_php.conf;
             }
             location /api/v1/users {
+                limit_req zone=api_limit burst=40 nodelay;
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/invitations {
+                limit_req zone=auth_limit burst=10 nodelay;
                 fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
             location /api/v1/roles {
+                limit_req zone=api_limit burst=40 nodelay;
                 fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
             location /api/v1/permissions {
+                limit_req zone=api_limit burst=40 nodelay;
                 fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
             location /api/v1/suppliers {
+                limit_req zone=api_limit burst=40 nodelay;
                 fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
             location /api/v1/customers {
+                limit_req zone=api_limit burst=40 nodelay;
                 fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
             location /api/v1/outlets {
+                limit_req zone=api_limit burst=40 nodelay;
                 fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
             location /api/v1/departments {
+                limit_req zone=api_limit burst=40 nodelay;
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/employees {
+                limit_req zone=api_limit burst=40 nodelay;
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/tenants {
+                limit_req zone=api_limit burst=40 nodelay;
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/platform-modules {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/super-admin {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/api-keys {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/api-clients {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/notification-providers {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/attendance {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/admin/users {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/admin/roles {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/admin/tenants {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/admin/audit-logs {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/audit-logs {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/gift-cards {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/vouchers {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/crm {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/meetings {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/meeting-rooms {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /storage {
                 fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
@@ -371,23 +593,131 @@ data:
                 fastcgi_pass operations_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
+            location /api/v1/barcodes {
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
             location /api/v1/categories {
                 fastcgi_pass operations_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
-            location /api/v1/orders {
+            location /api/v1/brands {
                 fastcgi_pass operations_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
-            location /api/v1/shifts {
+            location /api/v1/coupons {
                 fastcgi_pass operations_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
-            location /api/v1/pos {
+            location /api/v1/discounts {
                 fastcgi_pass operations_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
             location /api/v1/inventory {
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/purchases {
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/purchase-orders {
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/sales {
+                limit_req zone=api_limit burst=40 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/receipts {
+                limit_req zone=api_limit burst=40 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/refunds {
+                limit_req zone=api_limit burst=20 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/offline-sync {
+                limit_req zone=api_limit burst=40 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/carts {
+                limit_req zone=api_limit burst=60 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/online-orders {
+                limit_req zone=api_limit burst=20 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/kds {
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+                fastcgi_buffering off;
+                fastcgi_cache off;
+                fastcgi_read_timeout 86400s;
+            }
+            location /api/v1/tables {
+                limit_req zone=api_limit burst=40 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/shifts {
+                limit_req zone=api_limit burst=40 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/pos {
+                limit_req zone=api_limit burst=60 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/payments {
+                limit_req zone=api_limit burst=30 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/payment-callbacks {
+                limit_req zone=api_limit burst=30 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/reconciliation {
+                limit_req zone=api_limit burst=20 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/expenses {
+                limit_req zone=api_limit burst=30 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/income {
+                limit_req zone=api_limit burst=30 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/bank-accounts {
+                limit_req zone=api_limit burst=20 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/admin/dashboard {
+                limit_req zone=api_limit burst=30 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/reports {
+                limit_req zone=api_limit burst=20 nodelay;
+                fastcgi_pass operations_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location /api/v1/currencies {
                 fastcgi_pass operations_service;
                 include /etc/nginx/fastcgi_php.conf;
             }
@@ -418,12 +748,10 @@ data:
     fastcgi_param HTTPS $fastcgi_https if_not_empty;
     fastcgi_param HTTP_AUTHORIZATION $http_authorization;
     fastcgi_param HTTP_X_TENANT_ID $http_x_tenant_id;
+    fastcgi_param HTTP_X_APP_KEY $http_x_app_key;
+    fastcgi_param HTTP_X_CLIENT_KEY $http_x_client_key;
+    fastcgi_param HTTP_X_REQUEST_ID $req_id;
     fastcgi_param HTTP_X_FORWARDED_FOR $http_x_forwarded_for;
     fastcgi_param HTTP_X_FORWARDED_PROTO $http_x_forwarded_proto;
     fastcgi_param HTTP_X_FORWARDED_HOST $http_x_forwarded_host;
-    fastcgi_buffers 16 16k;
-    fastcgi_buffer_size 32k;
-    fastcgi_read_timeout 120s;
-    fastcgi_send_timeout 120s;
-    fastcgi_connect_timeout 10s;
     include fastcgi_params;

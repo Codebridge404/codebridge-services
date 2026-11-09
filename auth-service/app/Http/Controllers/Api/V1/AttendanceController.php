@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Attendance\ClockInRequest;
 use App\Http\Requests\Attendance\ClockOutRequest;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -67,14 +68,16 @@ class AttendanceController extends Controller
         }
 
         if (!empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('u.name', 'like', "%{$search}%")
-                  ->orWhere(DB::raw("CONCAT(e.first_name, ' ', e.last_name)"), 'like', "%{$search}%")
-                  ->orWhere('e.employee_code', 'like', "%{$search}%");
+            $escaped = SchemaGuard::escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('u.name', 'like', "%{$escaped}%")
+                  ->orWhere(DB::raw("CONCAT(e.first_name, ' ', e.last_name)"), 'like', "%{$escaped}%")
+                  ->orWhere('e.employee_code', 'like', "%{$escaped}%");
             });
         }
 
-        $records = $query->select(
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->select(
                 'a.id',
                 'a.user_id',
                 'a.employee_id',
@@ -89,12 +92,17 @@ class AttendanceController extends Controller
                 'a.created_at'
             )
             ->orderBy('a.clock_in', 'desc')
-            ->limit(100)
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => $records,
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 

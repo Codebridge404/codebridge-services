@@ -18,6 +18,7 @@ use App\Http\Responses\ResponseCode;
 use App\Models\User;
 use App\Services\JwtService;
 use App\Services\TwoFactorService;
+use App\Support\SchemaGuard;
 use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -288,13 +289,13 @@ class TwoFactorController extends Controller
             'device_name' => $deviceName,
             'last_used_at' => now(),
         ];
-        if (\Illuminate\Support\Facades\Schema::hasColumn('personal_access_tokens', 'browser')) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'browser')) {
             $twoFaTokenData['browser'] = $browser;
         }
-        if (\Illuminate\Support\Facades\Schema::hasColumn('personal_access_tokens', 'platform')) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'platform')) {
             $twoFaTokenData['platform'] = $platform;
         }
-        if (\Illuminate\Support\Facades\Schema::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
             $twoFaTokenData['location'] = $location;
         }
 

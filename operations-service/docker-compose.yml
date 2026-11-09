@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
 
     container_name: codebridge-operations-service
 
@@ -40,6 +42,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
 
     container_name: codebridge-operations-horizon
 
@@ -76,17 +80,17 @@ services:
     environment:
       MYSQL_DATABASE: codebridge_operations
       MYSQL_USER: codebridge_operations
-      MYSQL_PASSWORD: ${DB_PASSWORD:-root_password}
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root_password}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD must be set in .env}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-${DB_PASSWORD:?DB_PASSWORD must be set in .env}}
 
     ports:
-      - "3308:3306"
+      - "127.0.0.1:3308:3306"
 
     volumes:
       - operations-mysql-data:/var/lib/mysql
 
     healthcheck:
-      test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD:-root_password}\" --silent" ]
+      test: [ "CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$${MYSQL_ROOT_PASSWORD}\" --silent" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -122,7 +126,7 @@ services:
       '
 
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
 
     volumes:
       - operations-redis-data:/data

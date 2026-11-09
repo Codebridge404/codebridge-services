@@ -3,21 +3,31 @@
 namespace App\Mail;
 
 use Illuminate\Bus\Queueable;
+use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
 use Illuminate\Mail\Mailables\Envelope;
 use Illuminate\Queue\SerializesModels;
 
-class ShiftVarianceAlertMail extends Mailable
+class ShiftVarianceAlertMail extends Mailable implements ShouldQueue
 {
     use Queueable, SerializesModels;
+
+    public int $tries = 3;
+
+    /**
+     * @var array<int, int>
+     */
+    public array $backoff = [10, 60];
 
     /**
      * Create a new message instance.
      */
     public function __construct(
         public array $alertData
-    ) {}
+    ) {
+        $this->onQueue('notifications');
+    }
 
     /**
      * Get the message envelope.

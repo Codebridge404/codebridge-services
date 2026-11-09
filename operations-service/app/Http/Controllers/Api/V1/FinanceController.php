@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Finance\StoreBankAccountRequest;
+use App\Http\Requests\Finance\StoreExpenseRequest;
+use App\Http\Requests\Finance\StoreIncomeRequest;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -33,45 +36,39 @@ class FinanceController extends Controller
 
     public function expenses(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
+        $perPage = max(1, min(100, (int) $request->query('per_page', 50)));
         $query = DB::table('expenses');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenant = DB::table('expenses')->where('tenant_id', $tenantId)->exists();
-            if ($hasTenant) {
-                $query->where('tenant_id', $tenantId);
-            } else {
-                $query->where(function ($q) use ($tenantId) {
-                    $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-                });
-            }
+        if ($tenantId !== 'all') {
+            $query->where('tenant_id', $tenantId);
         }
 
-        $expenses = $query->orderBy('date_paid', 'desc')
+        $paginator = $query->orderBy('date_paid', 'desc')
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => $expenses,
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
         ]);
     }
 
-    public function storeExpense(Request $request)
+    public function storeExpense(StoreExpenseRequest $request)
     {
-        $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'category' => 'required|string|max:100',
-            'description' => 'required|string|max:255',
-            'amount' => 'required|numeric|min:0.01',
-            'date_paid' => 'required|date',
-            'expense_ref' => 'nullable|string|max:100',
-        ]);
+        $tenantId = $this->getTenantId($request, true);
+        $validated = $request->validated();
 
         $ref = $validated['expense_ref'] ?? ('EXP-' . strtoupper(substr(uniqid(), -6)));
 
         $id = DB::table('expenses')->insertGetId([
-            'tenant_id' => $tenantId,
+            'tenant_id' => $tenantId === 'all' ? null : $tenantId,
             'expense_ref' => $ref,
             'category' => $validated['category'],
             'description' => $validated['description'],
@@ -92,45 +89,39 @@ class FinanceController extends Controller
 
     public function incomes(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
+        $perPage = max(1, min(100, (int) $request->query('per_page', 50)));
         $query = DB::table('incomes');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenant = DB::table('incomes')->where('tenant_id', $tenantId)->exists();
-            if ($hasTenant) {
-                $query->where('tenant_id', $tenantId);
-            } else {
-                $query->where(function ($q) use ($tenantId) {
-                    $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-                });
-            }
+        if ($tenantId !== 'all') {
+            $query->where('tenant_id', $tenantId);
         }
 
-        $incomes = $query->orderBy('date_received', 'desc')
+        $paginator = $query->orderBy('date_received', 'desc')
             ->orderBy('created_at', 'desc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => $incomes,
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
         ]);
     }
 
-    public function storeIncome(Request $request)
+    public function storeIncome(StoreIncomeRequest $request)
     {
-        $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'source' => 'required|string|max:100',
-            'description' => 'required|string|max:255',
-            'amount' => 'required|numeric|min:0.01',
-            'date_received' => 'required|date',
-            'income_ref' => 'nullable|string|max:100',
-        ]);
+        $tenantId = $this->getTenantId($request, true);
+        $validated = $request->validated();
 
         $ref = $validated['income_ref'] ?? ('INC-' . strtoupper(substr(uniqid(), -6)));
 
         $id = DB::table('incomes')->insertGetId([
-            'tenant_id' => $tenantId,
+            'tenant_id' => $tenantId === 'all' ? null : $tenantId,
             'income_ref' => $ref,
             'source' => $validated['source'],
             'description' => $validated['description'],
@@ -151,41 +142,35 @@ class FinanceController extends Controller
 
     public function bankAccounts(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
+        $perPage = max(1, min(100, (int) $request->query('per_page', 50)));
         $query = DB::table('bank_accounts');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenant = DB::table('bank_accounts')->where('tenant_id', $tenantId)->exists();
-            if ($hasTenant) {
-                $query->where('tenant_id', $tenantId);
-            } else {
-                $query->where(function ($q) use ($tenantId) {
-                    $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
-                });
-            }
+        if ($tenantId !== 'all') {
+            $query->where('tenant_id', $tenantId);
         }
 
-        $accounts = $query->orderBy('created_at', 'desc')->get();
+        $paginator = $query->orderBy('created_at', 'desc')->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => $accounts,
+            'data' => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+                'last_page' => $paginator->lastPage(),
+            ],
         ]);
     }
 
-    public function storeBankAccount(Request $request)
+    public function storeBankAccount(StoreBankAccountRequest $request)
     {
-        $tenantId = $this->getTenantId($request);
-        $validated = $request->validate([
-            'bank_name' => 'required|string|max:100',
-            'account_name' => 'required|string|max:150',
-            'account_number' => 'required|string|max:100',
-            'currency' => 'nullable|string|max:20',
-            'status' => 'nullable|string|in:connected,active,pending,disconnected',
-        ]);
+        $tenantId = $this->getTenantId($request, true);
+        $validated = $request->validated();
 
         $id = DB::table('bank_accounts')->insertGetId([
-            'tenant_id' => $tenantId,
+            'tenant_id' => $tenantId === 'all' ? null : $tenantId,
             'bank_name' => $validated['bank_name'],
             'account_name' => $validated['account_name'],
             'account_number' => $validated['account_number'],

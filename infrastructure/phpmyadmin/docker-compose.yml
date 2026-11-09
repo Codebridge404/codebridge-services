@@ -4,12 +4,11 @@ services:
     container_name: ${PMA_CONTAINER_NAME:-codebridge-staging-phpmyadmin}
     restart: unless-stopped
     ports:
-      - "${PMA_PORT:-8085}:80"
+      - "127.0.0.1:${PMA_PORT:-8085}:80"
     dns:
       - 10.43.0.10
       - 8.8.8.8
     environment:
-      PMA_ARBITRARY: "1"
       PMA_HOSTS: "auth-mysql.codebridge-staging.svc.cluster.local,operations-mysql.codebridge-staging.svc.cluster.local"
       PMA_VERBOSES: "Auth Service Database,Operations Service Database"
       UPLOAD_LIMIT: 128M

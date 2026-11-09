@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Mail\DigitalReceiptMail;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -23,12 +25,16 @@ use Illuminate\Support\Facades\Mail;
  */
 class ReceiptController extends Controller
 {
+    use ResolvesTenantContext;
+
     /**
      * Retrieve JSON receipt representation for printing and display.
      */
     public function show(Request $request, $id)
     {
-        // 1. Fetch Sale
+        $this->getTenantId($request, true);
+
+        // 1. Fetch Sale & enforce tenant ownership
         $sale = DB::table('sales')->where('id', $id)->first();
         if (!$sale) {
             $sale = DB::table('sales')->where('receipt_number', $id)->first();
@@ -41,6 +47,8 @@ class ReceiptController extends Controller
             ], 404);
         }
 
+        $this->authorizeTenantResource($sale->tenant_id, $request, 'Sale receipt');
+
         // Increment print_count if requested as reprint
         $isReprintRequest = $request->query('reprint') === 'true' || $request->query('reprint') === '1';
         if ($isReprintRequest) {
@@ -51,11 +59,18 @@ class ReceiptController extends Controller
         // 2. Fetch Sale Lines
         $lines = DB::table('sale_lines')->where('sale_id', $sale->id)->get();
 
-        // 3. Fetch Outlet Details
-        $outlet = DB::table('outlets')->where('id', $sale->outlet_id)->first();
+        // 3. Fetch Outlet Details (tenant-scoped)
+        $outlet = DB::table('outlets')
+            ->where('id', $sale->outlet_id)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where('tenant_id', $sale->tenant_id))
+            ->first();
         if (!$outlet || empty($outlet->receipt_header)) {
             try {
-                $authOutlet = DB::connection('auth_db')->table('outlets')->where('id', $sale->outlet_id)->first();
+                $authOutlet = DB::connection('auth_db')
+                    ->table('outlets')
+                    ->where('id', $sale->outlet_id)
+                    ->when($sale->tenant_id !== null, fn ($q) => $q->where('tenant_id', $sale->tenant_id))
+                    ->first();
                 if ($authOutlet) {
                     $outlet = (object) array_merge((array) ($outlet ?: []), (array) $authOutlet);
                 }
@@ -73,13 +88,20 @@ class ReceiptController extends Controller
         }
 
         // 4. Fetch Cashier User Details
-        $cashier = DB::table('users')->where('id', $sale->user_id)->select('id', 'name', 'email')->first();
+        $cashier = DB::table('users')
+            ->where('id', $sale->user_id)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where('tenant_id', $sale->tenant_id))
+            ->select('id', 'name', 'email')
+            ->first();
         if (!$cashier) {
             $cashier = (object) ['name' => 'Cashier'];
         }
 
         // 5. Fetch Register Details
-        $register = DB::table('registers')->where('id', $sale->register_id)->first();
+        $register = DB::table('registers')
+            ->where('id', $sale->register_id)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where('tenant_id', $sale->tenant_id))
+            ->first();
 
         // 6. Fetch Payments
         $payments = DB::table('payments')->where('sale_id', $sale->id)->get();
@@ -89,6 +111,7 @@ class ReceiptController extends Controller
             ->where('from_currency', 'USD')
             ->where('to_currency', 'KHR')
             ->where('is_active', 1)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where(fn ($w) => $w->where('tenant_id', $sale->tenant_id)->orWhereNull('tenant_id')))
             ->orderByDesc('effective_date')
             ->value('rate') ?: 4100.00;
 
@@ -123,6 +146,8 @@ class ReceiptController extends Controller
      */
     public function sendDigitalReceipt(Request $request, $id)
     {
+        $this->getTenantId($request, true);
+
         $validated = $request->validate([
             'email' => 'nullable|email|max:255',
             'phone' => 'nullable|string|max:50',
@@ -152,7 +177,7 @@ class ReceiptController extends Controller
             }
         }
 
-        // 1. Fetch Sale
+        // 1. Fetch Sale & enforce tenant ownership
         $sale = DB::table('sales')->where('id', $id)->first();
         if (!$sale) {
             $sale = DB::table('sales')->where('receipt_number', $id)->first();
@@ -165,8 +190,13 @@ class ReceiptController extends Controller
             ], 404);
         }
 
+        $this->authorizeTenantResource($sale->tenant_id, $request, 'Sale receipt');
+
         $lines = DB::table('sale_lines')->where('sale_id', $sale->id)->get();
-        $outlet = DB::table('outlets')->where('id', $sale->outlet_id)->first();
+        $outlet = DB::table('outlets')
+            ->where('id', $sale->outlet_id)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where('tenant_id', $sale->tenant_id))
+            ->first();
         if (!$outlet) {
             $outlet = (object) [
                 'name' => 'CodeBridge Store',
@@ -178,7 +208,11 @@ class ReceiptController extends Controller
             ];
         }
 
-        $cashier = DB::table('users')->where('id', $sale->user_id)->select('id', 'name', 'email')->first();
+        $cashier = DB::table('users')
+            ->where('id', $sale->user_id)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where('tenant_id', $sale->tenant_id))
+            ->select('id', 'name', 'email')
+            ->first();
         $payments = DB::table('payments')->where('sale_id', $sale->id)->get();
 
         // 2. Fetch Live NBC Rate
@@ -186,6 +220,7 @@ class ReceiptController extends Controller
             ->where('from_currency', 'USD')
             ->where('to_currency', 'KHR')
             ->where('is_active', 1)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where(fn ($w) => $w->where('tenant_id', $sale->tenant_id)->orWhereNull('tenant_id')))
             ->orderByDesc('effective_date')
             ->value('rate') ?: 4100.00;
 
@@ -202,34 +237,33 @@ class ReceiptController extends Controller
 
         $dispatchedChannels = [];
 
-        // 4. Dispatch Email Receipt
+        // 4. Dispatch Email Receipt asynchronously onto the notifications queue
         if (($channel === 'email' || $channel === 'both') && !empty($email)) {
             $htmlBody = $this->renderReceiptHtml($sale, $lines, $outlet, $cashier, $payments, $grandTotalKhr, (float) $exchangeRate);
             try {
-                Mail::html($htmlBody, function ($message) use ($email, $outlet, $sale) {
-                    $message->to($email)
-                        ->subject("Receipt #{$sale->receipt_number} from {$outlet->name}");
-                });
+                Mail::to($email)->queue(new DigitalReceiptMail(
+                    (string) $sale->receipt_number,
+                    (string) ($outlet->name ?? 'CodeBridges POS'),
+                    $htmlBody
+                ));
                 $dispatchedChannels[] = 'email';
             } catch (\Throwable $e) {
-                Log::warning("Digital receipt email send failed: " . $e->getMessage());
+                Log::warning('Digital receipt email queue dispatch failed.', ['sale_id' => $sale->id, 'error' => $e->getMessage()]);
                 // Fallback: Still mark dispatched in log driver
                 $dispatchedChannels[] = 'email';
             }
         }
 
-        // 5. Dispatch SMS Receipt
+        // 5. Dispatch SMS Receipt (avoid logging raw PII phone numbers)
         if (($channel === 'sms' || $channel === 'both') && !empty($phone)) {
-            $verificationUrl = url("/api/v1/sales/{$sale->id}/receipt");
-            $smsMessage = "Receipt from {$outlet->name}: #{$sale->receipt_number} | Total: \${$sale->grand_total} USD (" . number_format($grandTotalKhr) . " KHR). Thank you! View receipt: {$verificationUrl}";
-            Log::info("Digital Receipt SMS to {$phone}: {$smsMessage}");
+            Log::info('Digital receipt SMS queued/dispatched.', ['sale_id' => $sale->id, 'receipt_number' => $sale->receipt_number]);
             $dispatchedChannels[] = 'sms';
         }
 
         // 6. Record Audit Trail
         try {
             DB::table('audit_logs')->insert([
-                'user_id' => $sale->user_id ?? 1,
+                'user_id' => $request->user()?->id ?? $sale->user_id ?? 1,
                 'outlet_id' => $sale->outlet_id,
                 'action' => 'digital_receipt_sent',
                 'auditable_type' => 'Sale',
@@ -237,8 +271,6 @@ class ReceiptController extends Controller
                 'old_values' => null,
                 'new_values' => json_encode([
                     'channel' => $channel,
-                    'email' => $email,
-                    'phone' => $phone,
                     'receipt_number' => $sale->receipt_number,
                     'grand_total' => $sale->grand_total,
                 ]),
@@ -276,6 +308,8 @@ class ReceiptController extends Controller
      */
     public function html(Request $request, $id)
     {
+        $this->getTenantId($request, true);
+
         $sale = DB::table('sales')->where('id', $id)->first();
         if (!$sale) {
             $sale = DB::table('sales')->where('receipt_number', $id)->first();
@@ -285,11 +319,20 @@ class ReceiptController extends Controller
             return response('Sale receipt not found.', 404);
         }
 
+        $this->authorizeTenantResource($sale->tenant_id, $request, 'Sale receipt');
+
         $lines = DB::table('sale_lines')->where('sale_id', $sale->id)->get();
-        $outlet = DB::table('outlets')->where('id', $sale->outlet_id)->first();
+        $outlet = DB::table('outlets')
+            ->where('id', $sale->outlet_id)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where('tenant_id', $sale->tenant_id))
+            ->first();
         if (!$outlet || empty($outlet->receipt_header)) {
             try {
-                $authOutlet = DB::connection('auth_db')->table('outlets')->where('id', $sale->outlet_id)->first();
+                $authOutlet = DB::connection('auth_db')
+                    ->table('outlets')
+                    ->where('id', $sale->outlet_id)
+                    ->when($sale->tenant_id !== null, fn ($q) => $q->where('tenant_id', $sale->tenant_id))
+                    ->first();
                 if ($authOutlet) {
                     $outlet = (object) array_merge((array) ($outlet ?: []), (array) $authOutlet);
                 }
@@ -304,13 +347,18 @@ class ReceiptController extends Controller
                 'receipt_footer' => 'Exchange or returns within 7 days with original slip.',
             ];
         }
-        $cashier = DB::table('users')->where('id', $sale->user_id)->select('name')->first() ?? (object) ['name' => 'Cashier'];
+        $cashier = DB::table('users')
+            ->where('id', $sale->user_id)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where('tenant_id', $sale->tenant_id))
+            ->select('name')
+            ->first() ?? (object) ['name' => 'Cashier'];
         $payments = DB::table('payments')->where('sale_id', $sale->id)->get();
 
         $exchangeRate = DB::table('exchange_rates')
             ->where('from_currency', 'USD')
             ->where('to_currency', 'KHR')
             ->where('is_active', 1)
+            ->when($sale->tenant_id !== null, fn ($q) => $q->where(fn ($w) => $w->where('tenant_id', $sale->tenant_id)->orWhereNull('tenant_id')))
             ->orderByDesc('effective_date')
             ->value('rate') ?: 4100.00;
 
@@ -348,7 +396,7 @@ class ReceiptController extends Controller
 
         $paymentsHtml = '';
         foreach ($payments as $p) {
-            $method = strtoupper($p->payment_method ?? 'CASH');
+            $method = htmlspecialchars(strtoupper($p->payment_method ?? $p->tender_type ?? 'CASH'));
             $pAmount = number_format((float) ($p->amount ?? 0), 2);
             $paymentsHtml .= "
                 <div style='display: flex; justify-content: space-between; font-size: 12px; color: #475569; padding: 2px 0;'>
@@ -370,6 +418,8 @@ class ReceiptController extends Controller
         $outletAddress = htmlspecialchars($outlet->address ?? '');
         $outletPhone = htmlspecialchars($outlet->phone ?? '');
         $cashierName = htmlspecialchars($cashier->name ?? 'Cashier');
+        $receiptNumber = htmlspecialchars($sale->receipt_number ?? '');
+        $orderType = htmlspecialchars($sale->order_type ?? 'pos');
 
         return <<<HTML
 <!DOCTYPE html>
@@ -377,7 +427,7 @@ class ReceiptController extends Controller
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>E-Receipt #{$sale->receipt_number}</title>
+    <title>E-Receipt #{$receiptNumber}</title>
 </head>
 <body style="margin: 0; padding: 24px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; color: #0f172a;">
     <div style="max-width: 420px; margin: 0 auto; background: #ffffff; border-radius: 16px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.01); overflow: hidden; border: 1px solid #e2e8f0;">
@@ -395,7 +445,7 @@ class ReceiptController extends Controller
             <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 20px; font-size: 12px; color: #475569;">
                 <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
                     <span style="color: #64748b;">Receipt #:</span>
-                    <strong style="color: #0f172a; font-family: monospace;">{$sale->receipt_number}</strong>
+                    <strong style="color: #0f172a; font-family: monospace;">{$receiptNumber}</strong>
                 </div>
                 <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
                     <span style="color: #64748b;">Date & Time:</span>
@@ -407,7 +457,7 @@ class ReceiptController extends Controller
                 </div>
                 <div style="display: flex; justify-content: space-between;">
                     <span style="color: #64748b;">Order Type:</span>
-                    <span style="text-transform: capitalize; font-weight: 600; color: #4f46e5;">{$sale->order_type}</span>
+                    <span style="text-transform: capitalize; font-weight: 600; color: #4f46e5;">{$orderType}</span>
                 </div>
             </div>
 
@@ -470,7 +520,7 @@ class ReceiptController extends Controller
                     {$footerNote}
                 </p>
                 <div style="font-family: monospace; font-size: 12px; letter-spacing: 4px; color: #334155; padding: 6px; background: #f8fafc; display: inline-block; border-radius: 6px; border: 1px solid #e2e8f0;">
-                    *{$sale->receipt_number}*
+                    *{$receiptNumber}*
                 </div>
                 <div style="font-size: 10px; color: #94a3b8; margin-top: 8px;">
                     Powered by CodeBridge Cloud POS &bull; Verified Digital Copy

@@ -31,10 +31,12 @@ class JwtAuthenticationTest extends TestCase
         // Generate signed JWT token directly simulating Auth Service token
         $jwtPayload = [
             'iss' => 'codebridge-auth-service',
+            'aud' => config('jwt.audience', 'codebridge-api'),
             'sub' => '42',
             'name' => 'Cashier Chenda',
             'email' => 'chenda@codebridges.io',
             'role' => 'cashier',
+            'token_use' => 'access',
             'tenant_id' => '1',
             'outlet_id' => '1',
             'iat' => time(),
@@ -68,10 +70,12 @@ class JwtAuthenticationTest extends TestCase
 
         $jwtPayload = [
             'iss' => 'codebridge-auth-service',
+            'aud' => config('jwt.audience', 'codebridge-api'),
             'sub' => (string) $user->id,
             'name' => $user->name,
             'email' => $user->email,
             'role' => 'cashier',
+            'token_use' => 'access',
             'tenant_id' => '1',
             'outlet_id' => '1',
             'iat' => time(),

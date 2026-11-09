@@ -12,6 +12,7 @@ class Shift extends Model
     protected $table = 'shifts';
 
     protected $fillable = [
+        'tenant_id',
         'outlet_id',
         'register_id',
         'user_id',

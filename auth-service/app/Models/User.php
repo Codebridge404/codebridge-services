@@ -153,10 +153,10 @@ class User extends Authenticatable implements MustVerifyEmail
                         'slug' => $user->pendingRole,
                         'is_system' => true,
                     ];
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'tenant_id')) {
+                    if (\App\Support\SchemaGuard::hasColumn('roles', 'tenant_id')) {
                         $roleData['tenant_id'] = null;
                     }
-                    if (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'company_id')) {
+                    if (\App\Support\SchemaGuard::hasColumn('roles', 'company_id')) {
                         $roleData['company_id'] = null;
                     }
                     $role = Role::create($roleData);
@@ -228,10 +228,15 @@ class User extends Authenticatable implements MustVerifyEmail
 
                 $effectivePinCode = $user->pin_code ?? $user->pendingPinCode;
                 if (!empty($effectivePinCode)) {
+                    $pinStr = (string) $effectivePinCode;
+                    $hashedPin = (str_starts_with($pinStr, '$2') || str_starts_with($pinStr, '$argon2'))
+                        ? $pinStr
+                        : \Illuminate\Support\Facades\Hash::make($pinStr);
+
                     UserPosPin::updateOrCreate(
                         ['tenant_id' => $effectiveTenantId, 'user_id' => $user->id],
                         [
-                            'pin_hash' => $effectivePinCode,
+                            'pin_hash' => $hashedPin,
                             'is_active' => true,
                             'failed_attempts' => $user->failed_login_attempts ?? 0,
                             'locked_until' => $user->lockout_until,
@@ -604,11 +609,15 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
-     * Send the email verification notification via Mailpit / SMTP.
+     * Send the email verification notification via queue worker (Mailpit / SMTP).
      */
     public function sendEmailVerificationNotification(): void
     {
-        $this->notify(new \App\Notifications\VerifyEmailNotification());
+        $verificationUrl = $this->createEmailVerificationUrl();
+        $code = str_pad((string) random_int(100000, 999999), 6, '0', STR_PAD_LEFT);
+        \Illuminate\Support\Facades\Cache::put("auth:email_verify_code:{$this->id}", $code, now()->addMinutes(15));
+
+        $this->notify(new \App\Notifications\VerifyEmailNotification($verificationUrl, $code));
     }
 
     /**

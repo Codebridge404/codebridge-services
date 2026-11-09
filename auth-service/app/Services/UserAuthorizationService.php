@@ -3,8 +3,8 @@
 namespace App\Services;
 
 use App\Models\User;
+use App\Support\SchemaGuard;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class UserAuthorizationService
 {
@@ -91,7 +91,7 @@ class UserAuthorizationService
 
         if (!empty($user->exists) && !empty($user->id)) {
             try {
-                if (Schema::hasTable('user_roles') && Schema::hasTable('roles')) {
+                if (SchemaGuard::hasTable('user_roles') && SchemaGuard::hasTable('roles')) {
                     return DB::table('user_roles as ur')
                         ->join('roles as r', 'ur.role_id', '=', 'r.id')
                         ->where('ur.user_id', $user->id)
@@ -131,7 +131,7 @@ class UserAuthorizationService
         $effectiveTenantId = $tenantId ?? ($user->tenant_id ? (int) $user->tenant_id : null);
         if ($effectiveTenantId !== null && !empty($user->exists) && !empty($user->id)) {
             try {
-                if (Schema::hasTable('user_roles') && Schema::hasTable('roles')) {
+                if (SchemaGuard::hasTable('user_roles') && SchemaGuard::hasTable('roles')) {
                     return DB::table('user_roles as ur')
                         ->join('roles as r', 'ur.role_id', '=', 'r.id')
                         ->where('ur.user_id', $user->id)

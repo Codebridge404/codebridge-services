@@ -23,10 +23,15 @@ spec:
         app.kubernetes.io/name: gateway
         environment: staging
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: nginx
           image: 127.0.0.1:5000/nginx:1.27-alpine
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
           ports:
             - name: http
               containerPort: 80
@@ -41,6 +46,9 @@ spec:
             httpGet:
               path: /api/v1/health
               port: 80
+              httpHeaders:
+                - name: Host
+                  value: localhost
             initialDelaySeconds: 5
             periodSeconds: 5
             timeoutSeconds: 3
@@ -48,6 +56,9 @@ spec:
             httpGet:
               path: /api/v1/health
               port: 80
+              httpHeaders:
+                - name: Host
+                  value: localhost
             initialDelaySeconds: 15
             periodSeconds: 15
             timeoutSeconds: 3

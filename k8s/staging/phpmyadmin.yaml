@@ -19,16 +19,21 @@ spec:
         app.kubernetes.io/part-of: codebridge
         environment: staging
     spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: phpmyadmin
           image: phpmyadmin:5
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - containerPort: 80
               name: http
           env:
-            - name: PMA_ARBITRARY
-              value: "1"
             - name: PMA_HOSTS
               value: "auth-mysql,operations-mysql"
             - name: PMA_VERBOSES

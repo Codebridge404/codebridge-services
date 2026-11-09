@@ -23,10 +23,21 @@ spec:
         app.kubernetes.io/name: operations-service
         environment: staging
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: operations-service
           image: 127.0.0.1:5000/codebridge-operations-service:staging
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: php-fpm
               containerPort: 9000
@@ -93,10 +104,21 @@ spec:
         app.kubernetes.io/name: operations-horizon
         environment: staging
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: worker
           image: 127.0.0.1:5000/codebridge-operations-service:staging
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command:
             - /bin/sh
             - -c
@@ -113,4 +135,60 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: operations-scheduler
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: operations-scheduler
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: operations-scheduler
+            environment: staging
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 33
+            runAsGroup: 33
+            fsGroup: 33
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: scheduler
+              image: 127.0.0.1:5000/codebridge-operations-service:staging
+              imagePullPolicy: Always
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              command:
+                - php
+                - artisan
+                - schedule:run
+              envFrom:
+                - configMapRef:
+                    name: operations-config
+                - secretRef:
+                    name: operations-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 250m
+                  memory: 128Mi
 

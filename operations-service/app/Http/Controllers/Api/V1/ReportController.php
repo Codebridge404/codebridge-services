@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Jobs\ExportTaxAuditJob;
 use App\Services\ExchangeRateService;
+use App\Services\TenantAuthorizationService;
 use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -33,20 +34,39 @@ class ReportController extends Controller
     public function __construct(
         protected ExchangeRateService $exchangeRateService
     ) {}
+
+    private function assertOutletBelongsToTenant($outletId, string $tenantId, bool $isSuperAdminAll): void
+    {
+        if (empty($outletId) || $outletId === 'all' || $isSuperAdminAll) {
+            return;
+        }
+        $outlet = DB::table('outlets')->where('id', $outletId)->first();
+        if ($outlet && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== (string) $tenantId) {
+            abort(403, 'Unauthorized: Outlet belongs to another organization.');
+        }
+    }
+
     /**
      * Sales & Profit Margin Financial Report API
      */
     public function sales(Request $request)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+
         $startDate = $request->query('start_date', now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', now()->toDateString());
         $outletId = $request->query('outlet_id');
+        $this->assertOutletBelongsToTenant($outletId, $tenantId, $isSuperAdminAll);
 
         $salesQuery = DB::table('sales')
             ->whereDate('created_at', '>=', $startDate)
             ->whereDate('created_at', '<=', $endDate)
             ->where('status', '!=', 'cancelled');
 
+        if (!$isSuperAdminAll) {
+            $salesQuery->where('tenant_id', $tenantId);
+        }
         if (!empty($outletId) && $outletId !== 'all') {
             $salesQuery->where('outlet_id', $outletId);
         }
@@ -58,13 +78,16 @@ class ReportController extends Controller
         $avgBasket = $transactionCount > 0 ? $totalRevenue / $transactionCount : 0;
         $netSales = max(0, $totalRevenue - $taxTotal);
 
-        // Tender breakdowns
+        // Tender breakdowns (strictly tenant-scoped)
         $tenderQuery = DB::table('payments as p')
             ->join('sales as s', 'p.sale_id', '=', 's.id')
             ->whereDate('s.created_at', '>=', $startDate)
             ->whereDate('s.created_at', '<=', $endDate)
             ->where('s.status', '!=', 'cancelled');
 
+        if (!$isSuperAdminAll) {
+            $tenderQuery->where('s.tenant_id', $tenantId);
+        }
         if (!empty($outletId) && $outletId !== 'all') {
             $tenderQuery->where('s.outlet_id', $outletId);
         }
@@ -73,11 +96,14 @@ class ReportController extends Controller
         $khqrSales = (float) (clone $tenderQuery)->where('p.tender_type', 'khqr')->sum('p.amount');
         $cardSales = (float) (clone $tenderQuery)->where('p.tender_type', 'card')->sum('p.amount');
 
-        // Refunds Total
-        $refundsTotal = (float) DB::table('refunds')
+        // Refunds Total (strictly tenant-scoped)
+        $refundsQuery = DB::table('refunds')
             ->whereDate('created_at', '>=', $startDate)
-            ->whereDate('created_at', '<=', $endDate)
-            ->sum('amount');
+            ->whereDate('created_at', '<=', $endDate);
+        if (!$isSuperAdminAll) {
+            $refundsQuery->where('tenant_id', $tenantId);
+        }
+        $refundsTotal = (float) $refundsQuery->sum('amount');
 
         // Hourly distribution across standard operating hours
         $hours = ['08:00', '09:00', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00', '16:00', '17:00', '18:00', '19:00', '20:00'];
@@ -96,12 +122,21 @@ class ReportController extends Controller
         }
         $hourlySales = array_values($hourlyMap);
 
-        // Cashier performance
-        $cashierPerformance = DB::table('sales as s')
+        // Cashier performance (strictly tenant-scoped)
+        $cashierQuery = DB::table('sales as s')
             ->leftJoin('users as u', 's.user_id', '=', 'u.id')
             ->whereDate('s.created_at', '>=', $startDate)
             ->whereDate('s.created_at', '<=', $endDate)
-            ->where('s.status', '!=', 'cancelled')
+            ->where('s.status', '!=', 'cancelled');
+
+        if (!$isSuperAdminAll) {
+            $cashierQuery->where('s.tenant_id', $tenantId);
+        }
+        if (!empty($outletId) && $outletId !== 'all') {
+            $cashierQuery->where('s.outlet_id', $outletId);
+        }
+
+        $cashierPerformance = $cashierQuery
             ->select(
                 'u.id',
                 DB::raw("COALESCE(u.name, 'Cashier') as name"),
@@ -114,14 +149,23 @@ class ReportController extends Controller
             ->limit(10)
             ->get();
 
-        // Category performance
-        $categoryPerformance = DB::table('sale_lines as sl')
+        // Category performance (strictly tenant-scoped)
+        $catQuery = DB::table('sale_lines as sl')
             ->join('sales as s', 'sl.sale_id', '=', 's.id')
             ->join('products as p', 'sl.product_id', '=', 'p.id')
             ->leftJoin('categories as c', 'p.category_id', '=', 'c.id')
             ->whereDate('s.created_at', '>=', $startDate)
             ->whereDate('s.created_at', '<=', $endDate)
-            ->where('s.status', '!=', 'cancelled')
+            ->where('s.status', '!=', 'cancelled');
+
+        if (!$isSuperAdminAll) {
+            $catQuery->where('s.tenant_id', $tenantId);
+        }
+        if (!empty($outletId) && $outletId !== 'all') {
+            $catQuery->where('s.outlet_id', $outletId);
+        }
+
+        $categoryPerformance = $catQuery
             ->select(
                 DB::raw("COALESCE(c.name, 'General Goods') as name"),
                 DB::raw('SUM(sl.quantity) as orders'),
@@ -166,15 +210,23 @@ class ReportController extends Controller
      */
     public function shifts(Request $request)
     {
-        $shifts = DB::table('shifts as s')
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+        $perPage = min(100, max(1, (int) $request->query('per_page', 30)));
+
+        $query = DB::table('shifts as s')
             ->leftJoin('users as u', 's.user_id', '=', 'u.id')
             ->leftJoin('outlets as o', 's.outlet_id', '=', 'o.id')
-            ->select('s.*', 'u.name as cashier_name', 'o.name as outlet_name')
-            ->orderBy('s.created_at', 'desc')
-            ->limit(30)
-            ->get();
+            ->select('s.*', 'u.name as cashier_name', 'o.name as outlet_name');
 
-        $totalShifts = $shifts->count();
+        if (!$isSuperAdminAll) {
+            $query->where('s.tenant_id', $tenantId);
+        }
+
+        $paginator = $query->orderBy('s.created_at', 'desc')->paginate($perPage);
+        $shifts = collect($paginator->items());
+
+        $totalShifts = $paginator->total();
         $totalOpeningFloat = (float) $shifts->sum('opening_float');
         $totalExpectedCash = (float) $shifts->sum('expected_cash');
         $totalActualCash = (float) $shifts->sum('counted_cash');
@@ -190,7 +242,13 @@ class ReportController extends Controller
                     'total_actual_cash' => $totalActualCash,
                     'net_variance' => $totalVariance,
                 ],
-                'shifts' => $shifts,
+                'shifts' => $shifts->values(),
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ],
             ],
         ]);
     }
@@ -200,20 +258,27 @@ class ReportController extends Controller
      */
     public function tax(Request $request)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+
         $startDate = $request->query('start_date', now()->startOfMonth()->toDateString());
         $endDate = $request->query('end_date', now()->toDateString());
 
-        $sales = DB::table('sales')
+        $salesQuery = DB::table('sales')
             ->whereDate('created_at', '>=', $startDate)
             ->whereDate('created_at', '<=', $endDate)
-            ->where('status', '!=', 'cancelled')
-            ->get();
+            ->where('status', '!=', 'cancelled');
+
+        if (!$isSuperAdminAll) {
+            $salesQuery->where('tenant_id', $tenantId);
+        }
+
+        $sales = $salesQuery->get();
 
         $taxableSales = (float) $sales->sum('subtotal');
         $vatCollected = (float) $sales->sum('tax_total');
         $grandTotalUsd = (float) $sales->sum('grand_total');
-        $tenantId = $this->getTenantId($request, false);
-        $activeRate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $tenantId);
+        $activeRate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $isSuperAdminAll ? null : $tenantId);
         $khrEquivalent = round($grandTotalUsd * $activeRate);
         $vatKhrEquivalent = round($vatCollected * $activeRate);
 
@@ -237,32 +302,52 @@ class ReportController extends Controller
      */
     public function export(Request $request)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+
         $type = $request->query('type', 'sales');
-        $filename = "pos_report_{$type}_" . date('Ymd_His') . ".csv";
+        $filename = "pos_report_" . preg_replace('/[^a-zA-Z0-9_-]/', '', (string) $type) . '_' . date('Ymd_His') . ".csv";
 
         $headers = [
             'Content-Type' => 'text/csv',
             'Content-Disposition' => "attachment; filename=\"{$filename}\"",
         ];
 
-        $callback = function () use ($type) {
+        $callback = function () use ($type, $tenantId, $isSuperAdminAll) {
             $file = fopen('php://output', 'w');
 
             if ($type === 'sales') {
                 fputcsv($file, ['Sale ID', 'Receipt Number', 'Grand Total ($)', 'Tax ($)', 'Status', 'Date']);
-                $sales = DB::table('sales')->orderBy('created_at', 'desc')->limit(500)->get();
-                foreach ($sales as $s) {
-                    fputcsv($file, [$s->id, $s->receipt_number, $s->grand_total, $s->tax_total ?? 0, $s->status, $s->created_at]);
-                }
+                DB::table('sales')
+                    ->when(!$isSuperAdminAll, fn ($q) => $q->where('tenant_id', $tenantId))
+                    ->orderBy('created_at', 'desc')
+                    ->limit(500)
+                    ->get()
+                    ->each(function ($s) use ($file) {
+                        fputcsv($file, [$s->id, $s->receipt_number, $s->grand_total, $s->tax_total ?? 0, $s->status, $s->created_at]);
+                    });
             } elseif ($type === 'shifts') {
                 fputcsv($file, ['Shift ID', 'Cashier ID', 'Opening Float ($)', 'Expected Cash ($)', 'Actual Cash ($)', 'Variance ($)', 'Status']);
-                $shifts = DB::table('shifts')->orderBy('created_at', 'desc')->limit(500)->get();
-                foreach ($shifts as $sh) {
-                    fputcsv($file, [$sh->id, $sh->user_id, $sh->opening_float, $sh->expected_cash, $sh->counted_cash ?? 0, $sh->cash_variance ?? 0, $sh->status]);
-                }
+                DB::table('shifts')
+                    ->when(!$isSuperAdminAll, fn ($q) => $q->where('tenant_id', $tenantId))
+                    ->orderBy('created_at', 'desc')
+                    ->limit(500)
+                    ->get()
+                    ->each(function ($sh) use ($file) {
+                        fputcsv($file, [$sh->id, $sh->user_id, $sh->opening_float, $sh->expected_cash, $sh->counted_cash ?? 0, $sh->cash_variance ?? 0, $sh->status]);
+                    });
             } else {
+                $rate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $isSuperAdminAll ? null : $tenantId) ?: 4100;
+                $summary = DB::table('sales')
+                    ->when(!$isSuperAdminAll, fn ($q) => $q->where('tenant_id', $tenantId))
+                    ->where('status', '!=', 'cancelled')
+                    ->selectRaw('COALESCE(SUM(subtotal), 0) as taxable, COALESCE(SUM(tax_total), 0) as vat, COALESCE(SUM(grand_total), 0) as grand')
+                    ->first();
+                $taxable = (float) ($summary->taxable ?? 0);
+                $vat = (float) ($summary->vat ?? 0);
+                $grand = (float) ($summary->grand ?? 0);
                 fputcsv($file, ['Report Date', 'Taxable Sales ($)', 'VAT 10% ($)', 'Total USD ($)', 'Total KHR (៛)']);
-                fputcsv($file, [date('Y-m-d'), 1500.00, 150.00, 1650.00, 6765000]);
+                fputcsv($file, [date('Y-m-d'), $taxable, $vat, $grand, round($grand * $rate)]);
             }
 
             fclose($file);
@@ -277,10 +362,14 @@ class ReportController extends Controller
      */
     public function taxAudit(Request $request)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+
         $startDate = $request->query('from_date', $request->query('start_date', now()->startOfMonth()->toDateString()));
         $endDate = $request->query('to_date', $request->query('end_date', now()->toDateString()));
         $outletId = $request->query('outlet_id');
-        $format = strtolower($request->query('format', 'json'));
+        $this->assertOutletBelongsToTenant($outletId, $tenantId, $isSuperAdminAll);
+        $format = strtolower((string) $request->query('format', 'json'));
 
         $query = DB::table('sales as s')
             ->leftJoin('outlets as o', 's.outlet_id', '=', 'o.id')
@@ -288,12 +377,15 @@ class ReportController extends Controller
             ->whereDate('s.created_at', '<=', $endDate)
             ->where('s.status', '!=', 'cancelled');
 
+        if (!$isSuperAdminAll) {
+            $query->where('s.tenant_id', $tenantId);
+        }
+
         if (!empty($outletId) && $outletId !== 'all') {
             $query->where('s.outlet_id', $outletId);
         }
 
-        $tenantId = $this->getTenantId($request, false);
-        $rate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $tenantId);
+        $rate = $this->exchangeRateService->getActiveRate('USD', 'KHR', $isSuperAdminAll ? null : $tenantId);
         if (!$rate || $rate <= 0) {
             $rate = 4100;
         }
@@ -457,12 +549,17 @@ class ReportController extends Controller
      */
     public function queueTaxAudit(Request $request)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+
         $startDate = $request->input('from_date', $request->input('start_date', now()->startOfMonth()->toDateString()));
         $endDate = $request->input('to_date', $request->input('end_date', now()->toDateString()));
         $outletId = $request->input('outlet_id');
-        $tenantId = $this->getTenantId($request, false);
+        $this->assertOutletBelongsToTenant($outletId, $tenantId, $isSuperAdminAll);
+
         $user = $request->user();
         $userId = $user ? (string) $user->id : null;
+        $ownerTenantId = $tenantId === 'all' ? null : $tenantId;
 
         $exportId = 'EXP-' . strtoupper(Str::random(12));
 
@@ -470,6 +567,7 @@ class ReportController extends Controller
             'status' => 'queued',
             'progress' => 0,
             'export_id' => $exportId,
+            'tenant_id' => $ownerTenantId,
             'queued_at' => now()->toIso8601String(),
             'period' => ['from' => $startDate, 'to' => $endDate],
         ], 3600);
@@ -500,8 +598,14 @@ class ReportController extends Controller
      * Check status and progress of an asynchronous export job.
      * GET /api/v1/reports/export-status/{id}
      */
-    public function getExportStatus($id)
+    public function getExportStatus(Request $request, $id)
     {
+        $this->getTenantId($request, true);
+
+        if (!preg_match('/^EXP-[A-Z0-9]{12}$/', (string) $id)) {
+            return response()->json(['status' => 'error', 'message' => 'Export job not found or expired.'], 404);
+        }
+
         $status = Cache::get("export_status_{$id}");
         if (!$status) {
             return response()->json([
@@ -509,6 +613,8 @@ class ReportController extends Controller
                 'message' => 'Export job not found or expired.',
             ], 404);
         }
+
+        $this->authorizeTenantResource($status['tenant_id'] ?? null, $request, 'Export');
 
         return response()->json([
             'status' => 'success',
@@ -520,8 +626,21 @@ class ReportController extends Controller
      * Download completed export file.
      * GET /api/v1/reports/export-download/{id}
      */
-    public function downloadExport($id)
+    public function downloadExport(Request $request, $id)
     {
+        $this->getTenantId($request, true);
+
+        if (!preg_match('/^EXP-[A-Z0-9]{12}$/', (string) $id)) {
+            return response()->json(['status' => 'error', 'message' => 'Export file not ready or does not exist.'], 404);
+        }
+
+        $status = Cache::get("export_status_{$id}");
+        if (!$status) {
+            return response()->json(['status' => 'error', 'message' => 'Export file not ready or does not exist.'], 404);
+        }
+
+        $this->authorizeTenantResource($status['tenant_id'] ?? null, $request, 'Export');
+
         $filename = "gdt_vat_audit_export_{$id}.csv";
         $filePath = storage_path("app/exports/{$filename}");
 

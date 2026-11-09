@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\HealthController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -8,14 +9,7 @@ Route::prefix('v1')->group(function () {
     | Microservice Health Check
     |--------------------------------------------------------------------------
     */
-    Route::get('/health', function () {
-        return response()->json([
-            'status' => 'healthy',
-            'service' => 'operations-service',
-            'version' => config('app.version', '1.0.0'),
-            'timestamp' => now()->toIso8601String(),
-        ]);
-    });
+    Route::get('/health', [HealthController::class, 'health']);
 
     /*
     |--------------------------------------------------------------------------

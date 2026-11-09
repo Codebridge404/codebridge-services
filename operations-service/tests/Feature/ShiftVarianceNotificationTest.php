@@ -27,6 +27,7 @@ class ShiftVarianceNotificationTest extends TestCase
         Sanctum::actingAs($cashier, ['*']);
 
         $shift = Shift::create([
+            'tenant_id' => 1,
             'outlet_id' => 1,
             'register_id' => 1,
             'user_id' => $cashier->id,
@@ -70,6 +71,7 @@ class ShiftVarianceNotificationTest extends TestCase
         Sanctum::actingAs($admin, ['*']);
 
         $shift = Shift::create([
+            'tenant_id' => 1,
             'outlet_id' => 1,
             'register_id' => 1,
             'user_id' => $admin->id,
@@ -117,6 +119,7 @@ class ShiftVarianceNotificationTest extends TestCase
         Sanctum::actingAs($admin, ['*']);
 
         DB::table('shift_variance_alerts')->insert([
+            'tenant_id' => 1,
             'shift_id' => 99,
             'user_id' => $admin->id,
             'outlet_id' => 1,

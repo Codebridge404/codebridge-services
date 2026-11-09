@@ -18,13 +18,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         // [BD-0040] Preserve visitor real-IP across Nginx -> Kubernetes -> Laravel proxy chain
-        $trustedProxies = env('TRUSTED_PROXIES', '*');
-        $proxies = ($trustedProxies === '*' || $trustedProxies === '**')
-            ? '*'
-            : array_map('trim', explode(',', (string) $trustedProxies));
-
         $middleware->trustProxies(
-            at: $proxies,
             headers: \Illuminate\Http\Request::HEADER_X_FORWARDED_FOR |
                 \Illuminate\Http\Request::HEADER_X_FORWARDED_PROTO
         );

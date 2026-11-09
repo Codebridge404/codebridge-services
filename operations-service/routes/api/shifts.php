@@ -9,21 +9,26 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/shifts/active', [ShiftController::class, 'active']);
-    Route::post('/shifts/open', [ShiftController::class, 'open']);
-    Route::get('/shifts/history', [ShiftController::class, 'history']);
-    Route::get('/shifts/variance-alerts', [ShiftController::class, 'varianceAlerts']);
-    Route::get('/shifts/variance-config', [ShiftController::class, 'varianceConfig']);
-    Route::post('/shifts/test-variance-alert', [ShiftController::class, 'testVarianceAlert']);
-    Route::get('/shifts/{id}/x-report', [ShiftController::class, 'xReport']);
-    Route::post('/shifts/{id}/cash-movement', [ShiftController::class, 'cashMovement']);
-    Route::post('/shifts/{id}/close', [ShiftController::class, 'close']);
-    Route::post('/shifts/cash-movement', [ShiftController::class, 'cashMovement']);
-    Route::post('/shifts/close', [ShiftController::class, 'close']);
+    Route::middleware('role:organization,organization_owner,owner,admin,super_admin,outlet_manager,supervisor,accountant,cashier,inventory_clerk,employee')->group(function () {
+        Route::get('/shifts/active', [ShiftController::class, 'active']);
+        Route::post('/shifts/open', [ShiftController::class, 'open']);
+        Route::get('/shifts/history', [ShiftController::class, 'history']);
+        Route::get('/shifts/{id}/x-report', [ShiftController::class, 'xReport']);
+        Route::post('/shifts/{id}/cash-movement', [ShiftController::class, 'cashMovement']);
+        Route::post('/shifts/{id}/close', [ShiftController::class, 'close']);
+        Route::post('/shifts/cash-movement', [ShiftController::class, 'cashMovement']);
+        Route::post('/shifts/close', [ShiftController::class, 'close']);
+    });
 
-    // End-of-Day (EOD) Z-Report & Nightly Dispatch
-    Route::match(['get', 'post'], '/reports/z-report', [ShiftController::class, 'zReport']);
-    Route::match(['get', 'post'], '/pos/reports/z-report', [ShiftController::class, 'zReport']);
-    Route::post('/shifts/eod-dispatch', [ShiftController::class, 'eodDispatch']);
-    Route::post('/pos/shifts/eod-dispatch', [ShiftController::class, 'eodDispatch']);
+    Route::middleware('role:organization,organization_owner,owner,admin,super_admin,outlet_manager,supervisor,accountant')->group(function () {
+        Route::get('/shifts/variance-alerts', [ShiftController::class, 'varianceAlerts']);
+        Route::get('/shifts/variance-config', [ShiftController::class, 'varianceConfig']);
+        Route::post('/shifts/test-variance-alert', [ShiftController::class, 'testVarianceAlert']);
+
+        // End-of-Day (EOD) Z-Report & Nightly Dispatch
+        Route::match(['get', 'post'], '/reports/z-report', [ShiftController::class, 'zReport']);
+        Route::match(['get', 'post'], '/pos/reports/z-report', [ShiftController::class, 'zReport']);
+        Route::post('/shifts/eod-dispatch', [ShiftController::class, 'eodDispatch']);
+        Route::post('/pos/shifts/eod-dispatch', [ShiftController::class, 'eodDispatch']);
+    });
 });

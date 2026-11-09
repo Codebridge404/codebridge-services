@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -124,7 +125,7 @@ class TenantQuotaMiddleware
                 ], 403);
             }
         } elseif ($resourceType === 'registers') {
-            $currentRegistersCount = \Illuminate\Support\Facades\Schema::hasTable('registers')
+            $currentRegistersCount = SchemaGuard::hasTable('registers')
                 ? DB::table('registers')
                     ->join('outlets', 'registers.outlet_id', '=', 'outlets.id')
                     ->where('outlets.tenant_id', $tenant->id)

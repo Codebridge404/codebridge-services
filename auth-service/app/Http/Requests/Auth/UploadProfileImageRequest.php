@@ -2,7 +2,9 @@
 
 namespace App\Http\Requests\Auth;
 
+use App\Services\ImageService;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Validator;
 
 class UploadProfileImageRequest extends FormRequest
 {
@@ -38,8 +40,21 @@ class UploadProfileImageRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'avatar' => ['required', 'file', 'mimes:jpeg,png,jpg,webp,gif,svg', 'max:10240'],
+            'avatar' => ['required', 'file', 'image', 'mimes:jpeg,png,jpg,webp,gif', 'max:10240'],
         ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $validator->after(function (Validator $v) {
+            if ($this->hasFile('avatar')) {
+                try {
+                    app(ImageService::class)->assertSafeRasterSource($this->file('avatar'));
+                } catch (\InvalidArgumentException $e) {
+                    $v->errors()->add('avatar', $e->getMessage());
+                }
+            }
+        });
     }
 
     /**
@@ -50,7 +65,7 @@ class UploadProfileImageRequest extends FormRequest
         return [
             'avatar.required' => 'Please select an image file to upload.',
             'avatar.file'     => 'The avatar must be a valid file.',
-            'avatar.mimes'    => 'The avatar must be an image of type: jpeg, png, jpg, webp, gif, svg.',
+            'avatar.mimes'    => 'The avatar must be a raster image of type: jpeg, png, jpg, webp, gif.',
             'avatar.max'      => 'The avatar image size must not exceed 10MB.',
         ];
     }

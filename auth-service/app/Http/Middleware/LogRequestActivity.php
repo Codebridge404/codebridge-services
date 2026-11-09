@@ -4,10 +4,12 @@ namespace App\Http\Middleware;
 
 use App\Models\ApiRequestLog;
 use App\Models\AuditLog;
+use App\Support\LogRedactor;
+use App\Support\SchemaGuard;
+use App\Support\TelemetryEmitter;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -67,12 +69,21 @@ class LogRequestActivity
         if (!$request->headers->has('X-Request-ID')) {
             $request->headers->set('X-Request-ID', (string) Str::uuid());
         }
-        $requestId = $request->header('X-Request-ID');
-        $traceId = $request->header('X-Trace-ID') ?? substr(md5((string) $requestId), 0, 32);
+        $requestId = (string) $request->header('X-Request-ID');
+        if (!$request->headers->has('X-Trace-ID')) {
+            $request->headers->set('X-Trace-ID', substr(md5($requestId), 0, 32));
+        }
+        $traceId = (string) $request->header('X-Trace-ID');
+
+        TelemetryEmitter::beginRequest($requestId, $traceId);
 
         $response = $next($request);
 
-        $durationMs = (int) max(1, round((microtime(true) - $startTime) * 1000));
+        $response->headers->set('X-Request-ID', $requestId);
+        $response->headers->set('X-Trace-ID', $traceId);
+
+        $elapsedMs = round((microtime(true) - $startTime) * 1000, 2);
+        $durationMs = (int) max(1, round($elapsedMs));
 
         // Sanitize input payload
         $sanitizedInput = $this->sanitizeInput($request->all());
@@ -174,9 +185,24 @@ class LogRequestActivity
             );
         }
 
-        // 4. Log activity stream
+        // 4. Log activity stream (with redacted path/query & correlation IDs)
         $userInfo = $user ? "User #{$user->id} [{$user->role}]" : "Guest";
-        Log::info("HTTP ACTIVITY | {$method} {$request->route()?->uri()} | Status: {$statusCode} | {$durationMs}ms | {$userInfo} | IP: {$request->ip()}");
+        $redactedTarget = LogRedactor::sanitizePathAndQuery($request);
+        Log::info("HTTP ACTIVITY | {$method} {$redactedTarget} | Status: {$statusCode} | {$durationMs}ms | {$userInfo} | IP: {$request->ip()}", [
+            'request_id' => $requestId,
+            'trace_id' => $traceId,
+        ]);
+
+        // 5. Emit structured telemetry to stderr for slow or failing requests (independent of LOG_LEVEL=error)
+        TelemetryEmitter::recordHttpRequest(
+            method: $method,
+            path: $redactedTarget,
+            statusCode: $statusCode,
+            durationMs: $elapsedMs,
+            tenantId: $tenantId,
+            requestId: $requestId,
+            traceId: $traceId
+        );
 
         return $response;
     }
@@ -186,17 +212,7 @@ class LogRequestActivity
      */
     protected function sanitizeInput(array $data): array
     {
-        $sanitized = [];
-        foreach ($data as $key => $value) {
-            if (in_array(strtolower((string) $key), $this->sensitiveKeys, true)) {
-                $sanitized[$key] = '********';
-            } elseif (is_array($value)) {
-                $sanitized[$key] = $this->sanitizeInput($value);
-            } else {
-                $sanitized[$key] = $value;
-            }
-        }
-        return $sanitized;
+        return LogRedactor::sanitizeArray($data);
     }
 
     /**
@@ -215,7 +231,7 @@ class LogRequestActivity
         ?string $errorMessage
     ): void {
         try {
-            if (!Schema::hasTable('api_request_logs')) {
+            if (!SchemaGuard::hasTable('api_request_logs')) {
                 return;
             }
 
@@ -264,7 +280,7 @@ class LogRequestActivity
         array $payload
     ): void {
         try {
-            if (!Schema::hasTable('audit_logs')) {
+            if (!SchemaGuard::hasTable('audit_logs')) {
                 return;
             }
 
@@ -295,7 +311,7 @@ class LogRequestActivity
                 'updated_at' => now(),
             ];
 
-            if (Schema::hasColumn('audit_logs', 'user_name')) {
+            if (SchemaGuard::hasColumn('audit_logs', 'user_name')) {
                 $auditData['user_name'] = $user?->name ?? 'System';
             }
 
@@ -322,7 +338,7 @@ class LogRequestActivity
                 return;
             }
 
-            if (!Schema::hasTable('security_events')) {
+            if (!SchemaGuard::hasTable('security_events')) {
                 return;
             }
 

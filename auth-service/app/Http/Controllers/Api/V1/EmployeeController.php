@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Employee\StoreEmployeeRequest;
 use App\Http\Requests\Employee\UpdateEmployeeRequest;
 use App\Http\Resources\Employee\EmployeeResource;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -70,15 +71,17 @@ class EmployeeController extends Controller
         }
 
         if (!empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where(DB::raw("CONCAT(e.first_name, ' ', e.last_name)"), 'like', "%{$search}%")
-                  ->orWhere('e.employee_code', 'like', "%{$search}%")
-                  ->orWhere('e.email', 'like', "%{$search}%")
-                  ->orWhere('e.phone', 'like', "%{$search}%");
+            $escaped = SchemaGuard::escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where(DB::raw("CONCAT(e.first_name, ' ', e.last_name)"), 'like', "%{$escaped}%")
+                  ->orWhere('e.employee_code', 'like', "%{$escaped}%")
+                  ->orWhere('e.email', 'like', "%{$escaped}%")
+                  ->orWhere('e.phone', 'like', "%{$escaped}%");
             });
         }
 
-        $employees = $query->select(
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->select(
                 'e.id',
                 'e.employee_code',
                 'e.first_name',
@@ -98,11 +101,17 @@ class EmployeeController extends Controller
                 'e.created_at'
             )
             ->orderBy('e.created_at', 'desc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => EmployeeResource::collection($employees),
+            'data' => EmployeeResource::collection($paginator->items()),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 

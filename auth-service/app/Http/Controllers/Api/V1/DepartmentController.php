@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Department\StoreDepartmentRequest;
 use App\Http\Requests\Department\UpdateDepartmentRequest;
 use App\Http\Resources\Department\DepartmentResource;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -62,13 +63,15 @@ class DepartmentController extends Controller
         }
 
         if (!empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('d.name', 'like', "%{$search}%")
-                  ->orWhere('d.code', 'like', "%{$search}%");
+            $escaped = SchemaGuard::escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('d.name', 'like', "%{$escaped}%")
+                  ->orWhere('d.code', 'like', "%{$escaped}%");
             });
         }
 
-        $departments = $query->select(
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->select(
                 'd.id',
                 'd.name',
                 'd.code',
@@ -77,11 +80,17 @@ class DepartmentController extends Controller
                 DB::raw('(SELECT COUNT(*) FROM employees WHERE department_id = d.id) as employees_count')
             )
             ->orderBy('d.name', 'asc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => DepartmentResource::collection($departments),
+            'data' => DepartmentResource::collection($paginator->items()),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 

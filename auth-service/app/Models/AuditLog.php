@@ -2,10 +2,10 @@
 
 namespace App\Models;
 
+use App\Support\SchemaGuard;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 class AuditLog extends Model
@@ -80,7 +80,7 @@ class AuditLog extends Model
         ?string $userAgent = null
     ): ?self {
         try {
-            if (!Schema::hasTable('audit_logs')) {
+            if (!SchemaGuard::hasTable('audit_logs')) {
                 return null;
             }
 
@@ -102,7 +102,7 @@ class AuditLog extends Model
                 'details' => $details,
             ];
 
-            if (Schema::hasColumn('audit_logs', 'user_name')) {
+            if (SchemaGuard::hasColumn('audit_logs', 'user_name')) {
                 $logData['user_name'] = $userName ?? $user?->name ?? 'System';
             }
 

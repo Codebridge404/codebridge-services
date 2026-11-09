@@ -10,6 +10,7 @@ class SaleLine extends Model
     use HasFactory;
 
     protected $fillable = [
+        'tenant_id',
         'sale_id',
         'product_id',
         'product_name',

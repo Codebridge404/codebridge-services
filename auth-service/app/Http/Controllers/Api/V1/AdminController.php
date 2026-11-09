@@ -14,6 +14,7 @@ use App\Models\Role;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -325,7 +326,7 @@ class AdminController extends Controller
 
         // Search by name, email, or phone
         if ($request->filled('q')) {
-            $q = trim($request->q);
+            $q = SchemaGuard::escapeLike(trim((string) $request->q));
             $query->where(function ($w) use ($q) {
                 $w->where('u.name', 'like', "%{$q}%")
                   ->orWhere('u.email', 'like', "%{$q}%")
@@ -333,22 +334,39 @@ class AdminController extends Controller
             });
         }
 
-        $users = $query->select(
-            'u.id', 'u.uuid', 'u.name', 'u.email', 'u.phone', 'u.avatar_url', 'u.is_active',
-            'tu.tenant_id', 't.name as tenant_name',
-            DB::raw("COALESCE(r.slug, 'user') as role"),
-            DB::raw('r.name as role_name'),
-            DB::raw('COALESCE(o.id, NULL) as outlet_id'),
-            DB::raw('COALESCE(tuo.outlet_uuid, NULL) as outlet_uuid'),
-            'o.name as outlet_name',
-            'u.created_at', 'u.updated_at'
-        )->distinct()->orderBy('u.created_at', 'desc')->get();
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $idPaginator = (clone $query)
+            ->select('u.id')
+            ->groupBy(['u.id', 'u.created_at'])
+            ->orderBy('u.created_at', 'desc')
+            ->paginate($perPage);
+
+        $pageIds = collect($idPaginator->items())->pluck('id')->all();
+        $users = empty($pageIds)
+            ? collect()
+            : $query->whereIn('u.id', $pageIds)
+                ->select(
+                    'u.id', 'u.uuid', 'u.name', 'u.email', 'u.phone', 'u.avatar_url', 'u.is_active',
+                    'tu.tenant_id', 't.name as tenant_name',
+                    DB::raw("COALESCE(r.slug, 'user') as role"),
+                    DB::raw('r.name as role_name'),
+                    DB::raw('COALESCE(o.id, NULL) as outlet_id'),
+                    DB::raw('COALESCE(tuo.outlet_uuid, NULL) as outlet_uuid'),
+                    'o.name as outlet_name',
+                    'u.created_at', 'u.updated_at'
+                )->distinct()->orderBy('u.created_at', 'desc')->get()->unique('id')->values();
 
         return response()->json([
             'status' => 'success',
             'caller_role' => $callerRole,
             'count' => $users->count(),
             'data' => UserResource::collection($users),
+            'pagination' => [
+                'current_page' => $idPaginator->currentPage(),
+                'last_page' => $idPaginator->lastPage(),
+                'per_page' => $idPaginator->perPage(),
+                'total' => $idPaginator->total(),
+            ],
         ]);
     }
 
@@ -424,12 +442,19 @@ class AdminController extends Controller
             if ($request->filled('client_tier')) {
                 $query->where('client_tier', $request->client_tier);
             }
-            $tenants = $query->get();
+            $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+            $paginator = $query->paginate($perPage);
 
             return response()->json([
                 'status' => 'success',
-                'count' => $tenants->count(),
-                'data' => $tenants,
+                'count' => count($paginator->items()),
+                'data' => $paginator->items(),
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ],
             ]);
         }
 

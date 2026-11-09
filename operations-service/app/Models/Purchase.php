@@ -12,6 +12,7 @@ class Purchase extends Model
     protected $table = 'purchases';
 
     protected $fillable = [
+        'tenant_id',
         'purchase_ref',
         'supplier',
         'invoice_no',

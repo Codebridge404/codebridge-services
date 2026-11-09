@@ -5,10 +5,14 @@ namespace App\Http\Middleware;
 use App\Models\User;
 use App\Services\JwtService;
 use App\Services\TenantAuthorizationService;
+use App\Support\SchemaGuard;
+use Carbon\Carbon;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -47,19 +51,21 @@ class AuthenticateJwt
             $payload = $this->jwtService->verify($token);
 
             if ($payload && !empty($payload['sub'])) {
-                // 1. Enforce Token Purpose: Reject refresh tokens used to authenticate API endpoints
+                // 1. Strictly enforce Token Purpose: require explicit token_use=access
                 $tokenUse = $payload['token_use'] ?? null;
-                if ($tokenUse && $tokenUse !== 'access') {
+                if ($tokenUse !== 'access') {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'INVALID_TOKEN_PURPOSE',
-                        'message' => 'Invalid token purpose: refresh tokens cannot be used to authenticate API endpoints.',
+                        'message' => 'Invalid token purpose: only access tokens can authenticate API endpoints.',
                     ], 401);
                 }
 
+                $revocationCache = $this->sharedRevocationCache();
+
                 // 2. Enforce Token Revocation via Cache (Blacklist JTI)
                 $jti = $payload['jti'] ?? null;
-                if ($jti && Cache::get("revoked_jwt:{$jti}")) {
+                if ($jti && ($this->isJtiRevoked((string) $jti, $revocationCache))) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'TOKEN_REVOKED',
@@ -70,8 +76,8 @@ class AuthenticateJwt
                 // 3. Enforce User Global Session Revocation
                 $userId = $payload['sub'];
                 $tokenIat = (int) ($payload['iat'] ?? 0);
-                $revokedAt = Cache::get("revoked_user_sessions:{$userId}");
-                if ($revokedAt !== null && $tokenIat <= (int) $revokedAt) {
+                $revokedAt = $this->getMaxNumericCacheValue("revoked_user_sessions:{$userId}", $revocationCache);
+                if ($revokedAt !== null && $tokenIat <= $revokedAt) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'SESSION_REVOKED',
@@ -81,13 +87,35 @@ class AuthenticateJwt
 
                 // Check session version if present in token claims
                 if (isset($payload['session_version'])) {
-                    $currentVersion = (int) Cache::get("session_version:{$userId}", 0);
+                    $currentVersion = (int) ($this->getMaxNumericCacheValue("session_version:{$userId}", $revocationCache) ?? 0);
                     if ((int) $payload['session_version'] < $currentVersion) {
                         return response()->json([
                             'status' => 'error',
                             'code' => 'SESSION_SUPERSEDED',
                             'message' => 'Session has expired or was revoked by a newer login.',
                         ], 401);
+                    }
+                }
+
+                // 4. Verify Auth-owned session UUID (sid) revocation/expiration via cache and auth_db
+                $sid = $payload['sid'] ?? null;
+                if (is_string($sid) && $sid !== '') {
+                    if ($this->isSidRevoked($sid, $revocationCache)) {
+                        return response()->json([
+                            'status' => 'error',
+                            'code' => 'SESSION_REVOKED',
+                            'message' => 'Session has expired or been revoked. Please sign in again.',
+                        ], 401);
+                    }
+
+                    if (Str::isUuid($sid) && !config('services.auth.verify_via_http', false)) {
+                        if ($this->isSessionRevokedInAuthDb($sid, (string) $userId)) {
+                            return response()->json([
+                                'status' => 'error',
+                                'code' => 'SESSION_REVOKED',
+                                'message' => 'Session has expired or been revoked. Please sign in again.',
+                            ], 401);
+                        }
                     }
                 }
 
@@ -160,5 +188,110 @@ class AuthenticateJwt
         }
 
         return $next($request);
+    }
+
+    protected function sharedRevocationCache(): ?\Illuminate\Contracts\Cache\Repository
+    {
+        if (!config('cache.stores.revocation.enabled', false) && config('cache.default') !== 'redis') {
+            return null;
+        }
+
+        try {
+            return Cache::store('revocation');
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    protected function isJtiRevoked(string $jti, ?\Illuminate\Contracts\Cache\Repository $revocationCache): bool
+    {
+        if (Cache::get("revoked_jwt:{$jti}")) {
+            return true;
+        }
+
+        if ($revocationCache) {
+            try {
+                return (bool) $revocationCache->get("revoked_jwt:{$jti}", false);
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    protected function isSidRevoked(string $sid, ?\Illuminate\Contracts\Cache\Repository $revocationCache): bool
+    {
+        if (Cache::get("revoked_sid:{$sid}")) {
+            return true;
+        }
+
+        if ($revocationCache) {
+            try {
+                return (bool) $revocationCache->get("revoked_sid:{$sid}", false);
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    protected function getMaxNumericCacheValue(string $key, ?\Illuminate\Contracts\Cache\Repository $revocationCache): ?int
+    {
+        $local = Cache::get($key);
+        $remote = null;
+
+        if ($revocationCache) {
+            try {
+                $remote = $revocationCache->get($key);
+            } catch (\Throwable) {
+                $remote = null;
+            }
+        }
+
+        if ($local === null && $remote === null) {
+            return null;
+        }
+
+        return max(
+            $local !== null ? (int) $local : PHP_INT_MIN,
+            $remote !== null ? (int) $remote : PHP_INT_MIN
+        );
+    }
+
+    protected function isSessionRevokedInAuthDb(string $sid, string $userId): bool
+    {
+        $conn = TenantAuthorizationService::authConnectionName();
+        $isSqlite = config('database.default') === 'sqlite'
+            || (config("database.connections.{$conn}.driver") === 'sqlite');
+
+        try {
+            if (!SchemaGuard::hasTable('user_sessions', $conn)) {
+                return !$isSqlite;
+            }
+
+            $session = DB::connection($conn)
+                ->table('user_sessions')
+                ->where('uuid', $sid)
+                ->where('user_id', $userId)
+                ->first(['id', 'revoked_at', 'expires_at']);
+
+            if (!$session) {
+                return true;
+            }
+
+            if (!empty($session->revoked_at)) {
+                return true;
+            }
+
+            if (!empty($session->expires_at) && Carbon::parse($session->expires_at)->isPast()) {
+                return true;
+            }
+
+            return false;
+        } catch (\Throwable) {
+            return !$isSqlite;
+        }
     }
 }

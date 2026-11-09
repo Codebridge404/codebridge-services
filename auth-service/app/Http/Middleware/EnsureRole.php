@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -40,7 +41,7 @@ class EnsureRole
 
         if (!$user) {
             try {
-                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'unauthenticated',
                         ruleCode: 'SEC_UNAUTHENTICATED',
@@ -115,7 +116,7 @@ class EnsureRole
 
         if (empty(array_intersect($effectiveRoles, $roles))) {
             try {
-                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'role_access_denied',
                         ruleCode: 'SEC_ROLE_DENIED',

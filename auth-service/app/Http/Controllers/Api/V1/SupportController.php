@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Support\StoreAnnouncementRequest;
 use App\Http\Requests\Support\StoreTicketRequest;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -62,16 +63,18 @@ class SupportController extends Controller
         }
 
         if ($search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('st.subject', 'like', "%{$search}%")
-                  ->orWhere('st.message', 'like', "%{$search}%")
-                  ->orWhere('t.name', 'like', "%{$search}%")
-                  ->orWhere('u.name', 'like', "%{$search}%")
-                  ->orWhere('u.email', 'like', "%{$search}%");
+            $escaped = SchemaGuard::escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('st.subject', 'like', "%{$escaped}%")
+                  ->orWhere('st.message', 'like', "%{$escaped}%")
+                  ->orWhere('t.name', 'like', "%{$escaped}%")
+                  ->orWhere('u.name', 'like', "%{$escaped}%")
+                  ->orWhere('u.email', 'like', "%{$escaped}%");
             });
         }
 
-        $tickets = $query->select(
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->select(
             'st.id',
             'st.uuid',
             'st.tenant_id',
@@ -86,16 +89,26 @@ class SupportController extends Controller
             't.name as tenant_name',
             'u.name as requester_name',
             'u.email as requester_email'
-        )->get();
+        )->paginate($perPage);
+
+        $statsRow = DB::table('support_tickets')
+            ->selectRaw("COUNT(*) as total, SUM(CASE WHEN status = 'open' THEN 1 ELSE 0 END) as open_count, SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) as in_progress_count, SUM(CASE WHEN status = 'resolved' THEN 1 ELSE 0 END) as resolved_count")
+            ->first();
 
         return response()->json([
             'success' => true,
-            'data'    => $tickets,
+            'data'    => $paginator->items(),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
             'stats'   => [
-                'total'       => DB::table('support_tickets')->count(),
-                'open'        => DB::table('support_tickets')->where('status', 'open')->count(),
-                'in_progress' => DB::table('support_tickets')->where('status', 'in_progress')->count(),
-                'resolved'    => DB::table('support_tickets')->where('status', 'resolved')->count(),
+                'total'       => (int) ($statsRow->total ?? 0),
+                'open'        => (int) ($statsRow->open_count ?? 0),
+                'in_progress' => (int) ($statsRow->in_progress_count ?? 0),
+                'resolved'    => (int) ($statsRow->resolved_count ?? 0),
             ],
         ]);
     }

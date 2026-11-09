@@ -72,6 +72,14 @@ class ExchangeRateService
                 ->where('base_currency', $target)
                 ->where('target_currency', $base);
 
+            if (!empty($tenantId) && $tenantId !== 'all') {
+                $reverseQuery->where(function ($q) use ($tenantId) {
+                    $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                })->orderByRaw('tenant_id IS NULL ASC');
+            } else {
+                $reverseQuery->whereNull('tenant_id');
+            }
+
             $reverseRecord = $reverseQuery->orderByDesc('effective_date')->orderByDesc('id')->first();
             if ($reverseRecord && (float)$reverseRecord->rate > 0) {
                 return round(1 / (float) $reverseRecord->rate, 6);
@@ -172,10 +180,16 @@ class ExchangeRateService
 
         // If external API could not be reached or returned invalid rate, use latest active DB rate or standard 4,100
         if ($rate === null || $rate <= 0) {
-            $existing = ExchangeRate::where('base_currency', 'USD')
-                ->where('target_currency', 'KHR')
-                ->orderByDesc('id')
-                ->first();
+            $existingQuery = ExchangeRate::where('base_currency', 'USD')
+                ->where('target_currency', 'KHR');
+            if (!empty($tenantId) && $tenantId !== 'all') {
+                $existingQuery->where(function ($q) use ($tenantId) {
+                    $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
+                })->orderByRaw('tenant_id IS NULL ASC');
+            } else {
+                $existingQuery->whereNull('tenant_id');
+            }
+            $existing = $existingQuery->orderByDesc('id')->first();
 
             $rate = $existing ? (float) $existing->rate : self::DEFAULT_USD_KHR_RATE;
             $source = $existing ? 'NBC_PREVIOUS_ACTIVE' : 'NBC_BASELINE';
@@ -213,7 +227,9 @@ class ExchangeRateService
         ?string $tenantId = null,
         ?array $rawPayload = null
     ): ExchangeRate {
-        $cleanTenantId = (!empty($tenantId) && trim((string)$tenantId) !== '') ? (int) $tenantId : null;
+        $cleanTenantId = (!empty($tenantId) && $tenantId !== 'all' && ctype_digit(trim((string) $tenantId)))
+            ? (int) trim((string) $tenantId)
+            : null;
 
         return DB::transaction(function () use ($rate, $bidRate, $askRate, $source, $effectiveDate, $cleanTenantId, $rawPayload) {
             // Deactivate previous active rates for USD -> KHR

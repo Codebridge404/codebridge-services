@@ -9,6 +9,7 @@ use App\Http\Requests\NotificationProvider\UpdateNotificationProviderRequest;
 use App\Http\Resources\NotificationProvider\NotificationProviderResource;
 use App\Models\NotificationProvider;
 use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -64,18 +65,25 @@ class NotificationProviderController extends Controller
         }
 
         if ($request->filled('q')) {
-            $q = (string) $request->input('q');
-            $query->where(function ($sub) use ($q) {
-                $sub->where('name', 'like', "%{$q}%")
-                    ->orWhere('provider', 'like', "%{$q}%");
+            $escaped = SchemaGuard::escapeLike(trim((string) $request->input('q')));
+            $query->where(function ($sub) use ($escaped) {
+                $sub->where('name', 'like', "%{$escaped}%")
+                    ->orWhere('provider', 'like', "%{$escaped}%");
             });
         }
 
-        $providers = $query->orderBy('created_at', 'desc')->get();
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->orderBy('created_at', 'desc')->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => NotificationProviderResource::collection($providers),
+            'data' => NotificationProviderResource::collection($paginator->items()),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 

@@ -36,22 +36,22 @@ class CloudinaryService
     public function __construct()
     {
         // 1. MinIO S3 Object Storage Configuration Check
-        $s3Bucket = config('filesystems.disks.s3.bucket') ?: env('AWS_BUCKET');
+        $s3Bucket = config('filesystems.disks.s3.bucket');
         $this->s3Configured = !empty($s3Bucket);
 
         // 2. Try parsing CLOUDINARY_URL if provided (cloudinary://API_KEY:API_SECRET@CLOUD_NAME)
-        $cloudinaryUrl = env('CLOUDINARY_URL');
+        $cloudinaryUrl = config('services.cloudinary.url');
         if (!empty($cloudinaryUrl)) {
             $parsed = parse_url($cloudinaryUrl);
             $this->apiKey = $parsed['user'] ?? null;
             $this->apiSecret = $parsed['pass'] ?? null;
             $this->cloudName = $parsed['host'] ?? null;
-            $this->uploadPreset = env('CLOUDINARY_UPLOAD_PRESET');
+            $this->uploadPreset = config('services.cloudinary.upload_preset');
         } else {
-            $this->cloudName = env('CLOUDINARY_CLOUD_NAME');
-            $this->apiKey = env('CLOUDINARY_API_KEY');
-            $this->apiSecret = env('CLOUDINARY_API_SECRET');
-            $this->uploadPreset = env('CLOUDINARY_UPLOAD_PRESET');
+            $this->cloudName = config('services.cloudinary.cloud_name');
+            $this->apiKey = config('services.cloudinary.api_key');
+            $this->apiSecret = config('services.cloudinary.api_secret');
+            $this->uploadPreset = config('services.cloudinary.upload_preset');
         }
     }
 
@@ -83,6 +83,84 @@ class CloudinaryService
         return $this->isS3Configured() || $this->isCloudinaryConfigured();
     }
 
+    public const ALLOWED_RASTER_EXTENSIONS = ['jpeg', 'jpg', 'png', 'gif', 'webp'];
+
+    /**
+     * Validate that an upload target (UploadedFile, base64 data URI, or URL) is a safe raster image.
+     *
+     * @throws \InvalidArgumentException
+     */
+    public function assertSafeRasterImage(mixed $file): void
+    {
+        if ($file instanceof UploadedFile) {
+            $ext = strtolower((string) $file->getClientOriginalExtension());
+            $guessed = strtolower((string) $file->guessExtension());
+            $mime = strtolower((string) $file->getMimeType());
+            $clientMime = strtolower((string) $file->getClientMimeType());
+
+            foreach ([$mime, $clientMime] as $detectedMime) {
+                if ($detectedMime !== '' && (str_contains($detectedMime, 'svg') || str_contains($detectedMime, 'xml') || str_contains($detectedMime, 'html') || str_contains($detectedMime, 'php'))) {
+                    throw new \InvalidArgumentException('SVG and markup uploads are not permitted.');
+                }
+            }
+
+            if ($ext !== '' && !in_array($ext, self::ALLOWED_RASTER_EXTENSIONS, true)) {
+                throw new \InvalidArgumentException('Only raster image formats (jpeg, jpg, png, gif, webp) are permitted.');
+            }
+
+            if ($guessed !== '' && $guessed !== 'bin' && !in_array($guessed, self::ALLOWED_RASTER_EXTENSIONS, true)) {
+                throw new \InvalidArgumentException('Uploaded file content is not a supported raster image format.');
+            }
+
+            $realPath = $file->getRealPath();
+            if ($realPath && is_readable($realPath)) {
+                $head = @file_get_contents($realPath, false, null, 0, 8192);
+                if (is_string($head) && preg_match('/(?:<!DOCTYPE\s+svg|<svg\b|<script\b|<\?php)/i', $head)) {
+                    throw new \InvalidArgumentException('SVG or script markup inside uploaded file is not permitted.');
+                }
+            }
+
+            return;
+        }
+
+        if (is_string($file)) {
+            $trimmed = trim($file);
+            if ($trimmed === '') {
+                throw new \InvalidArgumentException('Image payload cannot be empty.');
+            }
+
+            if (preg_match('/^(?:javascript|vbscript):/i', $trimmed)) {
+                throw new \InvalidArgumentException('Unsafe image URI scheme is not permitted.');
+            }
+
+            if (stripos($trimmed, 'data:') === 0) {
+                if (!preg_match('/^data:image\/(jpeg|jpg|png|gif|webp);base64,(.+)$/is', $trimmed, $matches)) {
+                    throw new \InvalidArgumentException('Unsupported or unsafe image data URI format (SVGs are not permitted).');
+                }
+                $decoded = base64_decode($matches[2], true);
+                if ($decoded === false || $decoded === '') {
+                    throw new \InvalidArgumentException('Invalid base64 image payload.');
+                }
+                if (preg_match('/(?:<!DOCTYPE\s+svg|<svg\b|<script\b|<\?php)/i', $decoded)) {
+                    throw new \InvalidArgumentException('SVG or script markup inside image data URI is not permitted.');
+                }
+                return;
+            }
+
+            if (preg_match('#^https?://#i', $trimmed)) {
+                $path = parse_url($trimmed, PHP_URL_PATH) ?: $trimmed;
+                if (preg_match('/\.svgz?(?:$|[?#])/i', $path)) {
+                    throw new \InvalidArgumentException('SVG image URLs are not permitted.');
+                }
+                return;
+            }
+
+            throw new \InvalidArgumentException('Unsupported image payload.');
+        }
+
+        throw new \InvalidArgumentException('Invalid image payload type.');
+    }
+
     /**
      * Upload an image file, base64 data string, or URL to MinIO S3 (default) or Cloudinary (fallback).
      *
@@ -92,11 +170,16 @@ class CloudinaryService
      */
     public function upload($file, string $folder = 'products'): ?string
     {
+        $this->assertSafeRasterImage($file);
+
         // 1. Prioritize MinIO S3 Object Storage (Default)
         if ($this->isS3Configured()) {
             try {
                 if ($file instanceof UploadedFile) {
-                    $ext = $file->getClientOriginalExtension() ?: 'png';
+                    $ext = strtolower($file->guessExtension() ?: $file->getClientOriginalExtension() ?: 'png');
+                    if (!in_array($ext, self::ALLOWED_RASTER_EXTENSIONS, true)) {
+                        $ext = 'png';
+                    }
                     $filename = uniqid('prod_') . '_' . time() . '.' . $ext;
                     $path = Storage::disk('s3')->putFileAs($folder, $file, $filename, 'public');
                     if ($path) {
@@ -104,17 +187,13 @@ class CloudinaryService
                     }
                 } elseif (is_string($file)) {
                     // Direct URL pass-through if already a remote web URL
-                    if (str_starts_with($file, 'http://') || str_starts_with($file, 'https://')) {
+                    if (preg_match('#^https?://#i', $file)) {
                         return $file;
                     }
                     // Handle Base64 Data URL (e.g. data:image/png;base64,...)
-                    if (str_starts_with($file, 'data:image/')) {
-                        $ext = 'png';
-                        if (preg_match('/^data:image\/(\w+);base64,/', $file, $matches)) {
-                            $ext = $matches[1] === 'jpeg' ? 'jpg' : $matches[1];
-                        }
-                        $fileData = substr($file, strpos($file, ',') + 1);
-                        $decoded = base64_decode($fileData);
+                    if (preg_match('/^data:image\/(jpeg|jpg|png|gif|webp);base64,(.+)$/is', trim($file), $matches)) {
+                        $ext = strtolower($matches[1]) === 'jpeg' ? 'jpg' : strtolower($matches[1]);
+                        $decoded = base64_decode($matches[2], true);
                         if ($decoded !== false) {
                             $filename = $folder . '/' . uniqid('prod_') . '_' . time() . '.' . $ext;
                             Storage::disk('s3')->put($filename, $decoded, 'public');

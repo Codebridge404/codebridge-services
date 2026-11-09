@@ -87,17 +87,19 @@ echo -e "${YELLOW}[Step 4/6] Starting Staging Microservices and Workers...${NC}"
 compose up -d --force-recreate auth-service operations-service auth-horizon operations-horizon auth-scheduler
 echo -e "${GREEN}✔ Microservices started.${NC}\n"
 
-# 5. Execute Database Migrations & Clear Spec/Route Caches
-echo -e "${YELLOW}[Step 5/6] Executing Laravel Database Migrations & Clearing Caches...${NC}"
-echo -e "  Running Auth Service migrations & cache reset..."
+# 5. Execute Database Migrations & Build Production/Staging Framework Caches
+echo -e "${YELLOW}[Step 5/6] Executing Laravel Database Migrations & Optimizing Caches...${NC}"
+echo -e "  Running Auth Service migrations & optimize..."
 docker exec codebridge-staging-auth-service php artisan migrate --force
-docker exec codebridge-staging-auth-service php artisan optimize:clear
+docker exec codebridge-staging-auth-service php artisan optimize
+docker exec codebridge-staging-auth-horizon php artisan optimize
 docker exec codebridge-staging-auth-service php artisan scramble:clear 2>/dev/null || true
-echo -e "  Running Operations Service migrations & cache reset..."
+echo -e "  Running Operations Service migrations & optimize..."
 docker exec codebridge-staging-operations-service php artisan migrate --force
-docker exec codebridge-staging-operations-service php artisan optimize:clear
+docker exec codebridge-staging-operations-service php artisan optimize
+docker exec codebridge-staging-operations-horizon php artisan optimize
 docker exec codebridge-staging-operations-service php artisan scramble:clear 2>/dev/null || true
-echo -e "${GREEN}✔ All database migrations and cache resets completed.${NC}\n"
+echo -e "${GREEN}✔ All database migrations and framework optimizations completed.${NC}\n"
 
 # 6. Start API Gateway & Nginx Proxy Manager
 echo -e "${YELLOW}[Step 6/6] Starting Ingress API Gateway and Nginx Proxy Manager...${NC}"

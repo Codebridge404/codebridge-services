@@ -9,6 +9,8 @@ use App\Http\Requests\Outlet\UpdateOutletRequest;
 use App\Http\Requests\Outlet\UpdateTerminalSettingsRequest;
 use App\Http\Resources\Outlet\OutletResource;
 use App\Services\PosBusinessProfileService;
+use App\Support\SchemaGuard;
+use App\Support\TenantSettingsCache;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -31,6 +33,26 @@ use Illuminate\Support\Str;
  */
 class OutletController extends Controller
 {
+    private function resolveOutletReadScope(Request $request): string
+    {
+        $user = $request->user();
+        abort_unless($user, 401);
+
+        if (\App\Services\UserAuthorizationService::isSuperAdmin($user)) {
+            return 'super';
+        }
+
+        $context = \App\Services\UserAuthorizationService::resolveAuthorizationContext(
+            $user,
+            null,
+            $user->tenant_id ? (int) $user->tenant_id : null,
+            true
+        );
+        abort_unless($context['authorized'], $context['status'], $context['message']);
+
+        return (string) $context['tenant_id'];
+    }
+
     public function index(Request $request)
     {
         $user = $request->user();
@@ -48,13 +70,15 @@ class OutletController extends Controller
         }
 
         if (!empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('o.name', 'like', "%{$search}%")
-                  ->orWhere('o.code', 'like', "%{$search}%");
+            $escaped = SchemaGuard::escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('o.name', 'like', "%{$escaped}%")
+                  ->orWhere('o.code', 'like', "%{$escaped}%");
             });
         }
 
-        $outlets = $query->select(
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->select(
                 'o.id',
                 'o.tenant_id',
                 'o.name',
@@ -70,16 +94,22 @@ class OutletController extends Controller
                 'o.terminal_settings',
                 'o.created_at',
                 DB::raw('(SELECT COUNT(*) FROM tenant_user_outlets WHERE outlet_uuid = o.uuid) as staff_count'),
-                \Illuminate\Support\Facades\Schema::hasTable('registers')
+                SchemaGuard::hasTable('registers')
                     ? DB::raw('(SELECT COUNT(*) FROM registers WHERE outlet_id = o.id) as registers_count')
                     : DB::raw('0 as registers_count')
             )
             ->orderBy('o.name', 'asc')
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => OutletResource::collection($outlets),
+            'data' => OutletResource::collection($paginator->items()),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 
@@ -167,6 +197,7 @@ class OutletController extends Controller
         }
 
         DB::table('outlets')->where('id', $id)->update($updates);
+        TenantSettingsCache::invalidateOutlet($outlet->tenant_id !== null ? (string) $outlet->tenant_id : null, $id);
 
         return response()->json([
             'status' => 'success',
@@ -192,25 +223,32 @@ class OutletController extends Controller
      */
     public function getBusinessProfile($id)
     {
-        \App\Services\TenantAccess::record('outlets', $id);
-        $outlet = DB::table('outlets')->where('id', $id)->first();
-        if (!$outlet) {
-            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
-        }
+        $request = request();
+        $callerScope = $this->resolveOutletReadScope($request);
 
-        $businessType = $outlet->business_type ?? 'retail_mart';
+        $payload = TenantSettingsCache::rememberOutlet(
+            'business_profile',
+            $callerScope,
+            $id,
+            function () use ($id, $request) {
+                $outlet = \App\Services\TenantAccess::record('outlets', $id, $request);
+                $businessType = $outlet->business_type ?? 'retail_mart';
 
-        return response()->json([
-            'status' => 'success',
-            'data' => [
-                'outlet_id' => $outlet->id,
-                'outlet_name' => $outlet->name,
-                'business_type' => $businessType,
-                'business_profile' => PosBusinessProfileService::getProfile($businessType),
-                'is_kds_enabled' => (bool) $outlet->is_kds_enabled,
-                'is_cfd_enabled' => (bool) $outlet->is_cfd_enabled,
-            ],
-        ]);
+                return [
+                    'status' => 'success',
+                    'data' => [
+                        'outlet_id' => $outlet->id,
+                        'outlet_name' => $outlet->name,
+                        'business_type' => $businessType,
+                        'business_profile' => PosBusinessProfileService::getProfile($businessType),
+                        'is_kds_enabled' => (bool) $outlet->is_kds_enabled,
+                        'is_cfd_enabled' => (bool) $outlet->is_cfd_enabled,
+                    ],
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     /**
@@ -263,6 +301,8 @@ class OutletController extends Controller
             ]);
         }
 
+        TenantSettingsCache::invalidateOutlet($outlet->tenant_id !== null ? (string) $outlet->tenant_id : null, $id);
+
         return response()->json([
             'status' => 'success',
             'message' => "Operating profile updated to '{$profile['title']}' successfully.",
@@ -284,33 +324,40 @@ class OutletController extends Controller
      */
     public function getTerminalSettings($id)
     {
-        \App\Services\TenantAccess::record('outlets', $id);
-        $outlet = DB::table('outlets')->where('id', $id)->first();
-        if (!$outlet) {
-            return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
-        }
+        $request = request();
+        $callerScope = $this->resolveOutletReadScope($request);
 
-        $businessType = $outlet->business_type ?? 'retail_mart';
-        $terminalSettings = $outlet->terminal_settings;
-        if (is_string($terminalSettings)) {
-            $terminalSettings = json_decode($terminalSettings, true);
-        }
+        $payload = TenantSettingsCache::rememberOutlet(
+            'terminal_settings',
+            $callerScope,
+            $id,
+            function () use ($id, $request) {
+                $outlet = \App\Services\TenantAccess::record('outlets', $id, $request);
+                $businessType = $outlet->business_type ?? 'retail_mart';
+                $terminalSettings = $outlet->terminal_settings;
+                if (is_string($terminalSettings)) {
+                    $terminalSettings = json_decode($terminalSettings, true);
+                }
 
-        return response()->json([
-            'status' => 'success',
-            'data' => [
-                'outlet_id' => $outlet->id,
-                'outlet_name' => $outlet->name,
-                'business_type' => $businessType,
-                'business_profile' => PosBusinessProfileService::getProfile($businessType),
-                'is_kds_enabled' => (bool) $outlet->is_kds_enabled,
-                'is_cfd_enabled' => (bool) $outlet->is_cfd_enabled,
-                'receipt_header' => $outlet->receipt_header ?? null,
-                'receipt_footer' => $outlet->receipt_footer ?? null,
-                'receipt_logo_url' => $outlet->receipt_logo_url ?? null,
-                'terminal_settings' => $terminalSettings ?? [],
-            ],
-        ]);
+                return [
+                    'status' => 'success',
+                    'data' => [
+                        'outlet_id' => $outlet->id,
+                        'outlet_name' => $outlet->name,
+                        'business_type' => $businessType,
+                        'business_profile' => PosBusinessProfileService::getProfile($businessType),
+                        'is_kds_enabled' => (bool) $outlet->is_kds_enabled,
+                        'is_cfd_enabled' => (bool) $outlet->is_cfd_enabled,
+                        'receipt_header' => $outlet->receipt_header ?? null,
+                        'receipt_footer' => $outlet->receipt_footer ?? null,
+                        'receipt_logo_url' => $outlet->receipt_logo_url ?? null,
+                        'terminal_settings' => $terminalSettings ?? [],
+                    ],
+                ];
+            }
+        );
+
+        return response()->json($payload);
     }
 
     /**
@@ -384,6 +431,7 @@ class OutletController extends Controller
         $updates['terminal_settings'] = json_encode($currentSettings);
 
         DB::table('outlets')->where('id', $id)->update($updates);
+        TenantSettingsCache::invalidateOutlet($outlet->tenant_id !== null ? (string) $outlet->tenant_id : null, $id);
 
         $freshOutlet = DB::table('outlets')->where('id', $id)->first();
         $storedSettings = $freshOutlet->terminal_settings;
@@ -424,6 +472,7 @@ class OutletController extends Controller
             'is_active' => false,
             'updated_at' => now(),
         ]);
+        TenantSettingsCache::invalidateOutlet($outlet->tenant_id !== null ? (string) $outlet->tenant_id : null, $id);
 
         return response()->json([
             'status' => 'success',
@@ -444,10 +493,19 @@ class OutletController extends Controller
         }
 
         $validated = $request->validate([
-            'logo' => 'nullable|file|mimes:jpeg,png,jpg,webp,gif|max:10240',
+            'logo' => 'nullable|file|image|mimes:jpeg,png,jpg,webp,gif|max:10240',
             'receipt_header' => 'nullable|string|max:500',
             'receipt_footer' => 'nullable|string|max:500',
-            'receipt_logo_url' => 'nullable|string|max:500',
+            'receipt_logo_url' => [
+                'nullable',
+                'string',
+                'max:500',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (is_string($value) && trim($value) !== '' && !\App\Services\ImageService::isSafeImageUrlOrDataUri($value)) {
+                        $fail('Unsupported or unsafe receipt logo URL format (SVGs are not permitted).');
+                    }
+                },
+            ],
             'vat_tin' => 'nullable|string|max:50',
             'phone' => 'nullable|string|max:50',
             'address' => 'nullable|string|max:500',
@@ -464,8 +522,17 @@ class OutletController extends Controller
 
         // If logo file is uploaded
         if ($request->hasFile('logo')) {
-            $path = $request->file('logo')->store('receipt_logos', 'public');
-            $updateData['receipt_logo_url'] = '/storage/' . $path;
+            try {
+                /** @var \App\Services\ImageService $imageService */
+                $imageService = app(\App\Services\ImageService::class);
+                $updateData['receipt_logo_url'] = $imageService->storeLogo(
+                    $request->file('logo'),
+                    'receipt_' . $id,
+                    $outlet->receipt_logo_url ?? null
+                );
+            } catch (\InvalidArgumentException $e) {
+                return response()->json(['status' => 'error', 'message' => $e->getMessage()], 422);
+            }
         } elseif ($request->filled('receipt_logo_url')) {
             $updateData['receipt_logo_url'] = $validated['receipt_logo_url'];
         }
@@ -478,6 +545,7 @@ class OutletController extends Controller
         }
 
         DB::table('outlets')->where('id', $id)->update($updateData);
+        TenantSettingsCache::invalidateOutlet($outlet->tenant_id !== null ? (string) $outlet->tenant_id : null, $id);
 
         $fresh = DB::table('outlets')->where('id', $id)->first();
 

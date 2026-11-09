@@ -3,11 +3,11 @@
 namespace App\Services;
 
 use App\Models\User;
+use App\Support\SchemaGuard;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Schema;
 
 /**
  * Centralized Auth-contract consumer and tenant-scoped RBAC resolver for Operations Service.
@@ -81,8 +81,8 @@ class TenantAuthorizationService
         $connection = $conn ?? self::authConnectionName();
 
         try {
-            return Schema::connection($connection)->hasTable('user_roles')
-                && Schema::connection($connection)->hasTable('roles');
+            return SchemaGuard::hasTable('user_roles', $connection)
+                && SchemaGuard::hasTable('roles', $connection);
         } catch (\Throwable) {
             return false;
         }
@@ -96,8 +96,8 @@ class TenantAuthorizationService
         $connection = $conn ?? self::authConnectionName();
 
         try {
-            return Schema::connection($connection)->hasTable('tenant_users')
-                && Schema::connection($connection)->hasTable('tenants');
+            return SchemaGuard::hasTable('tenant_users', $connection)
+                && SchemaGuard::hasTable('tenants', $connection);
         } catch (\Throwable) {
             return false;
         }
@@ -229,16 +229,16 @@ class TenantAuthorizationService
                     ->whereNull('ur.tenant_id')
                     ->where('r.slug', 'super_admin');
 
-                if (Schema::connection($connection)->hasColumn('user_roles', 'is_active')) {
+                if (SchemaGuard::hasColumn('user_roles', 'is_active', $connection)) {
                     $query->where('ur.is_active', true);
                 }
-                if (Schema::connection($connection)->hasColumn('roles', 'tenant_id')) {
+                if (SchemaGuard::hasColumn('roles', 'tenant_id', $connection)) {
                     $query->whereNull('r.tenant_id');
                 }
-                if (Schema::connection($connection)->hasColumn('roles', 'company_id')) {
+                if (SchemaGuard::hasColumn('roles', 'company_id', $connection)) {
                     $query->whereNull('r.company_id');
                 }
-                if (Schema::connection($connection)->hasColumn('roles', 'is_active')) {
+                if (SchemaGuard::hasColumn('roles', 'is_active', $connection)) {
                     $query->where(function ($q) {
                         $q->where('r.is_active', true)->orWhereNull('r.is_active');
                     });
@@ -296,13 +296,13 @@ class TenantAuthorizationService
                     ->where('ur.tenant_id', $effectiveTenant)
                     ->where('r.slug', 'super_admin');
 
-                if (Schema::connection($connection)->hasColumn('user_roles', 'is_active')) {
+                if (SchemaGuard::hasColumn('user_roles', 'is_active', $connection)) {
                     $query->where('ur.is_active', true);
                 }
-                if (Schema::connection($connection)->hasColumn('roles', 'tenant_id')) {
+                if (SchemaGuard::hasColumn('roles', 'tenant_id', $connection)) {
                     $query->whereNull('r.tenant_id');
                 }
-                if (Schema::connection($connection)->hasColumn('roles', 'is_active')) {
+                if (SchemaGuard::hasColumn('roles', 'is_active', $connection)) {
                     $query->where(function ($q) {
                         $q->where('r.is_active', true)->orWhereNull('r.is_active');
                     });
@@ -356,18 +356,18 @@ class TenantAuthorizationService
             ->where('ur.user_id', $user->id)
             ->where('ur.tenant_id', $normalizedTenant);
 
-        if (Schema::connection($connection)->hasColumn('user_roles', 'is_active')) {
+        if (SchemaGuard::hasColumn('user_roles', 'is_active', $connection)) {
             $query->where('ur.is_active', true);
         }
 
-        if (Schema::connection($connection)->hasColumn('roles', 'is_active')) {
+        if (SchemaGuard::hasColumn('roles', 'is_active', $connection)) {
             $query->where(function ($q) {
                 $q->where('r.is_active', true)->orWhereNull('r.is_active');
             });
         }
 
-        $hasRoleTenant = Schema::connection($connection)->hasColumn('roles', 'tenant_id');
-        $hasRoleCompany = Schema::connection($connection)->hasColumn('roles', 'company_id');
+        $hasRoleTenant = SchemaGuard::hasColumn('roles', 'tenant_id', $connection);
+        $hasRoleCompany = SchemaGuard::hasColumn('roles', 'company_id', $connection);
 
         if ($hasRoleTenant || $hasRoleCompany) {
             $query->where(function ($q) use ($normalizedTenant, $hasRoleTenant, $hasRoleCompany) {
@@ -591,7 +591,7 @@ class TenantAuthorizationService
 
         $dbUser = null;
         try {
-            if (Schema::connection($connection)->hasTable('users')) {
+            if (SchemaGuard::hasTable('users', $connection)) {
                 $dbUser = DB::connection($connection)->table('users')->where('id', $subjectId)->first();
             }
         } catch (\Throwable) {
@@ -697,7 +697,7 @@ class TenantAuthorizationService
                 ];
             }
 
-            if ($effectiveTenantId !== null && Schema::connection($connection)->hasTable('tenants')) {
+            if ($effectiveTenantId !== null && SchemaGuard::hasTable('tenants', $connection)) {
                 $tenant = DB::connection($connection)->table('tenants')->where('id', $effectiveTenantId)->first();
                 if ($requestedTenantId !== null && !$tenant) {
                     return [
@@ -794,7 +794,7 @@ class TenantAuthorizationService
 
         // 3. Verify tenant exists and is active/trial
         $tenant = null;
-        if (Schema::connection($connection)->hasTable('tenants')) {
+        if (SchemaGuard::hasTable('tenants', $connection)) {
             $tenant = DB::connection($connection)->table('tenants')->where('id', $effectiveTenantId)->first();
             if (!$tenant || (property_exists($tenant, 'status') && !in_array($tenant->status, ['active', 'trial'], true))) {
                 return [
@@ -808,7 +808,7 @@ class TenantAuthorizationService
 
         // 4. Verify active membership in this exact tenant
         $membership = null;
-        if ($hasMemberships && Schema::connection($connection)->hasTable('tenant_users')) {
+        if ($hasMemberships && SchemaGuard::hasTable('tenant_users', $connection)) {
             $membership = DB::connection($connection)
                 ->table('tenant_users')
                 ->where('tenant_id', $effectiveTenantId)
@@ -1038,7 +1038,7 @@ class TenantAuthorizationService
                 return false;
             }
 
-            if (Schema::connection($conn)->hasTable('user_pos_pins')) {
+            if (SchemaGuard::hasTable('user_pos_pins', $conn)) {
                 $candidates = DB::connection($conn)
                     ->table('user_pos_pins as upp')
                     ->join('users as u', 'upp.user_id', '=', 'u.id')
@@ -1049,7 +1049,7 @@ class TenantAuthorizationService
                     ->where('ur.tenant_id', $effectiveTenantId)
                     ->where('ur.is_active', true)
                     ->whereIn('r.slug', $supervisorSlugs)
-                    ->when(Schema::connection($conn)->hasColumn('users', 'is_active'), fn ($q) => $q->where('u.is_active', true))
+                    ->when(SchemaGuard::hasColumn('users', 'is_active', $conn), fn ($q) => $q->where('u.is_active', true))
                     ->pluck('upp.pin_hash');
 
                 foreach ($candidates as $hash) {
@@ -1068,7 +1068,7 @@ class TenantAuthorizationService
                 return false;
             }
 
-            if (!Schema::connection($conn)->hasColumn('users', 'pin_code')) {
+            if (!SchemaGuard::hasColumn('users', 'pin_code', $conn)) {
                 return false;
             }
 
@@ -1080,11 +1080,11 @@ class TenantAuthorizationService
                 ->where('ur.tenant_id', $effectiveTenantId)
                 ->where('u.pin_code', $pin)
                 ->whereIn('r.slug', $supervisorSlugs)
-                ->when(Schema::connection($conn)->hasColumn('users', 'is_active'), fn ($q) => $q->where('u.is_active', true))
+                ->when(SchemaGuard::hasColumn('users', 'is_active', $conn), fn ($q) => $q->where('u.is_active', true))
                 ->exists();
         }
 
-        if (config('database.default') !== 'sqlite' || !Schema::hasColumn('users', 'pin_code')) {
+        if (config('database.default') !== 'sqlite' || !SchemaGuard::hasColumn('users', 'pin_code')) {
             return false;
         }
 

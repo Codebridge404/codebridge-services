@@ -13,6 +13,7 @@ class KdsTicket extends Model
     protected $table = 'kds_tickets';
 
     protected $fillable = [
+        'tenant_id',
         'sale_id',
         'outlet_id',
         'ticket_number',

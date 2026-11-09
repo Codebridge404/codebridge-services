@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -38,9 +39,9 @@ class AuthServiceClient
 
     public function __construct()
     {
-        $configuredUrl = config('services.auth.url', env('AUTH_SERVICE_URL', 'http://auth-service:8000/api/v1'));
+        $configuredUrl = config('services.auth.url', 'http://auth-service:8000/api/v1');
         $this->baseUrl = rtrim((string) $configuredUrl, '/');
-        $this->timeout = (int) config('services.auth.timeout', env('AUTH_SERVICE_TIMEOUT', 5));
+        $this->timeout = (int) config('services.auth.timeout', 5);
         $configuredAppKey = config('services.auth.app_key');
         $this->appKey = is_string($configuredAppKey) && trim($configuredAppKey) !== ''
             ? trim($configuredAppKey)
@@ -58,14 +59,44 @@ class AuthServiceClient
         ?string $requestedTenantId = null,
         ?string $appKey = null
     ): ?array {
+        $tenantScope = ($requestedTenantId !== null && trim($requestedTenantId) !== '')
+            ? trim($requestedTenantId)
+            : null;
+        $effectiveAppKey = ($appKey !== null && trim($appKey) !== '')
+            ? trim($appKey)
+            : $this->appKey;
+
+        $jwtPayload = $this->extractJwtClaimsForCache($token);
+        $configuredTtl = max(0, (int) config('services.auth.context_cache_ttl', 30));
+        $effectiveTtl = $configuredTtl;
+
+        if ($jwtPayload !== null && isset($jwtPayload['exp']) && is_numeric($jwtPayload['exp'])) {
+            $remaining = (int) $jwtPayload['exp'] - time();
+            $effectiveTtl = $remaining > 0 ? min($configuredTtl, $remaining) : 0;
+        }
+
+        $tenantKey = $tenantScope !== null ? sha1($tenantScope) : 'default';
+        $appKeyFp = $effectiveAppKey !== null ? substr(hash('sha256', $effectiveAppKey), 0, 16) : 'none';
+        $cacheKey = 'authz_ctx:' . hash('sha256', $token) . ':' . $tenantKey . ':' . $appKeyFp;
+
+        if ($effectiveTtl > 0) {
+            $cached = Cache::get($cacheKey);
+            if (is_array($cached) && !empty($cached['authorized'])) {
+                if ($jwtPayload !== null && isset($jwtPayload['exp']) && (int) $jwtPayload['exp'] <= time()) {
+                    Cache::forget($cacheKey);
+                } elseif ($revocationFailure = $this->checkLocalRevocation($jwtPayload)) {
+                    Cache::forget($cacheKey);
+                    return $revocationFailure;
+                } else {
+                    return $cached;
+                }
+            }
+        }
+
         try {
             $request = Http::timeout($this->timeout)
                 ->withToken($token)
                 ->acceptJson();
-
-            $effectiveAppKey = ($appKey !== null && trim($appKey) !== '')
-                ? trim($appKey)
-                : $this->appKey;
 
             if ($effectiveAppKey !== null) {
                 $request = $request->withHeaders([
@@ -73,22 +104,35 @@ class AuthServiceClient
                 ]);
             }
 
-            if ($requestedTenantId !== null && trim($requestedTenantId) !== '') {
+            if ($tenantScope !== null) {
                 $request = $request->withHeaders([
-                    'X-Tenant-Id' => trim($requestedTenantId),
+                    'X-Tenant-Id' => $tenantScope,
                 ]);
             }
 
             $response = $request->get("{$this->baseUrl}/auth/authorize-context");
 
             if ($response->successful() && $response->json('authorized') === true) {
+                if ($revocationFailure = $this->checkLocalRevocation($jwtPayload)) {
+                    Cache::forget($cacheKey);
+                    return $revocationFailure;
+                }
+
                 $data = $response->json('data');
-                return [
+                $result = [
                     'authorized' => true,
                     'status' => 200,
                     'data' => is_array($data) ? $data : [],
                 ];
+
+                if ($effectiveTtl > 0) {
+                    Cache::put($cacheKey, $result, $effectiveTtl);
+                }
+
+                return $result;
             }
+
+            Cache::forget($cacheKey);
 
             if ($response->clientError()) {
                 return [
@@ -102,9 +146,139 @@ class AuthServiceClient
             Log::warning("AuthServiceClient: authorize-context returned server status {$response->status()}");
             return null;
         } catch (\Throwable $e) {
+            Cache::forget($cacheKey);
             Log::warning("AuthServiceClient: authorize-context request failed: {$e->getMessage()}");
             return null;
         }
+    }
+
+    /**
+     * Decode unverified JWT payload claims strictly for TTL clamping and live cache revocation checks.
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function extractJwtClaimsForCache(string $token): ?array
+    {
+        if (substr_count($token, '.') !== 2) {
+            return null;
+        }
+
+        $parts = explode('.', $token);
+        $segment = $parts[1] ?? '';
+        if ($segment === '') {
+            return null;
+        }
+
+        $remainder = strlen($segment) % 4;
+        if ($remainder) {
+            $segment .= str_repeat('=', 4 - $remainder);
+        }
+
+        $decoded = base64_decode(strtr($segment, '-_', '+/'), true);
+        if ($decoded === false) {
+            return null;
+        }
+
+        $payload = json_decode($decoded, true);
+        return is_array($payload) ? $payload : null;
+    }
+
+    /**
+     * Re-verify live token/session revocation stores before honoring a cached authorization context.
+     *
+     * @param  array<string, mixed>|null  $payload
+     * @return array<string, mixed>|null
+     */
+    protected function checkLocalRevocation(?array $payload): ?array
+    {
+        if ($payload === null) {
+            return null;
+        }
+
+        $revocationCache = null;
+        if (config('cache.stores.revocation.enabled', false) || config('cache.default') === 'redis') {
+            try {
+                $revocationCache = Cache::store('revocation');
+            } catch (\Throwable) {
+                $revocationCache = null;
+            }
+        }
+
+        $jti = $payload['jti'] ?? null;
+        if (is_string($jti) && $jti !== '') {
+            if (Cache::get("revoked_jwt:{$jti}") || ($revocationCache && $this->safeRevocationGet($revocationCache, "revoked_jwt:{$jti}"))) {
+                return [
+                    'authorized' => false,
+                    'status' => 401,
+                    'code' => 'TOKEN_REVOKED',
+                    'message' => 'Token has been revoked. Please sign in again.',
+                ];
+            }
+        }
+
+        $sid = $payload['sid'] ?? null;
+        if (is_string($sid) && $sid !== '') {
+            if (Cache::get("revoked_sid:{$sid}") || ($revocationCache && $this->safeRevocationGet($revocationCache, "revoked_sid:{$sid}"))) {
+                return [
+                    'authorized' => false,
+                    'status' => 401,
+                    'code' => 'SESSION_REVOKED',
+                    'message' => 'Session has been revoked. Please sign in again.',
+                ];
+            }
+        }
+
+        $sub = $payload['sub'] ?? null;
+        if ($sub !== null && $sub !== '') {
+            $iat = (int) ($payload['iat'] ?? 0);
+            $revokedAt = $this->getMaxNumericRevocationValue("revoked_user_sessions:{$sub}", $revocationCache);
+            if ($revokedAt !== null && $iat <= $revokedAt) {
+                return [
+                    'authorized' => false,
+                    'status' => 401,
+                    'code' => 'SESSION_REVOKED',
+                    'message' => 'User session has been revoked. Please sign in again.',
+                ];
+            }
+
+            if (isset($payload['session_version'])) {
+                $currentVersion = (int) ($this->getMaxNumericRevocationValue("session_version:{$sub}", $revocationCache) ?? 0);
+                if ((int) $payload['session_version'] < $currentVersion) {
+                    return [
+                        'authorized' => false,
+                        'status' => 401,
+                        'code' => 'SESSION_SUPERSEDED',
+                        'message' => 'Session has expired or was revoked by a newer login.',
+                    ];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    protected function safeRevocationGet(\Illuminate\Contracts\Cache\Repository $store, string $key): mixed
+    {
+        try {
+            return $store->get($key);
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    protected function getMaxNumericRevocationValue(string $key, ?\Illuminate\Contracts\Cache\Repository $revocationCache): ?int
+    {
+        $local = Cache::get($key);
+        $remote = $revocationCache ? $this->safeRevocationGet($revocationCache, $key) : null;
+
+        if ($local === null && $remote === null) {
+            return null;
+        }
+
+        return max(
+            $local !== null ? (int) $local : PHP_INT_MIN,
+            $remote !== null ? (int) $remote : PHP_INT_MIN
+        );
     }
 
     /**

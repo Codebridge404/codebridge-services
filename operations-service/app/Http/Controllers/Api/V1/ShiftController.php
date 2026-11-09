@@ -42,25 +42,47 @@ class ShiftController extends Controller
     public function __construct(
         protected CashDrawerNotificationService $notificationService
     ) {}
-    private function getShiftMetrics($shiftId, $openingFloat)
+    private function getShiftMetrics($shiftId, $openingFloat, ?string $tenantId = null)
     {
-        $cashSales = (float) DB::table('sales as s')
+        $cashSalesQuery = DB::table('sales as s')
             ->join('payments as p', 's.id', '=', 'p.sale_id')
-            ->where('s.shift_id', $shiftId)->where('p.tender_type', 'cash')->where('p.status', 'paid')
-            ->sum('p.amount');
+            ->where('s.shift_id', $shiftId)
+            ->where('p.tender_type', 'cash')
+            ->where('p.status', 'paid');
 
-        $khqrSales = (float) DB::table('sales as s')
+        $khqrSalesQuery = DB::table('sales as s')
             ->join('payments as p', 's.id', '=', 'p.sale_id')
-            ->where('s.shift_id', $shiftId)->where('p.tender_type', 'khqr')->where('p.status', 'paid')
-            ->sum('p.amount');
+            ->where('s.shift_id', $shiftId)
+            ->where('p.tender_type', 'khqr')
+            ->where('p.status', 'paid');
 
-        $cardSales = (float) DB::table('sales as s')
+        $cardSalesQuery = DB::table('sales as s')
             ->join('payments as p', 's.id', '=', 'p.sale_id')
-            ->where('s.shift_id', $shiftId)->where('p.tender_type', 'card')->where('p.status', 'paid')
-            ->sum('p.amount');
+            ->where('s.shift_id', $shiftId)
+            ->where('p.tender_type', 'card')
+            ->where('p.status', 'paid');
 
-        $cashIn = (float) DB::table('cash_drawer_movements')->where('shift_id', $shiftId)->where('type', 'in')->sum('amount');
-        $cashOut = (float) DB::table('cash_drawer_movements')->where('shift_id', $shiftId)->where('type', 'out')->sum('amount');
+        $cashInQuery = DB::table('cash_drawer_movements')
+            ->where('shift_id', $shiftId)
+            ->where('type', 'in');
+
+        $cashOutQuery = DB::table('cash_drawer_movements')
+            ->where('shift_id', $shiftId)
+            ->where('type', 'out');
+
+        if ($tenantId !== null && $tenantId !== 'all') {
+            $cashSalesQuery->where('s.tenant_id', $tenantId);
+            $khqrSalesQuery->where('s.tenant_id', $tenantId);
+            $cardSalesQuery->where('s.tenant_id', $tenantId);
+            $cashInQuery->where(fn ($q) => $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id'));
+            $cashOutQuery->where(fn ($q) => $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id'));
+        }
+
+        $cashSales = (float) $cashSalesQuery->sum('p.amount');
+        $khqrSales = (float) $khqrSalesQuery->sum('p.amount');
+        $cardSales = (float) $cardSalesQuery->sum('p.amount');
+        $cashIn = (float) $cashInQuery->sum('amount');
+        $cashOut = (float) $cashOutQuery->sum('amount');
         $expectedCash = (float) $openingFloat + $cashSales + $cashIn - $cashOut;
 
         return compact('cashSales', 'khqrSales', 'cardSales', 'cashIn', 'cashOut', 'expectedCash');
@@ -68,19 +90,28 @@ class ShiftController extends Controller
 
     public function active(Request $request)
     {
-        $shift = DB::table('shifts as s')
+        $tenantId = $this->getTenantId($request, true);
+        $isPlatformSuperAdmin = TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+
+        $query = DB::table('shifts as s')
             ->leftJoin('users as u', 's.user_id', '=', 'u.id')
             ->leftJoin('outlets as o', 's.outlet_id', '=', 'o.id')
             ->where('s.user_id', $request->user()->id)
-            ->where('s.status', 'open')
-            ->select('s.*', 'u.name as cashier_name', 'o.name as outlet_name')
-            ->orderBy('s.id', 'desc')->first();
+            ->where('s.status', 'open');
+
+        if ($tenantId !== 'all' || !$isPlatformSuperAdmin) {
+            $query->where('s.tenant_id', $tenantId);
+        }
+
+        $shift = $query->select('s.*', 'u.name as cashier_name', 'o.name as outlet_name')
+            ->orderBy('s.id', 'desc')
+            ->first();
 
         if (!$shift) {
             return response()->json(['status' => 'success', 'data' => null]);
         }
 
-        $m = $this->getShiftMetrics($shift->id, $shift->opening_float);
+        $m = $this->getShiftMetrics($shift->id, $shift->opening_float, $shift->tenant_id !== null ? (string) $shift->tenant_id : null);
 
         return response()->json([
             'status' => 'success',
@@ -102,21 +133,55 @@ class ShiftController extends Controller
     public function open(Request $request)
     {
         $user = $request->user();
-        $existing = DB::table('shifts')->where('user_id', $user->id)->where('status', 'open')->first();
+        $tenantId = $this->getTenantId($request, true);
+        $writeTenantId = $tenantId === 'all' ? null : $tenantId;
+
+        $existingQuery = DB::table('shifts')
+            ->where('user_id', $user->id)
+            ->where('status', 'open');
+        if ($writeTenantId !== null) {
+            $existingQuery->where('tenant_id', $writeTenantId);
+        }
+
+        $existing = $existingQuery->first();
         if ($existing) {
             return response()->json(['status' => 'error', 'message' => 'Active open shift already exists.', 'data' => $existing], 422);
         }
 
         $validated = $request->validate([
             'opening_float' => 'required|numeric|min:0',
-            'outlet_id' => 'nullable',
-            'register_id' => 'nullable',
-            'note' => 'nullable|string',
+            'outlet_id' => 'nullable|integer',
+            'register_id' => 'nullable|integer',
+            'note' => 'nullable|string|max:1000',
         ]);
 
+        $outletId = $validated['outlet_id']
+            ?? $user->outlet_id
+            ?? DB::table('outlets')->when($writeTenantId !== null, fn ($q) => $q->where('tenant_id', $writeTenantId))->value('id')
+            ?? 1;
+
+        if ($writeTenantId !== null) {
+            $outlet = DB::table('outlets')->where('id', $outletId)->first();
+            if ($outlet && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== (string) $writeTenantId) {
+                return response()->json(['status' => 'error', 'message' => 'Selected outlet does not belong to your organization.'], 403);
+            }
+        }
+
+        $registerId = $validated['register_id']
+            ?? DB::table('registers')->when($writeTenantId !== null, fn ($q) => $q->where('tenant_id', $writeTenantId))->value('id')
+            ?? 1;
+
+        if ($writeTenantId !== null) {
+            $register = DB::table('registers')->where('id', $registerId)->first();
+            if ($register && $register->tenant_id !== null && (string) $register->tenant_id !== (string) $writeTenantId) {
+                return response()->json(['status' => 'error', 'message' => 'Selected register does not belong to your organization.'], 403);
+            }
+        }
+
         $shiftId = DB::table('shifts')->insertGetId([
-            'outlet_id' => $validated['outlet_id'] ?? $user->outlet_id ?? 1,
-            'register_id' => $validated['register_id'] ?? 1,
+            'tenant_id' => $writeTenantId,
+            'outlet_id' => (int) $outletId,
+            'register_id' => (int) $registerId,
             'user_id' => $user->id,
             'opened_at' => now(),
             'opening_float' => $validated['opening_float'],
@@ -137,6 +202,9 @@ class ShiftController extends Controller
 
     public function cashMovement(Request $request, $id = null)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $isPlatformSuperAdmin = TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+
         $validated = $request->validate([
             'type' => 'required|in:in,out',
             'amount' => 'required|numeric|min:0.01',
@@ -144,12 +212,27 @@ class ShiftController extends Controller
         ]);
 
         $query = DB::table('shifts')->where('status', 'open');
-        $shift = ($id ? $query->where('id', $id) : $query->where('user_id', $request->user()->id)->orderByDesc('id'))->first();
-        if (!$shift) {
-            return response()->json(['status' => 'error', 'message' => 'Active open shift not found.'], 404);
+        if ($id) {
+            $shift = $query->where('id', $id)->first();
+            if (!$shift) {
+                return response()->json(['status' => 'error', 'message' => 'Active open shift not found.'], 404);
+            }
+            $this->authorizeTenantResource($shift->tenant_id, $request, 'Shift');
+        } else {
+            $query->where('user_id', $request->user()->id);
+            if ($tenantId !== 'all' || !$isPlatformSuperAdmin) {
+                $query->where('tenant_id', $tenantId);
+            }
+            $shift = $query->orderByDesc('id')->first();
+            if (!$shift) {
+                return response()->json(['status' => 'error', 'message' => 'Active open shift not found.'], 404);
+            }
         }
 
+        $movementTenantId = $shift->tenant_id ?? ($tenantId === 'all' ? null : $tenantId);
+
         $movementId = DB::table('cash_drawer_movements')->insertGetId([
+            'tenant_id' => $movementTenantId,
             'shift_id' => $shift->id,
             'user_id' => $request->user()->id,
             'type' => $validated['type'],
@@ -164,19 +247,35 @@ class ShiftController extends Controller
 
     public function close(Request $request, $id = null)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $isPlatformSuperAdmin = TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+
         $validated = $request->validate([
             'counted_cash' => 'required|numeric|min:0',
-            'closing_note' => 'nullable|string',
-            'note' => 'nullable|string',
+            'closing_note' => 'nullable|string|max:1000',
+            'note' => 'nullable|string|max:1000',
         ]);
 
         $query = DB::table('shifts')->where('status', 'open');
-        $shift = ($id ? $query->where('id', $id) : $query->where('user_id', $request->user()->id)->orderByDesc('id'))->first();
-        if (!$shift) {
-            return response()->json(['status' => 'error', 'message' => 'Active open shift not found.'], 404);
+        if ($id) {
+            $shift = $query->where('id', $id)->first();
+            if (!$shift) {
+                return response()->json(['status' => 'error', 'message' => 'Active open shift not found.'], 404);
+            }
+            $this->authorizeTenantResource($shift->tenant_id, $request, 'Shift');
+        } else {
+            $query->where('user_id', $request->user()->id);
+            if ($tenantId !== 'all' || !$isPlatformSuperAdmin) {
+                $query->where('tenant_id', $tenantId);
+            }
+            $shift = $query->orderByDesc('id')->first();
+            if (!$shift) {
+                return response()->json(['status' => 'error', 'message' => 'Active open shift not found.'], 404);
+            }
         }
 
-        $m = $this->getShiftMetrics($shift->id, $shift->opening_float);
+        $shiftTenantId = $shift->tenant_id !== null ? (string) $shift->tenant_id : ($tenantId === 'all' ? null : $tenantId);
+        $m = $this->getShiftMetrics($shift->id, $shift->opening_float, $shiftTenantId);
         $countedCash = (float) $validated['counted_cash'];
         $cashVariance = $countedCash - $m['expectedCash'];
 
@@ -205,11 +304,11 @@ class ShiftController extends Controller
                     ], 403);
                 }
 
-                $tenantId = $authContext['tenant_id'] ?? $this->getTenantId($request, false);
+                $pinTenantId = $shiftTenantId ?? ($authContext['tenant_id'] ?? null);
                 $validPin = TenantAuthorizationService::verifySupervisorPin(
                     $request,
                     (string) $supervisorPin,
-                    $tenantId
+                    $pinTenantId
                 );
 
                 if (!$validPin) {
@@ -219,15 +318,18 @@ class ShiftController extends Controller
         }
 
         $closingNote = $validated['closing_note'] ?? $validated['note'] ?? null;
-        DB::table('shifts')->where('id', $shift->id)->update([
-            'closed_at' => now(),
-            'expected_cash' => $m['expectedCash'],
-            'counted_cash' => $countedCash,
-            'cash_variance' => $cashVariance,
-            'status' => 'closed',
-            'closing_note' => $closingNote,
-            'updated_at' => now(),
-        ]);
+        DB::table('shifts')
+            ->where('id', $shift->id)
+            ->when($shift->tenant_id !== null, fn ($q) => $q->where('tenant_id', $shift->tenant_id))
+            ->update([
+                'closed_at' => now(),
+                'expected_cash' => $m['expectedCash'],
+                'counted_cash' => $countedCash,
+                'cash_variance' => $cashVariance,
+                'status' => 'closed',
+                'closing_note' => $closingNote,
+                'updated_at' => now(),
+            ]);
 
         // Automated Telegram & Email Variance Threshold Notification Dispatch
         $alertResult = $this->notificationService->checkAndDispatchVarianceAlert(
@@ -255,30 +357,39 @@ class ShiftController extends Controller
 
     public function xReport(Request $request, $id = null)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $isPlatformSuperAdmin = TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+
         $query = DB::table('shifts as s')
             ->leftJoin('users as u', 's.user_id', '=', 'u.id')
             ->leftJoin('outlets as o', 's.outlet_id', '=', 'o.id')
             ->select('s.*', 'u.name as cashier_name', 'o.name as outlet_name');
 
         if ($id && $id !== 'active') {
-            $query->where('s.id', $id);
+            $shift = $query->where('s.id', $id)->first();
+            if (!$shift) {
+                return response()->json(['status' => 'error', 'message' => 'Shift not found.'], 404);
+            }
+            $this->authorizeTenantResource($shift->tenant_id, $request, 'Shift');
         } else {
-            $query->where('s.user_id', $request->user()->id)->where('s.status', 'open')->orderByDesc('s.id');
+            $query->where('s.user_id', $request->user()->id)->where('s.status', 'open');
+            if ($tenantId !== 'all' || !$isPlatformSuperAdmin) {
+                $query->where('s.tenant_id', $tenantId);
+            }
+            $shift = $query->orderByDesc('s.id')->first();
+            if (!$shift) {
+                return response()->json(['status' => 'error', 'message' => 'Shift not found.'], 404);
+            }
         }
-        $shift = $query->first();
 
-        if (!$shift) {
-            return response()->json(['status' => 'error', 'message' => 'Shift not found.'], 404);
-        }
-
-        $m = $this->getShiftMetrics($shift->id, $shift->opening_float);
+        $m = $this->getShiftMetrics($shift->id, $shift->opening_float, $shift->tenant_id !== null ? (string) $shift->tenant_id : null);
         $grossSales = $m['cashSales'] + $m['khqrSales'] + $m['cardSales'];
 
         return response()->json([
             'status' => 'success',
             'data' => [
                 'type' => $shift->status === 'closed' ? 'Z-REPORT' : 'X-REPORT',
-                'report_code' => ($shift->status === 'closed' ? 'Z-' : 'X-') . substr($shift->id, 0, 8),
+                'report_code' => ($shift->status === 'closed' ? 'Z-' : 'X-') . substr((string) $shift->id, 0, 8),
                 'shift' => $shift,
                 'cashier_name' => $shift->cashier_name ?? null,
                 'outlet_name' => $shift->outlet_name ?? null,
@@ -299,15 +410,33 @@ class ShiftController extends Controller
 
     public function history(Request $request)
     {
-        $shifts = DB::table('shifts as s')
+        $tenantId = $this->getTenantId($request, true);
+        $isPlatformSuperAdmin = TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+
+        $query = DB::table('shifts as s')
             ->leftJoin('users as u', 's.user_id', '=', 'u.id')
             ->leftJoin('outlets as o', 's.outlet_id', '=', 'o.id')
-            ->select('s.*', 'u.name as cashier_name', 'o.name as outlet_name')
-            ->orderBy('s.created_at', 'desc')
-            ->limit(50)
-            ->get();
+            ->select('s.*', 'u.name as cashier_name', 'o.name as outlet_name');
 
-        return response()->json(['status' => 'success', 'data' => ['shifts' => $shifts]]);
+        if ($tenantId !== 'all' || !$isPlatformSuperAdmin) {
+            $query->where('s.tenant_id', $tenantId);
+        }
+
+        $paginator = $query->orderBy('s.created_at', 'desc')->paginate($perPage);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'shifts' => $paginator->items(),
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ],
+            ],
+        ]);
     }
 
     /**
@@ -316,18 +445,31 @@ class ShiftController extends Controller
      */
     public function varianceAlerts(Request $request)
     {
-        $alerts = DB::table('shift_variance_alerts as a')
+        $tenantId = $this->getTenantId($request, true);
+        $isPlatformSuperAdmin = TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+
+        $query = DB::table('shift_variance_alerts as a')
             ->leftJoin('shifts as s', 'a.shift_id', '=', 's.id')
             ->leftJoin('users as u', 'a.user_id', '=', 'u.id')
-            ->select('a.*', 'u.name as cashier_name', 's.opened_at', 's.closed_at')
-            ->orderBy('a.id', 'desc')
-            ->limit(50)
-            ->get();
+            ->select('a.*', 'u.name as cashier_name', 's.opened_at', 's.closed_at');
+
+        if ($tenantId !== 'all' || !$isPlatformSuperAdmin) {
+            $query->where('a.tenant_id', $tenantId);
+        }
+
+        $paginator = $query->orderBy('a.id', 'desc')->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
             'data' => [
-                'alerts' => $alerts,
+                'alerts' => $paginator->items(),
+                'pagination' => [
+                    'current_page' => $paginator->currentPage(),
+                    'last_page' => $paginator->lastPage(),
+                    'per_page' => $paginator->perPage(),
+                    'total' => $paginator->total(),
+                ],
             ],
         ]);
     }
@@ -338,10 +480,12 @@ class ShiftController extends Controller
      */
     public function varianceConfig(Request $request)
     {
-        $tolerance = (float) config('services.cash_drawer.variance_tolerance', env('CASH_DRAWER_VARIANCE_TOLERANCE', 5.00));
-        $telegramToken = config('services.telegram.bot_token', env('TELEGRAM_BOT_TOKEN'));
-        $telegramChat = config('services.telegram.chat_id', env('TELEGRAM_ALERT_CHAT_ID', env('TELEGRAM_CHAT_ID')));
-        $emailRecipient = config('services.cash_drawer.alert_email', env('SHIFT_ALERT_EMAIL', env('MAIL_FROM_ADDRESS', 'manager@codebridges.io')));
+        $this->getTenantId($request, true);
+
+        $tolerance = (float) config('services.cash_drawer.variance_tolerance', 5.00);
+        $telegramToken = config('services.telegram.bot_token');
+        $telegramChat = config('services.telegram.chat_id');
+        $emailRecipient = config('services.cash_drawer.alert_email', config('mail.from.address', 'manager@codebridges.io'));
 
         return response()->json([
             'status' => 'success',
@@ -350,7 +494,7 @@ class ShiftController extends Controller
                 'channels' => [
                     'telegram' => [
                         'configured' => !empty($telegramToken) && !empty($telegramChat),
-                        'chat_id' => !empty($telegramChat) ? substr($telegramChat, 0, 4) . '***' : null,
+                        'chat_id' => !empty($telegramChat) ? substr((string) $telegramChat, 0, 4) . '***' : null,
                     ],
                     'email' => [
                         'configured' => !empty($emailRecipient),
@@ -367,16 +511,24 @@ class ShiftController extends Controller
      */
     public function testVarianceAlert(Request $request)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $writeTenantId = $tenantId === 'all' ? null : $tenantId;
+
         $validated = $request->validate([
             'variance_amount' => 'nullable|numeric',
-            'outlet_name' => 'nullable|string',
-            'note' => 'nullable|string',
+            'outlet_name' => 'nullable|string|max:255',
+            'note' => 'nullable|string|max:1000',
         ]);
+
+        $outletId = DB::table('outlets')
+            ->when($writeTenantId !== null, fn ($q) => $q->where('tenant_id', $writeTenantId))
+            ->value('id') ?? 1;
 
         $mockShift = (object) [
             'id' => rand(100, 999),
+            'tenant_id' => $writeTenantId,
             'user_id' => $request->user()->id,
-            'outlet_id' => 1,
+            'outlet_id' => $outletId,
         ];
 
         $variance = (float) ($validated['variance_amount'] ?? -15.00);
@@ -404,28 +556,29 @@ class ShiftController extends Controller
     protected function generateZReportData(?string $tenantId, ?int $outletId, ?string $date, bool $closeOpenRegisters = false): array
     {
         $targetDate = $date ?: date('Y-m-d');
+        $scopedTenantId = ($tenantId !== null && $tenantId !== 'all') ? $tenantId : null;
 
-        // Resolve outlet name
+        // Resolve outlet name (scoped strictly to tenant)
         $outletName = 'All Outlets';
         if ($outletId) {
             $outlet = DB::table('outlets')->where('id', $outletId)->first();
             if ($outlet) {
+                if ($scopedTenantId !== null && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== (string) $scopedTenantId) {
+                    abort(403, 'Unauthorized: Outlet belongs to another organization.');
+                }
                 $outletName = $outlet->name;
             }
         }
 
-        // 1. Sales & Revenue Aggregates
+        // 1. Sales & Revenue Aggregates (Strictly tenant-scoped)
         $salesQuery = DB::table('sales')
             ->whereBetween('created_at', ["{$targetDate} 00:00:00", "{$targetDate} 23:59:59"]);
 
+        if ($scopedTenantId !== null) {
+            $salesQuery->where('tenant_id', $scopedTenantId);
+        }
         if ($outletId) {
             $salesQuery->where('outlet_id', $outletId);
-        }
-        if (!empty($tenantId) && $tenantId !== 'all') {
-            $hasTenant = DB::table('sales')->where('tenant_id', $tenantId)->exists();
-            if ($hasTenant) {
-                $salesQuery->where('tenant_id', $tenantId);
-            }
         }
 
         $totalOrders = (clone $salesQuery)->count();
@@ -436,12 +589,15 @@ class ShiftController extends Controller
         $discountTotal = (float) (clone $completedSalesQuery)->sum('discount_total');
         $netSales = max(0.0, $grossSales - $discountTotal);
 
-        // 2. Payment Tender Breakdown
+        // 2. Payment Tender Breakdown (Strictly tenant-scoped)
         $paymentsQuery = DB::table('payments as p')
             ->join('sales as s', 'p.sale_id', '=', 's.id')
             ->whereBetween('p.created_at', ["{$targetDate} 00:00:00", "{$targetDate} 23:59:59"])
             ->where('p.status', 'paid');
 
+        if ($scopedTenantId !== null) {
+            $paymentsQuery->where('s.tenant_id', $scopedTenantId);
+        }
         if ($outletId) {
             $paymentsQuery->where('s.outlet_id', $outletId);
         }
@@ -451,37 +607,49 @@ class ShiftController extends Controller
         $cardSales = (float) (clone $paymentsQuery)->where('p.tender_type', 'card')->sum('p.amount');
         $otherSales = (float) (clone $paymentsQuery)->whereNotIn('p.tender_type', ['cash', 'khqr', 'card'])->sum('p.amount');
 
-        // 3. Refunds Summary
+        // 3. Refunds Summary (Strictly tenant-scoped)
         $refundsQuery = DB::table('refunds')
             ->whereBetween('created_at', ["{$targetDate} 00:00:00", "{$targetDate} 23:59:59"]);
+        if ($scopedTenantId !== null) {
+            $refundsQuery->where('tenant_id', $scopedTenantId);
+        }
         $refundCount = (clone $refundsQuery)->count();
         $refundTotal = (float) (clone $refundsQuery)->sum('amount');
 
-        // 4. Auto-Close Open Registers (if requested)
+        // 4. Auto-Close Open Registers (Strictly tenant-scoped)
         $closedRegistersCount = 0;
         if ($closeOpenRegisters) {
             $openShiftsQuery = DB::table('shifts')->where('status', 'open');
+            if ($scopedTenantId !== null) {
+                $openShiftsQuery->where('tenant_id', $scopedTenantId);
+            }
             if ($outletId) {
                 $openShiftsQuery->where('outlet_id', $outletId);
             }
             $openShifts = $openShiftsQuery->get();
             foreach ($openShifts as $os) {
-                $m = $this->getShiftMetrics($os->id, $os->opening_float);
-                DB::table('shifts')->where('id', $os->id)->update([
-                    'status' => 'closed',
-                    'closed_at' => now(),
-                    'expected_cash' => $m['expectedCash'],
-                    'counted_cash' => $m['expectedCash'],
-                    'cash_variance' => 0.00,
-                    'closing_note' => 'Automated End-of-Day (EOD) system closure',
-                    'updated_at' => now(),
-                ]);
+                $m = $this->getShiftMetrics($os->id, $os->opening_float, $scopedTenantId);
+                DB::table('shifts')
+                    ->where('id', $os->id)
+                    ->when($scopedTenantId !== null, fn ($q) => $q->where('tenant_id', $scopedTenantId))
+                    ->update([
+                        'status' => 'closed',
+                        'closed_at' => now(),
+                        'expected_cash' => $m['expectedCash'],
+                        'counted_cash' => $m['expectedCash'],
+                        'cash_variance' => 0.00,
+                        'closing_note' => 'Automated End-of-Day (EOD) system closure',
+                        'updated_at' => now(),
+                    ]);
                 $closedRegistersCount++;
             }
         }
 
-        // 5. Shift & Cash Drawer Reconciliation
+        // 5. Shift & Cash Drawer Reconciliation (Strictly tenant-scoped)
         $shiftsQuery = DB::table('shifts')->whereDate('opened_at', $targetDate);
+        if ($scopedTenantId !== null) {
+            $shiftsQuery->where('tenant_id', $scopedTenantId);
+        }
         if ($outletId) {
             $shiftsQuery->where('outlet_id', $outletId);
         }
@@ -541,7 +709,7 @@ class ShiftController extends Controller
      */
     public function zReport(Request $request)
     {
-        $tenantId = $this->getTenantId($request, false);
+        $tenantId = $this->getTenantId($request, true);
         $outletId = $request->input('outlet_id') ?? $request->query('outlet_id');
         $date = $request->input('date') ?? $request->query('date');
         $closeOpenRegisters = (bool) ($request->input('close_open_registers') ?? $request->query('close_open_registers', false));
@@ -566,49 +734,44 @@ class ShiftController extends Controller
      */
     public function eodDispatch(Request $request)
     {
-        $resolvedTid = $this->getTenantId($request, false);
+        $resolvedTid = $this->getTenantId($request, true);
         $rawInputTid = $request->input('tenant_id');
-        if ($rawInputTid !== null && $rawInputTid !== '' && $resolvedTid !== null && $resolvedTid !== 'all' && (string) $rawInputTid !== (string) $resolvedTid && !TenantAuthorizationService::hasPlatformSuperAdminRole($request->user())) {
+        if ($rawInputTid !== null && $rawInputTid !== '' && $resolvedTid !== 'all' && (string) $rawInputTid !== (string) $resolvedTid && !TenantAuthorizationService::hasPlatformSuperAdminRole($request->user())) {
             abort(403, 'Access denied: You cannot dispatch EOD reports for another organization.');
         }
-        $rawTid = $resolvedTid !== null ? $resolvedTid : $rawInputTid;
-        $tenantId = (!empty($rawTid) && is_numeric($rawTid)) ? (int) $rawTid : null;
-        $outletId = $request->input('outlet_id') ? (int) $request->input('outlet_id') : ($request->user()?->outlet_id ?? null);
+        $writeTenantId = $resolvedTid === 'all' ? (is_numeric($rawInputTid) ? (string) $rawInputTid : null) : $resolvedTid;
+        $outletId = $request->input('outlet_id') ? (int) $request->input('outlet_id') : ($request->user()?->outlet_id ? (int) $request->user()->outlet_id : null);
         $date = $request->input('date') ?? date('Y-m-d');
 
         // Generate Z-Report and force close all open registers
-        $zReport = $this->generateZReportData($tenantId, $outletId, $date, true);
+        $zReport = $this->generateZReportData($resolvedTid, $outletId, $date, true);
 
         // Determine recipient email
         $recipientEmail = $request->input('recipient_email')
             ?? config('services.cash_drawer.alert_email')
-            ?? env('SHIFT_ALERT_EMAIL')
-            ?? env('STORE_OWNER_EMAIL')
-            ?? env('MAIL_FROM_ADDRESS')
-            ?? 'owner@codebridges.io';
+            ?? config('mail.from.address', 'owner@codebridges.io');
 
-        // Spool & Dispatch Email Summary
+        // Spool & Queue Email Summary asynchronously onto notifications queue
         $emailDispatched = false;
         try {
-            Mail::to($recipientEmail)->send(new EndOfDayZReportMail($zReport));
+            Mail::to($recipientEmail)->queue(new EndOfDayZReportMail($zReport));
             $emailDispatched = true;
-            Log::info("EOD Z-Report summary dispatched to {$recipientEmail} for outlet {$zReport['outlet_name']}");
+            Log::info("EOD Z-Report summary queued for outlet {$zReport['outlet_name']}");
         } catch (\Throwable $e) {
-            Log::warning('Nightly EOD Z-Report email spooling failed: ' . $e->getMessage());
+            Log::warning('Nightly EOD Z-Report email queueing failed: ' . $e->getMessage());
         }
 
         // Record audit trail in api_request_logs
         try {
             DB::table('api_request_logs')->insert([
                 'uuid' => (string) Str::uuid(),
-                'tenant_id' => $tenantId,
+                'tenant_id' => $writeTenantId !== null && is_numeric($writeTenantId) ? (int) $writeTenantId : null,
                 'request_id' => $zReport['z_report_code'],
                 'service_name' => 'operations-service',
                 'method' => 'POST',
                 'path' => '/api/v1/pos/shifts/eod-dispatch',
                 'status_code' => 200,
                 'request_data' => json_encode([
-                    'recipient' => $recipientEmail,
                     'outlet_id' => $outletId,
                     'registers_closed' => $zReport['registers_closed'],
                     'gross_sales' => $zReport['gross_sales'],

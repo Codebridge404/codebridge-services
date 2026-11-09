@@ -54,14 +54,25 @@ class GiftCardController extends Controller
             $query->where('tenant_id', $tenantId);
         }
 
-        $cards = $query->orderBy('created_at', 'desc')->get()->map(function ($c) {
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->orderBy('created_at', 'desc')->paginate($perPage);
+        $cards = collect($paginator->items())->map(function ($c) {
             $c->card_code = $c->card_number;
             $c->balance = (float) $c->current_balance;
             $c->status = $c->is_active ? 'active' : 'inactive';
             return $c;
         });
 
-        return response()->json(['status' => 'success', 'data' => $cards]);
+        return response()->json([
+            'status' => 'success',
+            'data' => $cards,
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
+        ]);
     }
 
     public function store(StoreGiftCardRequest $request)

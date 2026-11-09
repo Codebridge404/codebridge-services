@@ -47,12 +47,12 @@ class AuthenticateJwt
             $payload = $this->jwtService->verify($token);
 
             if ($payload && !empty($payload['sub'])) {
-                // [P1] Reject refresh tokens from accessing standard API endpoints
-                if (($payload['token_use'] ?? 'access') === 'refresh' && !$request->is('api/v1/auth/refresh')) {
+                // [P1] Strictly require explicit token_use=access on standard API endpoints
+                if (($payload['token_use'] ?? null) !== 'access' && !$request->is('api/v1/auth/refresh')) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'INVALID_TOKEN_TYPE',
-                        'message' => 'Refresh token cannot be used for API authentication.',
+                        'message' => 'Only access tokens can be used for API authentication.',
                     ], 401);
                 }
 
@@ -62,6 +62,15 @@ class AuthenticateJwt
                         'status' => 'error',
                         'code' => 'TOKEN_REVOKED',
                         'message' => 'Token has been revoked.',
+                    ], 401);
+                }
+
+                // Check if specific session UUID has been revoked
+                if (!empty($payload['sid']) && $this->jwtService->isSessionUuidRevoked((string) $payload['sid'])) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'TOKEN_REVOKED',
+                        'message' => 'Session has been revoked.',
                     ], 401);
                 }
 
@@ -108,7 +117,6 @@ class AuthenticateJwt
                     if (!$session) return response()->json(['status' => 'error', 'code' => 'TOKEN_REVOKED', 'message' => 'Session has been revoked.'], 401);
 
                     if ($session instanceof \App\Models\UserSession) {
-                        $session->touchLastSeen($request->ip(), $request->userAgent());
                         $request->attributes->set('user_session', $session);
 
                         $inactivityDays = $user->session_inactivity_days ?: 180;
@@ -129,6 +137,7 @@ class AuthenticateJwt
                                     'message' => 'Session has expired due to inactivity.',
                                 ], 401);
                             }
+                            $session->touchLastSeen($request->ip(), $request->userAgent());
                             $user->withAccessToken($pat);
                         } else {
                             $lastActive = $session->last_seen_at ?? $session->created_at;
@@ -140,6 +149,7 @@ class AuthenticateJwt
                                     'message' => 'Session has expired due to inactivity.',
                                 ], 401);
                             }
+                            $session->touchLastSeen($request->ip(), $request->userAgent());
                             $user->withAccessToken($session);
                         }
                     } else {
@@ -179,7 +189,7 @@ class AuthenticateJwt
                 $request->setUserResolver(fn () => $user);
             } else {
                 try {
-                    if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    if (\App\Support\SchemaGuard::hasTable('security_events')) {
                         \App\Models\SecurityEvent::record(
                             eventType: 'jwt_invalid_signature',
                             ruleCode: 'SEC_JWT_INVALID_SIGNATURE',

@@ -16,6 +16,121 @@ use Illuminate\Support\Str;
  */
 class ImageService
 {
+    public const ALLOWED_RASTER_EXTENSIONS = ['jpeg', 'jpg', 'png', 'gif', 'webp'];
+
+    public const ALLOWED_RASTER_MIMES = [
+        'image/jpeg',
+        'image/jpg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+    ];
+
+    /**
+     * Validate a URL or data URI image string and reject SVGs, HTML, or unsafe schemes.
+     */
+    public static function isSafeImageUrlOrDataUri(?string $value): bool
+    {
+        if ($value === null || trim($value) === '') {
+            return true;
+        }
+
+        $trimmed = trim($value);
+
+        if (preg_match('/^(?:javascript|vbscript):/i', $trimmed)) {
+            return false;
+        }
+
+        if (stripos($trimmed, 'data:') === 0) {
+            if (!preg_match('/^data:image\/(jpeg|jpg|png|gif|webp);base64,(.+)$/is', $trimmed, $matches)) {
+                return false;
+            }
+
+            $decoded = base64_decode($matches[2], true);
+            if ($decoded === false || $decoded === '') {
+                return false;
+            }
+
+            return !self::containsDangerousMarkup($decoded);
+        }
+
+        $path = parse_url($trimmed, PHP_URL_PATH) ?: $trimmed;
+        if (preg_match('/\.svgz?(?:$|[?#])/i', $path)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Assert an uploaded file, binary buffer, data URI, or URL represents a safe raster image.
+     *
+     * @throws \InvalidArgumentException
+     */
+    public function assertSafeRasterSource(mixed $source): void
+    {
+        if ($source instanceof UploadedFile) {
+            $ext = strtolower((string) $source->getClientOriginalExtension());
+            $guessed = strtolower((string) $source->guessExtension());
+            $mime = strtolower((string) $source->getMimeType());
+            $clientMime = strtolower((string) $source->getClientMimeType());
+
+            foreach ([$mime, $clientMime] as $detectedMime) {
+                if ($detectedMime !== '' && (str_contains($detectedMime, 'svg') || str_contains($detectedMime, 'xml') || str_contains($detectedMime, 'html') || str_contains($detectedMime, 'php'))) {
+                    throw new \InvalidArgumentException('SVG and markup file uploads are not permitted.');
+                }
+            }
+
+            if ($ext !== '' && !in_array($ext, self::ALLOWED_RASTER_EXTENSIONS, true)) {
+                throw new \InvalidArgumentException('Only raster image formats (jpeg, jpg, png, gif, webp) are permitted.');
+            }
+
+            if ($guessed !== '' && $guessed !== 'bin' && !in_array($guessed, self::ALLOWED_RASTER_EXTENSIONS, true)) {
+                throw new \InvalidArgumentException('Uploaded file content is not a supported raster image format.');
+            }
+
+            $realPath = $source->getRealPath();
+            if ($realPath && is_readable($realPath)) {
+                $head = @file_get_contents($realPath, false, null, 0, 8192);
+                if (is_string($head) && self::containsDangerousMarkup($head)) {
+                    throw new \InvalidArgumentException('SVG or script markup inside uploaded file is not permitted.');
+                }
+            }
+
+            return;
+        }
+
+        if (is_string($source)) {
+            $trimmed = trim($source);
+            if ($trimmed === '') {
+                throw new \InvalidArgumentException('Image payload cannot be empty.');
+            }
+
+            if (stripos($trimmed, 'data:') === 0) {
+                if (!self::isSafeImageUrlOrDataUri($trimmed)) {
+                    throw new \InvalidArgumentException('Unsupported or unsafe image data URI format (SVGs are not permitted).');
+                }
+                return;
+            }
+
+            if (preg_match('#^https?://#i', $trimmed) || str_starts_with($trimmed, '/storage/')) {
+                if (!self::isSafeImageUrlOrDataUri($trimmed)) {
+                    throw new \InvalidArgumentException('SVG image URLs are not permitted.');
+                }
+                return;
+            }
+
+            if (self::containsDangerousMarkup(substr($source, 0, 8192))) {
+                throw new \InvalidArgumentException('SVG or markup payloads are not permitted.');
+            }
+        }
+    }
+
+    protected static function containsDangerousMarkup(string $bytes): bool
+    {
+        return (bool) preg_match('/(?:<!DOCTYPE\s+svg|<svg\b|<script\b|<\?php)/i', $bytes);
+    }
+
     /**
      * Convert any supported raster image (file, binary, or Base64 data URL) into WebP format.
      *
@@ -25,6 +140,8 @@ class ImageService
      */
     public function convertToWebp(mixed $imageSource, int $quality = 85): ?string
     {
+        $this->assertSafeRasterSource($imageSource);
+
         $rawBytes = null;
 
         if ($imageSource instanceof UploadedFile) {
@@ -33,10 +150,11 @@ class ImageService
                 $rawBytes = file_get_contents($realPath);
             }
         } elseif (is_string($imageSource)) {
-            if (str_starts_with($imageSource, 'data:image/')) {
+            if (stripos($imageSource, 'data:image/') === 0) {
                 $commaPos = strpos($imageSource, ',');
                 if ($commaPos !== false) {
-                    $rawBytes = base64_decode(substr($imageSource, $commaPos + 1));
+                    $decoded = base64_decode(substr($imageSource, $commaPos + 1), true);
+                    $rawBytes = $decoded !== false ? $decoded : null;
                 }
             } else {
                 $rawBytes = $imageSource;
@@ -94,6 +212,7 @@ class ImageService
      */
     public function storeAvatar(mixed $file, int|string $userId, ?string $oldAvatarUrl = null): string
     {
+        $this->assertSafeRasterSource($file);
         $webpBytes = $this->convertToWebp($file);
 
         if ($webpBytes !== null) {
@@ -101,20 +220,7 @@ class ImageService
             $mimeType = 'image/webp';
             $contentToUpload = $webpBytes;
         } else {
-            // Fallback for non-raster assets (e.g. SVG) or if conversion returned null
-            if ($file instanceof UploadedFile) {
-                $ext = strtolower($file->guessExtension() ?: $file->getClientOriginalExtension() ?: 'png');
-                $filename = 'avatars/avatar_' . $userId . '_' . Str::random(16) . '.' . $ext;
-                $mimeType = $file->getMimeType() ?: 'application/octet-stream';
-                $contentToUpload = file_get_contents($file->getRealPath());
-            } elseif (is_string($file) && str_starts_with($file, 'data:image/svg+xml')) {
-                $filename = 'avatars/avatar_' . $userId . '_' . Str::random(16) . '.svg';
-                $mimeType = 'image/svg+xml';
-                $commaPos = strpos($file, ',');
-                $contentToUpload = $commaPos !== false ? base64_decode(substr($file, $commaPos + 1)) : $file;
-            } else {
-                throw new \RuntimeException('Failed to process or convert the uploaded image to WebP.');
-            }
+            [$filename, $mimeType, $contentToUpload] = $this->prepareSafeRasterFallback($file, 'avatars/avatar_' . $userId);
         }
 
         $url = $this->uploadToMinio($contentToUpload, $filename, $mimeType);
@@ -132,6 +238,7 @@ class ImageService
      */
     public function storeLogo(mixed $file, int|string $tenantId, ?string $oldLogoUrl = null): string
     {
+        $this->assertSafeRasterSource($file);
         $webpBytes = $this->convertToWebp($file, 85);
 
         if ($webpBytes !== null) {
@@ -139,19 +246,7 @@ class ImageService
             $mimeType = 'image/webp';
             $contentToUpload = $webpBytes;
         } else {
-            if ($file instanceof UploadedFile) {
-                $ext = strtolower($file->guessExtension() ?: $file->getClientOriginalExtension() ?: 'png');
-                $filename = 'logos/logo_' . $tenantId . '_' . Str::random(16) . '.' . $ext;
-                $mimeType = $file->getMimeType() ?: 'application/octet-stream';
-                $contentToUpload = file_get_contents($file->getRealPath());
-            } elseif (is_string($file) && str_starts_with($file, 'data:image/svg+xml')) {
-                $filename = 'logos/logo_' . $tenantId . '_' . Str::random(16) . '.svg';
-                $mimeType = 'image/svg+xml';
-                $commaPos = strpos($file, ',');
-                $contentToUpload = $commaPos !== false ? base64_decode(substr($file, $commaPos + 1)) : $file;
-            } else {
-                throw new \RuntimeException('Failed to process or convert the uploaded logo to WebP.');
-            }
+            [$filename, $mimeType, $contentToUpload] = $this->prepareSafeRasterFallback($file, 'logos/logo_' . $tenantId);
         }
 
         $url = $this->uploadToMinio($contentToUpload, $filename, $mimeType);
@@ -161,6 +256,43 @@ class ImageService
         }
 
         return $url;
+    }
+
+    /**
+     * Allow storing already-validated raster UploadedFiles when GD cannot decode a test stub,
+     * while strictly refusing non-raster or SVG assets.
+     *
+     * @return array{0: string, 1: string, 2: string}
+     */
+    protected function prepareSafeRasterFallback(mixed $file, string $prefix): array
+    {
+        if (!($file instanceof UploadedFile)) {
+            throw new \InvalidArgumentException('Failed to process or convert the uploaded image to a valid raster WebP asset.');
+        }
+
+        $ext = strtolower($file->guessExtension() ?: $file->getClientOriginalExtension() ?: '');
+        if (!in_array($ext, self::ALLOWED_RASTER_EXTENSIONS, true)) {
+            throw new \InvalidArgumentException('Only raster image formats (jpeg, jpg, png, gif, webp) are permitted.');
+        }
+
+        $mimeMap = [
+            'jpg' => 'image/jpeg',
+            'jpeg' => 'image/jpeg',
+            'png' => 'image/png',
+            'gif' => 'image/gif',
+            'webp' => 'image/webp',
+        ];
+
+        $content = file_get_contents($file->getRealPath());
+        if ($content === false || self::containsDangerousMarkup($content)) {
+            throw new \InvalidArgumentException('Uploaded file content is unsafe or unreadable.');
+        }
+
+        return [
+            $prefix . '_' . Str::random(16) . '.' . $ext,
+            $mimeMap[$ext],
+            $content,
+        ];
     }
 
     /**

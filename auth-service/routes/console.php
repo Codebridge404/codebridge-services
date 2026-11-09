@@ -17,3 +17,9 @@ Schedule::command('store-credit:expire')->dailyAt('00:05')->withoutOverlapping()
 
 // Inactive & Expired Sessions Periodic Cleanup Sweep
 Schedule::command('sessions:cleanup-inactive')->hourly()->withoutOverlapping();
+
+// Automated Daily Encrypted Auth Database Backup
+Schedule::command('backup:database-encrypted --destination=minio')->dailyAt('02:15')->withoutOverlapping();
+
+// Horizon queue metrics snapshot for supervisor monitoring
+Schedule::command('horizon:snapshot')->everyFiveMinutes()->withoutOverlapping();

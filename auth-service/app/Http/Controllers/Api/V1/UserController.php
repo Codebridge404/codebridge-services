@@ -23,10 +23,10 @@ use App\Services\JwtService;
 use App\Services\PinService;
 use App\Services\TenantAccess;
 use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
@@ -95,38 +95,63 @@ class UserController extends Controller
             });
         }
         if (! empty($search)) {
-            $query->where(function ($q) use ($search) {
-                $q->where('u.name', 'like', "%{$search}%")->orWhere('u.email', 'like', "%{$search}%");
+            $escaped = SchemaGuard::escapeLike(trim((string) $search));
+            $query->where(function ($q) use ($escaped) {
+                $q->where('u.name', 'like', "%{$escaped}%")->orWhere('u.email', 'like', "%{$escaped}%");
             });
         }
 
-        $users = $query->select(
-            'u.id', 'u.uuid',
-            DB::raw('COALESCE(tu.tenant_id, NULL) as tenant_id'),
-            'u.name', 'u.email', 'u.phone', 'u.avatar_url',
-            'r.slug',
-            DB::raw("COALESCE(r.slug, 'user') as role"),
-            DB::raw('r.id as role_id'),
-            DB::raw('r.name as role_name'),
-            DB::raw("COALESCE(r.slug, 'user') as role_slug"),
-            DB::raw('COALESCE(o.id, NULL) as outlet_id'),
-            DB::raw('COALESCE(tuo.outlet_uuid, NULL) as outlet_uuid'),
-            DB::raw('NULL as pin_code'),
-            'u.is_active',
-            'u.created_at', 'o.name as outlet_name'
-        )->distinct()
-            ->orderByRaw("CASE 
+        $roleRankSql = "CASE 
             WHEN r.slug = 'super_admin' THEN 1
             WHEN r.slug = 'organization' THEN 2
             WHEN r.slug = 'admin' THEN 3
             WHEN r.slug = 'outlet_manager' THEN 4
             WHEN r.slug = 'cashier' THEN 5
-            ELSE 6 END ASC")
-            ->orderBy('u.created_at', 'desc')->get();
+            ELSE 6 END";
 
-        $dedupedUsers = $users->unique('id')->values();
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $idPaginator = (clone $query)
+            ->select('u.id')
+            ->groupBy(['u.id', 'u.created_at'])
+            ->orderByRaw("MIN({$roleRankSql}) ASC")
+            ->orderBy('u.created_at', 'desc')
+            ->paginate($perPage);
 
-        return response()->json(['status' => 'success', 'data' => UserResource::collection($dedupedUsers)]);
+        $pageIds = collect($idPaginator->items())->pluck('id')->all();
+
+        $dedupedUsers = empty($pageIds)
+            ? collect()
+            : $query->whereIn('u.id', $pageIds)->select(
+                'u.id', 'u.uuid',
+                DB::raw('COALESCE(tu.tenant_id, NULL) as tenant_id'),
+                'u.name', 'u.email', 'u.phone', 'u.avatar_url',
+                'r.slug',
+                DB::raw("COALESCE(r.slug, 'user') as role"),
+                DB::raw('r.id as role_id'),
+                DB::raw('r.name as role_name'),
+                DB::raw("COALESCE(r.slug, 'user') as role_slug"),
+                DB::raw('COALESCE(o.id, NULL) as outlet_id'),
+                DB::raw('COALESCE(tuo.outlet_uuid, NULL) as outlet_uuid'),
+                DB::raw('NULL as pin_code'),
+                'u.is_active',
+                'u.created_at', 'o.name as outlet_name'
+            )->distinct()
+                ->orderByRaw("{$roleRankSql} ASC")
+                ->orderBy('u.created_at', 'desc')
+                ->get()
+                ->unique('id')
+                ->values();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => UserResource::collection($dedupedUsers),
+            'pagination' => [
+                'current_page' => $idPaginator->currentPage(),
+                'last_page' => $idPaginator->lastPage(),
+                'per_page' => $idPaginator->perPage(),
+                'total' => $idPaginator->total(),
+            ],
+        ]);
     }
 
     public function permissions()
@@ -222,13 +247,15 @@ class UserController extends Controller
         $currentUser = $request->user();
         $currentTenantId = $currentUser?->tenant_id;
 
+        $escapedQ = SchemaGuard::escapeLike($q);
+
         $users = DB::table('users as u')
             ->leftJoin('tenant_users as tu', function ($j) {
                 $j->on('u.id', '=', 'tu.user_id');
             })
             ->leftJoin('tenants as t', 'tu.tenant_id', '=', 't.id')
-            ->where(function ($w) use ($q) {
-                $w->where('u.email', 'like', "%{$q}%")->orWhere('u.name', 'like', "%{$q}%");
+            ->where(function ($w) use ($escapedQ) {
+                $w->where('u.email', 'like', "%{$escapedQ}%")->orWhere('u.name', 'like', "%{$escapedQ}%");
             })
             ->select('u.id', 'u.name', 'u.email', 'u.avatar_url', DB::raw('COALESCE(tu.tenant_id, NULL) as tenant_id'), 't.name as tenant_name')
             ->limit(10)->get()
@@ -341,7 +368,7 @@ class UserController extends Controller
             DB::table('user_pos_pins')->updateOrInsert(
                 ['tenant_id' => $tenantId, 'user_id' => $targetUser->id],
                 [
-                    'pin_hash' => hash('sha256', (string) $validated['pin_code']),
+                    'pin_hash' => Hash::make((string) $validated['pin_code']),
                     'failed_attempts' => 0,
                     'created_at' => now(),
                     'updated_at' => now(),
@@ -434,7 +461,7 @@ class UserController extends Controller
                 DB::table('user_pos_pins')->insert([
                     'tenant_id' => $tenantId,
                     'user_id' => $userId,
-                    'pin_hash' => hash('sha256', (string) $validated['pin_code']),
+                    'pin_hash' => Hash::make((string) $validated['pin_code']),
                     'failed_attempts' => 0,
                     'created_at' => now(),
                     'updated_at' => now(),
@@ -551,7 +578,7 @@ class UserController extends Controller
             DB::table('user_pos_pins')->updateOrInsert(
                 ['tenant_id' => $effectiveTenantId ?? 1, 'user_id' => $id],
                 [
-                    'pin_hash' => hash('sha256', (string) $validated['pin_code']),
+                    'pin_hash' => Hash::make((string) $validated['pin_code']),
                     'failed_attempts' => 0,
                     'is_active' => true,
                     'created_at' => now(),
@@ -782,22 +809,22 @@ class UserController extends Controller
                     DB::table('api_keys')->where('user_id', $id)->delete();
                     DB::table('support_tickets')->where('user_id', $id)->delete();
                     DB::table('meeting_notifications')->where('user_id', $id)->delete();
-                    if (Schema::hasTable('employees')) {
+                    if (SchemaGuard::hasTable('employees')) {
                         DB::table('employees')->where('user_id', $id)->update(['user_id' => null]);
                     }
-                    if (Schema::hasTable('tenants')) {
+                    if (SchemaGuard::hasTable('tenants')) {
                         DB::table('tenants')->where('owner_user_id', $id)->update(['owner_user_id' => null]);
                     }
-                    if (Schema::hasTable('attendances')) {
+                    if (SchemaGuard::hasTable('attendances')) {
                         DB::table('attendances')->where('user_id', $id)->update(['user_id' => null]);
                     }
-                    if (Schema::hasTable('audit_logs')) {
+                    if (SchemaGuard::hasTable('audit_logs')) {
                         DB::table('audit_logs')->where('user_id', $id)->update(['user_id' => null]);
                     }
-                    if (Schema::hasTable('api_request_logs')) {
+                    if (SchemaGuard::hasTable('api_request_logs')) {
                         DB::table('api_request_logs')->where('user_id', $id)->update(['user_id' => null]);
                     }
-                    if (Schema::hasTable('meeting_attendees')) {
+                    if (SchemaGuard::hasTable('meeting_attendees')) {
                         DB::table('meeting_attendees')->where('user_id', $id)->update(['user_id' => null]);
                     }
 
@@ -827,22 +854,22 @@ class UserController extends Controller
             DB::table('support_tickets')->where('user_id', $id)->delete();
             DB::table('meeting_notifications')->where('user_id', $id)->delete();
 
-            if (Schema::hasTable('employees')) {
+            if (SchemaGuard::hasTable('employees')) {
                 DB::table('employees')->where('user_id', $id)->update(['user_id' => null]);
             }
-            if (Schema::hasTable('tenants')) {
+            if (SchemaGuard::hasTable('tenants')) {
                 DB::table('tenants')->where('owner_user_id', $id)->update(['owner_user_id' => null]);
             }
-            if (Schema::hasTable('attendances')) {
+            if (SchemaGuard::hasTable('attendances')) {
                 DB::table('attendances')->where('user_id', $id)->update(['user_id' => null]);
             }
-            if (Schema::hasTable('audit_logs')) {
+            if (SchemaGuard::hasTable('audit_logs')) {
                 DB::table('audit_logs')->where('user_id', $id)->update(['user_id' => null]);
             }
-            if (Schema::hasTable('api_request_logs')) {
+            if (SchemaGuard::hasTable('api_request_logs')) {
                 DB::table('api_request_logs')->where('user_id', $id)->update(['user_id' => null]);
             }
-            if (Schema::hasTable('meeting_attendees')) {
+            if (SchemaGuard::hasTable('meeting_attendees')) {
                 DB::table('meeting_attendees')->where('user_id', $id)->update(['user_id' => null]);
             }
 

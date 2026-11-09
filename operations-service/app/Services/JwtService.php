@@ -31,10 +31,11 @@ class JwtService
     protected string $secret;
     protected string $algo;
     protected string $issuer;
+    protected string $audience;
 
     public function __construct()
     {
-        $this->secret = (string) config('jwt.secret', env('JWT_SECRET'));
+        $this->secret = (string) config('jwt.secret');
 
         if (blank($this->secret) || strlen($this->secret) < 32) {
             throw new \RuntimeException(
@@ -42,21 +43,35 @@ class JwtService
             );
         }
 
-        $this->algo = (string) config('jwt.algo', env('JWT_ALGO', 'HS256'));
-        $this->issuer = (string) config('jwt.issuer', env('JWT_ISSUER', 'codebridge-auth-service'));
+        $configuredAlgo = strtoupper(trim((string) config('jwt.algo', 'HS256')));
+        $supportedAlgos = ['HS256', 'HS384', 'HS512', 'RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'];
+        $this->algo = in_array($configuredAlgo, $supportedAlgos, true) ? $configuredAlgo : 'HS256';
+        $this->issuer = (string) config('jwt.issuer', 'codebridge-auth-service');
+        $this->audience = (string) config('jwt.audience', 'codebridge-api');
     }
 
     /**
-     * Decode and cryptographically verify JWT token signature, expiration, and issuer.
+     * Decode and cryptographically verify JWT token signature, expiration, issuer, and audience.
      */
     public function decode(string $token): ?object
     {
         try {
             $decoded = JWT::decode($token, new Key($this->secret, $this->algo));
 
-            // Validate token issuer claim
-            if (!empty($decoded->iss) && $decoded->iss !== $this->issuer) {
-                Log::warning("Operations JWT decode rejected: untrusted issuer [{$decoded->iss}], expected [{$this->issuer}]");
+            // Strictly validate non-empty token issuer claim
+            if (empty($decoded->iss) || !is_string($decoded->iss) || $decoded->iss !== $this->issuer) {
+                Log::warning('Operations JWT decode rejected: missing or untrusted issuer.');
+                return null;
+            }
+
+            // Strictly validate audience claim
+            $aud = $decoded->aud ?? null;
+            $audienceMatches = is_string($aud)
+                ? $aud === $this->audience
+                : (is_array($aud) && in_array($this->audience, $aud, true));
+
+            if (!$audienceMatches) {
+                Log::warning('Operations JWT decode rejected: missing or mismatched audience.');
                 return null;
             }
 

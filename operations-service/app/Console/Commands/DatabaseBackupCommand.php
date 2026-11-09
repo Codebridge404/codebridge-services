@@ -24,7 +24,8 @@ class DatabaseBackupCommand extends Command
 
     public function handle(): int
     {
-        $database = $this->option('database') ?: config('database.connections.mysql.database', 'codebridge_operations');
+        $connectionName = config('database.default', 'mysql');
+        $database = $this->option('database') ?: config("database.connections.{$connectionName}.database", 'codebridge_operations');
         $destination = $this->option('destination') ?: 'local';
         $retentionDays = (int) ($this->option('retention') ?: 30);
 
@@ -33,7 +34,7 @@ class DatabaseBackupCommand extends Command
 
         try {
             // 1. Generate Raw SQL Dump
-            $sqlContent = $this->generateSqlDump($database);
+            $sqlContent = $this->generateSqlDump((string) $database, (string) $connectionName);
             $rawSize = strlen($sqlContent);
             $this->line("  -> SQL dump generated (" . number_format($rawSize / 1024, 1) . " KB)");
 
@@ -94,36 +95,73 @@ class DatabaseBackupCommand extends Command
     /**
      * Dumps all tables, structures, and row data into a single SQL script.
      */
-    protected function generateSqlDump(string $database): string
+    protected function generateSqlDump(string $database, string $connectionName = 'mysql'): string
     {
-        $pdo = DB::connection('mysql')->getPdo();
-        $tables = DB::connection('mysql')->select('SHOW TABLES');
-        $keyName = "Tables_in_{$database}";
+        $connection = DB::connection($connectionName);
+        $pdo = $connection->getPdo();
+        $driver = $connection->getDriverName();
 
         $out = "-- =====================================================================\n";
         $out .= "-- CodeBridge Encrypted Database Backup\n";
         $out .= "-- Database: {$database}\n";
         $out .= "-- Date: " . now()->toDateTimeString() . " (" . config('app.timezone') . ")\n";
         $out .= "-- =====================================================================\n\n";
+
+        if ($driver === 'sqlite') {
+            $tables = $connection->select("SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+            foreach ($tables as $t) {
+                $tableName = (string) $t->name;
+                $escapedTable = str_replace('`', '``', $tableName);
+                $out .= "DROP TABLE IF EXISTS `{$escapedTable}`;\n";
+                $out .= ($t->sql ?? '') . ";\n\n";
+
+                $rows = $connection->table($tableName)->get();
+                if ($rows->count() > 0) {
+                    $out .= "INSERT INTO `{$escapedTable}` VALUES \n";
+                    $rowStrings = [];
+                    foreach ($rows as $row) {
+                        $values = [];
+                        foreach ((array) $row as $val) {
+                            if ($val === null) {
+                                $values[] = 'NULL';
+                            } elseif (is_numeric($val) && !is_string($val)) {
+                                $values[] = $val;
+                            } else {
+                                $values[] = $pdo->quote((string) $val);
+                            }
+                        }
+                        $rowStrings[] = '(' . implode(', ', $values) . ')';
+                    }
+                    $out .= implode(",\n", $rowStrings) . ";\n\n";
+                }
+            }
+
+            return $out;
+        }
+
+        $tables = $connection->select('SHOW TABLES');
+        $keyName = "Tables_in_{$database}";
+
         $out .= "SET FOREIGN_KEY_CHECKS=0;\n\n";
 
         foreach ($tables as $t) {
             $tableName = $t->$keyName ?? array_values((array) $t)[0];
+            $escapedTable = str_replace('`', '``', (string) $tableName);
 
             // Table Structure
-            $createTable = DB::connection('mysql')->select("SHOW CREATE TABLE `{$tableName}`");
+            $createTable = $connection->select("SHOW CREATE TABLE `{$escapedTable}`");
             $createSql = $createTable[0]->{'Create Table'} ?? '';
             $out .= "-- -----------------------------------------------------\n";
-            $out .= "-- Table structure for `{$tableName}`\n";
+            $out .= "-- Table structure for `{$escapedTable}`\n";
             $out .= "-- -----------------------------------------------------\n";
-            $out .= "DROP TABLE IF EXISTS `{$tableName}`;\n";
+            $out .= "DROP TABLE IF EXISTS `{$escapedTable}`;\n";
             $out .= $createSql . ";\n\n";
 
             // Table Data
-            $rows = DB::connection('mysql')->table($tableName)->get();
+            $rows = $connection->table($tableName)->get();
             if ($rows->count() > 0) {
-                $out .= "-- Data for `{$tableName}` ({$rows->count()} rows)\n";
-                $out .= "INSERT INTO `{$tableName}` VALUES \n";
+                $out .= "-- Data for `{$escapedTable}` ({$rows->count()} rows)\n";
+                $out .= "INSERT INTO `{$escapedTable}` VALUES \n";
                 $rowStrings = [];
 
                 foreach ($rows as $row) {

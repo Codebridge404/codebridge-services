@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Tenant\UpdateModulesRequest;
 use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -87,7 +88,7 @@ class TenantModuleController extends Controller
         }
 
         $modules = [];
-        if (\Illuminate\Support\Facades\Schema::hasTable('tenant_modules')) {
+        if (SchemaGuard::hasTable('tenant_modules')) {
             $modules = DB::table('tenant_modules')
                 ->where('tenant_id', $tenant->id)
                 ->where('is_active', true)
@@ -265,7 +266,7 @@ class TenantModuleController extends Controller
                 'updated_at'      => now(),
             ]);
 
-            if (\Illuminate\Support\Facades\Schema::hasTable('tenant_modules')) {
+            if (SchemaGuard::hasTable('tenant_modules')) {
                 DB::table('tenant_modules')->where('tenant_id', $tenant->id)->update(['is_active' => false]);
                 foreach ($modules as $modId) {
                     DB::table('tenant_modules')->updateOrInsert(

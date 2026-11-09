@@ -78,6 +78,17 @@ return [
             'lock_connection' => env('REDIS_CACHE_LOCK_CONNECTION', 'default'),
         ],
 
+        'revocation' => [
+            'driver' => env('REVOCATION_CACHE_DRIVER', 'redis'),
+            'connection' => 'revocation',
+            'lock_connection' => 'revocation',
+            'prefix' => '',
+            'enabled' => filter_var(env('REVOCATION_ENABLED', false), FILTER_VALIDATE_BOOLEAN)
+                || !empty(env('REVOCATION_REDIS_HOST'))
+                || !empty(env('REVOCATION_REDIS_URL'))
+                || env('CACHE_STORE') === 'redis',
+        ],
+
         'dynamodb' => [
             'driver' => 'dynamodb',
             'key' => env('AWS_ACCESS_KEY_ID'),

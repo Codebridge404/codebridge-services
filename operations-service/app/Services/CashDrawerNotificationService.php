@@ -2,12 +2,12 @@
 
 namespace App\Services;
 
+use App\Jobs\SendShiftVarianceTelegramJob;
 use App\Mail\ShiftVarianceAlertMail;
 use App\Models\ShiftVarianceAlert;
 use App\Models\User;
 use Exception;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
 
@@ -44,7 +44,7 @@ class CashDrawerNotificationService
         ?User $cashier,
         ?float $customTolerance = null
     ): array {
-        $tolerance = $customTolerance ?? (float) config('services.cash_drawer.variance_tolerance', env('CASH_DRAWER_VARIANCE_TOLERANCE', 5.00));
+        $tolerance = $customTolerance ?? (float) config('services.cash_drawer.variance_tolerance', 5.00);
         $absoluteVariance = abs($cashVariance);
 
         // If variance is within allowed float tolerance, no alert is triggered
@@ -57,24 +57,32 @@ class CashDrawerNotificationService
         }
 
         $varianceType = $cashVariance < 0 ? 'shortage' : 'overage';
+        $shiftTenantId = $shift->tenant_id ?? null;
 
         // Fetch cashier & outlet names if not present on shift object
         $cashierName = $cashier?->name;
         $outletName = 'Main Register';
 
         if (!$cashierName && isset($shift->user_id)) {
-            $userRecord = DB::table('users')->where('id', $shift->user_id)->first();
+            $userRecord = DB::table('users')
+                ->where('id', $shift->user_id)
+                ->when($shiftTenantId !== null, fn ($q) => $q->where('tenant_id', $shiftTenantId))
+                ->first();
             $cashierName = $userRecord?->name ?? "Cashier #{$shift->user_id}";
         }
 
         if (isset($shift->outlet_id)) {
-            $outletRecord = DB::table('outlets')->where('id', $shift->outlet_id)->first();
+            $outletRecord = DB::table('outlets')
+                ->where('id', $shift->outlet_id)
+                ->when($shiftTenantId !== null, fn ($q) => $q->where('tenant_id', $shiftTenantId))
+                ->first();
             if ($outletRecord) {
                 $outletName = $outletRecord->name;
             }
         }
 
         $alertData = [
+            'tenant_id' => $shiftTenantId,
             'shift_id' => $shift->id,
             'user_id' => $shift->user_id ?? $cashier?->id,
             'cashier_id' => $shift->user_id ?? $cashier?->id,
@@ -96,8 +104,9 @@ class CashDrawerNotificationService
         // 2. Dispatch Email Alert
         $emailSent = $this->sendEmailAlert($alertData);
 
-        // 3. Persist Alert Record in Database
+        // 3. Persist Alert Record in Database (strictly scoped by tenant_id)
         $alertRecord = ShiftVarianceAlert::create([
+            'tenant_id' => $shiftTenantId,
             'shift_id' => $shift->id,
             'user_id' => $alertData['user_id'],
             'outlet_id' => $alertData['outlet_id'],
@@ -131,8 +140,8 @@ class CashDrawerNotificationService
      */
     public function sendTelegramAlert(array $data): bool
     {
-        $botToken = config('services.telegram.bot_token', env('TELEGRAM_BOT_TOKEN'));
-        $chatId = config('services.telegram.chat_id', env('TELEGRAM_ALERT_CHAT_ID', env('TELEGRAM_CHAT_ID')));
+        $botToken = config('services.telegram.bot_token');
+        $chatId = config('services.telegram.chat_id');
 
         $varianceSign = $data['cash_variance'] >= 0 ? '+' : '-';
         $varianceFormatted = $varianceSign . '$' . number_format(abs($data['cash_variance']), 2);
@@ -153,41 +162,42 @@ class CashDrawerNotificationService
             . "⚠️ <i>Supervisor investigation and till reconciliation recommended.</i>";
 
         if (empty($botToken) || empty($chatId)) {
-            Log::info("Telegram alert simulated (Token or ChatID not configured in .env):\n{$message}");
+            Log::info('Telegram alert skipped/simulated: bot token or chat ID not configured.', [
+                'shift_id' => $data['shift_id'] ?? null,
+                'variance_type' => $data['variance_type'] ?? null,
+            ]);
             return true; // Mark as delivered in mock/test environment
         }
 
         try {
-            $response = Http::timeout(6)->post("https://api.telegram.org/bot{$botToken}/sendMessage", [
-                'chat_id' => $chatId,
-                'text' => $message,
-                'parse_mode' => 'HTML',
-            ]);
+            SendShiftVarianceTelegramJob::dispatch(
+                (string) $chatId,
+                $message,
+                isset($data['shift_id']) ? (int) $data['shift_id'] : null
+            )->onQueue('notifications');
 
-            if ($response->successful()) {
-                return true;
-            }
-
-            Log::error("Telegram API error response: " . $response->body());
-            return false;
+            return true;
         } catch (Exception $e) {
-            Log::error("Failed to dispatch Telegram shift variance alert: " . $e->getMessage());
+            Log::error('Failed to queue Telegram shift variance alert.', [
+                'shift_id' => $data['shift_id'] ?? null,
+                'error' => $e->getMessage(),
+            ]);
             return false;
         }
     }
 
     /**
-     * Dispatch Email notification to supervisors/administrators.
+     * Dispatch Email notification to supervisors/administrators asynchronously.
      */
     public function sendEmailAlert(array $data): bool
     {
-        $recipient = config('services.cash_drawer.alert_email', env('SHIFT_ALERT_EMAIL', env('MAIL_FROM_ADDRESS', 'manager@codebridges.io')));
+        $recipient = config('services.cash_drawer.alert_email', config('mail.from.address', 'manager@codebridges.io'));
 
         try {
-            Mail::to($recipient)->send(new ShiftVarianceAlertMail($data));
+            Mail::to($recipient)->queue(new ShiftVarianceAlertMail($data));
             return true;
         } catch (Exception $e) {
-            Log::error("Failed to send shift variance email: " . $e->getMessage());
+            Log::error("Failed to queue shift variance email: " . $e->getMessage());
             return false;
         }
     }

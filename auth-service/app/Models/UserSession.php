@@ -160,13 +160,28 @@ class UserSession extends Model
                 ->whereNull('revoked_at')
                 ->update(['revoked_at' => $now]);
         });
+
+        if (!empty($this->uuid)) {
+            try {
+                app(\App\Services\JwtService::class)->revokeSessionUuid((string) $this->uuid);
+            } catch (\Throwable) {
+                // Safe fall-through if cache is transiently unavailable
+            }
+        }
     }
 
     /**
-     * Touch session last seen timestamp and client telemetry.
+     * Touch session last seen timestamp and client telemetry (throttled to at most once every 60s unless forced or IP changed).
      */
-    public function touchLastSeen(?string $ip = null, ?string $userAgent = null): void
+    public function touchLastSeen(?string $ip = null, ?string $userAgent = null, bool $force = false, int $throttleSeconds = 60): bool
     {
+        if (!$force && $this->last_seen_at !== null) {
+            $ipUnchanged = ($ip === null || $ip === $this->ip_address);
+            if ($ipUnchanged && $this->last_seen_at->gt(Carbon::now()->subSeconds($throttleSeconds))) {
+                return false;
+            }
+        }
+
         $payload = ['last_seen_at' => Carbon::now()];
         if ($ip !== null) {
             $payload['ip_address'] = $ip;
@@ -175,6 +190,8 @@ class UserSession extends Model
             $payload['user_agent'] = substr($userAgent, 0, 512);
         }
         $this->updateQuietly($payload);
+
+        return true;
     }
 }
 

@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
+use App\Support\TenantCatalogCache;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -32,46 +35,112 @@ use Illuminate\Support\Str;
  */
 class BrandController extends Controller
 {
+    use ResolvesTenantContext;
+
     public function index(Request $request)
     {
-        $search = $request->query('q');
+        $tenantId = $this->getTenantId($request, false);
+        $isPlatformSuperAdmin = $request->user() && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+        $search = $request->query('q') ?? $request->query('search');
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $page = max(1, (int) $request->query('page', 1));
 
-        $query = DB::table('brands as b');
+        $payload = TenantCatalogCache::remember(
+            'brands',
+            $tenantId,
+            [
+                'super' => $isPlatformSuperAdmin ? 1 : 0,
+                'search' => trim((string) ($search ?? '')),
+                'page' => $page,
+                'per_page' => $perPage,
+            ],
+            function () use ($tenantId, $isPlatformSuperAdmin, $search, $perPage) {
+                $query = DB::table('brands as b');
 
-        if (!empty($search)) {
-            $query->where('b.name', 'like', "%{$search}%");
-        }
+                if (!empty($tenantId) && $tenantId !== 'all') {
+                    $hasTenantBrands = DB::table('brands')->where('tenant_id', $tenantId)->exists();
+                    if ($hasTenantBrands) {
+                        $query->where('b.tenant_id', $tenantId);
+                    } else {
+                        $query->where(function ($q) use ($tenantId) {
+                            $q->where('b.tenant_id', $tenantId)
+                              ->orWhereNull('b.tenant_id');
+                        });
+                    }
+                } elseif ($tenantId === 'all' && $isPlatformSuperAdmin) {
+                    // Super admin cross-tenant listing
+                } else {
+                    $query->whereNull('b.tenant_id');
+                }
 
-        $brands = $query->select(
-                'b.id',
-                'b.name',
-                'b.slug',
-                'b.logo',
-                'b.description',
-                'b.is_active',
-                'b.created_at',
-                DB::raw('(SELECT COUNT(*) FROM products WHERE brand_id = b.id) as products_count')
-            )
-            ->orderBy('b.name', 'asc')
-            ->get();
+                if (!empty($search)) {
+                    $escapedSearch = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], trim((string) $search));
+                    $query->where('b.name', 'like', "%{$escapedSearch}%");
+                }
+
+                $paginator = $query->select(
+                        'b.id',
+                        'b.tenant_id',
+                        'b.name',
+                        'b.slug',
+                        'b.logo',
+                        'b.description',
+                        'b.is_active',
+                        'b.created_at',
+                        DB::raw('(SELECT COUNT(*) FROM products WHERE brand_id = b.id AND (b.tenant_id IS NULL OR products.tenant_id = b.tenant_id)) as products_count')
+                    )
+                    ->orderBy('b.name', 'asc')
+                    ->paginate($perPage);
+
+                return [
+                    'data' => $paginator->items(),
+                    'pagination' => [
+                        'current_page' => $paginator->currentPage(),
+                        'last_page' => $paginator->lastPage(),
+                        'per_page' => $paginator->perPage(),
+                        'total' => $paginator->total(),
+                    ],
+                ];
+            }
+        );
 
         return response()->json([
             'status' => 'success',
-            'data' => $brands,
+            'data' => $payload['data'],
+            'pagination' => $payload['pagination'],
         ]);
     }
 
     public function store(Request $request)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $writeTenantId = $tenantId === 'all' ? null : $tenantId;
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:500',
-            'logo' => 'nullable|string|max:500',
+            'logo' => [
+                'nullable',
+                'string',
+                'max:500',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (!is_string($value) || trim($value) === '') {
+                        return;
+                    }
+                    $trimmed = trim($value);
+                    if (stripos($trimmed, 'data:') === 0 && !preg_match('/^data:image\/(jpeg|jpg|png|gif|webp);base64,/i', $trimmed)) {
+                        $fail('Unsupported or unsafe brand logo data URI format (SVGs are not permitted).');
+                    } elseif (preg_match('/\.svgz?(?:$|[?#])/i', parse_url($trimmed, PHP_URL_PATH) ?: $trimmed)) {
+                        $fail('SVG brand logo URLs are not permitted.');
+                    }
+                },
+            ],
         ]);
 
         $slug = Str::slug($validated['name']) . '-' . rand(100, 999);
 
         $id = DB::table('brands')->insertGetId([
+            'tenant_id' => $writeTenantId,
             'name' => $validated['name'],
             'slug' => $slug,
             'description' => $validated['description'] ?? null,
@@ -81,27 +150,62 @@ class BrandController extends Controller
             'updated_at' => now(),
         ]);
 
+        TenantCatalogCache::invalidate($writeTenantId, ['brands', 'products']);
+
         return response()->json([
             'status' => 'success',
             'message' => 'Brand created successfully.',
-            'data' => ['id' => $id],
+            'data' => ['id' => $id, 'tenant_id' => $writeTenantId],
         ], 201);
     }
 
     public function update(Request $request, $id)
     {
+        $this->getTenantId($request, true);
+
+        $brand = DB::table('brands')->where('id', $id)->first();
+        if (!$brand) {
+            return response()->json(['status' => 'error', 'message' => 'Brand not found'], 404);
+        }
+
+        $this->authorizeTenantResource($brand->tenant_id, $request, 'Brand');
+
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:500',
-            'logo' => 'nullable|string|max:500',
+            'logo' => [
+                'nullable',
+                'string',
+                'max:500',
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    if (!is_string($value) || trim($value) === '') {
+                        return;
+                    }
+                    $trimmed = trim($value);
+                    if (stripos($trimmed, 'data:') === 0 && !preg_match('/^data:image\/(jpeg|jpg|png|gif|webp);base64,/i', $trimmed)) {
+                        $fail('Unsupported or unsafe brand logo data URI format (SVGs are not permitted).');
+                    } elseif (preg_match('/\.svgz?(?:$|[?#])/i', parse_url($trimmed, PHP_URL_PATH) ?: $trimmed)) {
+                        $fail('SVG brand logo URLs are not permitted.');
+                    }
+                },
+            ],
         ]);
 
-        DB::table('brands')->where('id', $id)->update([
-            'name' => $validated['name'],
-            'description' => $validated['description'] ?? null,
-            'logo' => $validated['logo'] ?? null,
-            'updated_at' => now(),
-        ]);
+        DB::table('brands')
+            ->where('id', $id)
+            ->when(
+                $brand->tenant_id !== null,
+                fn ($q) => $q->where('tenant_id', $brand->tenant_id),
+                fn ($q) => $q->whereNull('tenant_id')
+            )
+            ->update([
+                'name' => $validated['name'],
+                'description' => $validated['description'] ?? null,
+                'logo' => $validated['logo'] ?? null,
+                'updated_at' => now(),
+            ]);
+
+        TenantCatalogCache::invalidate($brand->tenant_id !== null ? (string) $brand->tenant_id : null, ['brands', 'products']);
 
         return response()->json([
             'status' => 'success',
@@ -109,9 +213,43 @@ class BrandController extends Controller
         ]);
     }
 
-    public function destroy($id)
+    public function destroy(Request $request, $id)
     {
-        DB::table('brands')->where('id', $id)->delete();
+        $this->getTenantId($request, true);
+
+        $brand = DB::table('brands')->where('id', $id)->first();
+        if (!$brand) {
+            return response()->json(['status' => 'error', 'message' => 'Brand not found'], 404);
+        }
+
+        $this->authorizeTenantResource($brand->tenant_id, $request, 'Brand');
+
+        $hasProducts = DB::table('products')
+            ->where('brand_id', $id)
+            ->when(
+                $brand->tenant_id !== null,
+                fn ($q) => $q->where('tenant_id', $brand->tenant_id),
+                fn ($q) => $q->whereNull('tenant_id')
+            )
+            ->exists();
+
+        if ($hasProducts) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot delete brand with active linked products.',
+            ], 422);
+        }
+
+        DB::table('brands')
+            ->where('id', $id)
+            ->when(
+                $brand->tenant_id !== null,
+                fn ($q) => $q->where('tenant_id', $brand->tenant_id),
+                fn ($q) => $q->whereNull('tenant_id')
+            )
+            ->delete();
+
+        TenantCatalogCache::invalidate($brand->tenant_id !== null ? (string) $brand->tenant_id : null, ['brands', 'products']);
 
         return response()->json([
             'status' => 'success',

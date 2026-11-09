@@ -12,6 +12,7 @@ class CashDrawerMovement extends Model
     protected $table = 'cash_drawer_movements';
 
     protected $fillable = [
+        'tenant_id',
         'shift_id',
         'user_id',
         'type',

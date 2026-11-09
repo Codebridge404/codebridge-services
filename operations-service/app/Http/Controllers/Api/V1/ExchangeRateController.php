@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\ExchangeRate;
 use App\Services\ExchangeRateService;
+use App\Services\TenantAuthorizationService;
+use App\Traits\ResolvesTenantContext;
 use Carbon\Carbon;
 use Dedoc\Scramble\Attributes\Group;
 use Illuminate\Http\Request;
@@ -26,7 +28,7 @@ use Illuminate\Http\Request;
 #[Group('Multi-Currency')]
 class ExchangeRateController extends Controller
 {
-    use \App\Traits\ResolvesTenantContext;
+    use ResolvesTenantContext;
 
     public function __construct(
         protected ExchangeRateService $exchangeRateService
@@ -38,7 +40,8 @@ class ExchangeRateController extends Controller
      */
     public function getActive(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $tenantId = $resolvedTenantId === 'all' ? null : $resolvedTenantId;
         $record = $this->exchangeRateService->getActiveRateRecord('USD', 'KHR', $tenantId);
         $rate = (float) ($record->rate ?? ExchangeRateService::DEFAULT_USD_KHR_RATE);
 
@@ -75,24 +78,32 @@ class ExchangeRateController extends Controller
      */
     public function history(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+
         $query = ExchangeRate::query();
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (!$isSuperAdminAll) {
             $query->where(function ($q) use ($tenantId) {
                 $q->where('tenant_id', $tenantId)->orWhereNull('tenant_id');
             });
         }
 
-        $rates = $query->orderBy('effective_date', 'desc')
+        $paginator = $query->orderBy('effective_date', 'desc')
             ->orderBy('id', 'desc')
-            ->limit(50)
-            ->get();
+            ->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
             'data' => [
-                'rates' => $rates,
+                'rates' => $paginator->items(),
+            ],
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
             ],
         ]);
     }
@@ -103,7 +114,8 @@ class ExchangeRateController extends Controller
      */
     public function syncNbc(Request $request)
     {
-        $tenantId = $this->getTenantId($request);
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $tenantId = $resolvedTenantId === 'all' ? null : $resolvedTenantId;
         $forceRate = $request->input('rate') ? (float) $request->input('rate') : null;
 
         $record = $this->exchangeRateService->syncFromNbc($tenantId, $forceRate);
@@ -124,6 +136,9 @@ class ExchangeRateController extends Controller
      */
     public function store(Request $request)
     {
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $tenantId = $resolvedTenantId === 'all' ? null : $resolvedTenantId;
+
         $validated = $request->validate([
             'rate' => 'required|numeric|min:1',
             'bid_rate' => 'nullable|numeric|min:1',
@@ -132,7 +147,6 @@ class ExchangeRateController extends Controller
             'effective_date' => 'nullable|date',
         ]);
 
-        $tenantId = $this->getTenantId($request);
         $effectiveDate = !empty($validated['effective_date'])
             ? Carbon::parse($validated['effective_date'])
             : Carbon::today();
@@ -162,13 +176,15 @@ class ExchangeRateController extends Controller
      */
     public function convert(Request $request)
     {
+        $resolvedTenantId = $this->getTenantId($request, true);
+        $tenantId = $resolvedTenantId === 'all' ? null : $resolvedTenantId;
+
         $validated = $request->validate([
             'amount' => 'required|numeric|min:0.01',
             'from' => 'nullable|string|in:USD,KHR,usd,khr',
             'to' => 'nullable|string|in:USD,KHR,usd,khr',
         ]);
 
-        $tenantId = $this->getTenantId($request);
         $from = strtoupper($validated['from'] ?? 'USD');
         $to = strtoupper($validated['to'] ?? ($from === 'USD' ? 'KHR' : 'USD'));
 

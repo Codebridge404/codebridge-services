@@ -103,6 +103,7 @@ class OperationsAuthenticationTest extends TestCase
 
         $payload = [
             'iss' => 'codebridge-auth-service',
+            'aud' => config('jwt.audience', 'codebridge-api'),
             'sub' => (string) $user->id,
             'name' => $user->name,
             'email' => $user->email,
@@ -131,6 +132,7 @@ class OperationsAuthenticationTest extends TestCase
     {
         $payload = [
             'iss' => 'codebridge-auth-service',
+            'aud' => config('jwt.audience', 'codebridge-api'),
             'sub' => '101',
             'name' => 'Cashier Chenda',
             'email' => 'chenda@codebridges.io',
@@ -187,6 +189,7 @@ class OperationsAuthenticationTest extends TestCase
 
         $payload = [
             'iss' => 'codebridge-auth-service',
+            'aud' => config('jwt.audience', 'codebridge-api'),
             'sub' => '103',
             'name' => 'Logged Out Cashier',
             'role' => 'cashier',
@@ -220,6 +223,7 @@ class OperationsAuthenticationTest extends TestCase
 
         $payload = [
             'iss' => 'codebridge-auth-service',
+            'aud' => config('jwt.audience', 'codebridge-api'),
             'sub' => $userId,
             'name' => 'Deactivated Cashier',
             'role' => 'cashier',

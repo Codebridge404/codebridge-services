@@ -4,9 +4,9 @@ services:
     container_name: codebridge-nginx-proxy-manager
     restart: unless-stopped
     ports:
-      - '80:80'       # Public HTTP Traffic
-      - '81:81'       # Admin Web Management Dashboard
-      - '443:443'     # Public HTTPS Traffic (Let's Encrypt SSL)
+      - '80:80'               # Public HTTP Traffic
+      - '127.0.0.1:81:81'     # Admin Web Management Dashboard (Loopback / SSH tunnel only)
+      - '443:443'             # Public HTTPS Traffic (Let's Encrypt SSL)
     environment:
       DISABLE_IPV6: 'true'
     volumes:

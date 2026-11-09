@@ -195,7 +195,7 @@ class RefreshToken extends Model
                 $session->revoke('replay_attack_detected');
 
                 try {
-                    if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    if (\App\Support\SchemaGuard::hasTable('security_events')) {
                         SecurityEvent::record(
                             eventType: 'refresh_token_replay_attack',
                             ruleCode: 'SEC_TOKEN_REPLAY',
@@ -254,7 +254,7 @@ class RefreshToken extends Model
             ]);
 
             // 10. Update session last seen
-            $session->touchLastSeen();
+            $session->touchLastSeen(force: true);
 
             return [
                 'session' => $session,

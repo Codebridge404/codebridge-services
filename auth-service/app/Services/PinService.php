@@ -11,6 +11,6 @@ class PinService
         if (str_starts_with($hash, '$2') || str_starts_with($hash, '$argon2')) {
             return Hash::check($pin, $hash);
         }
-        return hash_equals($hash, hash('sha256', $pin)) || hash_equals($hash, $pin);
+        return strlen($hash) === 64 && ctype_xdigit($hash) && hash_equals($hash, hash('sha256', $pin));
     }
 }

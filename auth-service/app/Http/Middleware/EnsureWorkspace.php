@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
 
@@ -55,7 +56,7 @@ class EnsureWorkspace
     protected function recordTenantDenied(Request $request, $user, string $reason, ?int $tenantId = null): void
     {
         try {
-            if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+            if (SchemaGuard::hasTable('security_events')) {
                 \App\Models\SecurityEvent::record(
                     eventType: 'tenant_access_denied',
                     ruleCode: 'SEC_TENANT_ACCESS_DENIED',

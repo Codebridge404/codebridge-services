@@ -20,3 +20,6 @@ Schedule::command('currency:sync-nbc')->dailyAt('08:30')->withoutOverlapping();
 // 2. Automated Daily Encrypted Database Backup & MinIO/S3 Cloud Upload
 // Runs nightly at 02:00 AM (Asia/Phnom_Penh)
 Schedule::command('backup:database-encrypted --destination=minio')->dailyAt('02:00')->withoutOverlapping();
+
+// 3. Horizon queue metrics snapshot for supervisor monitoring
+Schedule::command('horizon:snapshot')->everyFiveMinutes()->withoutOverlapping();

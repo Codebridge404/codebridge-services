@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\MeetingController;
 use App\Http\Controllers\Api\V1\MeetingIssueController;
 use App\Http\Controllers\Api\V1\PlatformModuleController;
 use App\Http\Controllers\Api\V1\TenantController;
+use App\Http\Controllers\HealthController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -12,24 +13,7 @@ Route::prefix('v1')->group(function () {
     | Microservice Health Check
     |--------------------------------------------------------------------------
     */
-    Route::get('/health', function () {
-        try {
-            \Illuminate\Support\Facades\DB::select('SELECT 1');
-            $probeKey = 'health:' . \Illuminate\Support\Str::uuid();
-            \Illuminate\Support\Facades\Cache::put($probeKey, 'ready', 10);
-            $cacheReady = \Illuminate\Support\Facades\Cache::get($probeKey) === 'ready';
-            \Illuminate\Support\Facades\Cache::forget($probeKey);
-            if (!$cacheReady) throw new \RuntimeException('Cache unavailable');
-        } catch (\Throwable $e) {
-            return response()->json(['status' => 'unhealthy', 'service' => 'auth-service'], 503);
-        }
-        return response()->json([
-            'status' => 'healthy',
-            'service' => 'auth-service',
-            'version' => config('app.version', '1.0.0'),
-            'timestamp' => now()->toIso8601String(),
-        ]);
-    });
+    Route::get('/health', [HealthController::class, 'health']);
 
     /*
     |--------------------------------------------------------------------------

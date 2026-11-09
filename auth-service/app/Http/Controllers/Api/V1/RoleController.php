@@ -7,6 +7,7 @@ use App\Http\Requests\Role\StoreRoleRequest;
 use App\Http\Requests\Role\UpdateRoleRequest;
 use App\Http\Resources\Role\RoleResource;
 use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -100,7 +101,7 @@ class RoleController extends Controller
             'created_at' => now(),
             'updated_at' => now(),
         ];
-        if (\Illuminate\Support\Facades\Schema::hasColumn('roles', 'parent_role')) {
+        if (SchemaGuard::hasColumn('roles', 'parent_role')) {
             $insertData['parent_role'] = $parentRole;
         }
 

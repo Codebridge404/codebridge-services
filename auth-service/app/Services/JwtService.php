@@ -26,6 +26,7 @@ class JwtService
     protected int $ttl;
     protected int $refreshTtl;
     protected string $issuer;
+    protected string $audience;
 
     public function __construct()
     {
@@ -40,11 +41,10 @@ class JwtService
         $configuredAlgo = strtoupper(trim((string) config('jwt.algo', 'HS256')));
         $supportedAlgos = ['HS256', 'HS384', 'HS512', 'RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'];
         $this->algo = in_array($configuredAlgo, $supportedAlgos, true) ? $configuredAlgo : 'HS256';
-        $configuredTtl = (int) config('jwt.ttl', 1440);
-        // Ensure access token TTL has a safe floor of at least 1440 minutes (24 hours) to prevent unintended auto-logout
-        $this->ttl = $configuredTtl >= 1440 ? $configuredTtl : 1440;
+        $this->ttl = max(1, (int) config('jwt.ttl', 15));
         $this->refreshTtl = (int) config('jwt.refresh_ttl', 43200);
         $this->issuer = (string) config('jwt.issuer', 'codebridge-auth-service');
+        $this->audience = (string) config('jwt.audience', 'codebridge-api');
     }
 
     /**
@@ -63,6 +63,7 @@ class JwtService
 
         $payload = array_merge([
             'iss' => $this->issuer,
+            'aud' => $this->audience,
             'sub' => (string) $user->id,
             'name' => $user->name,
             'email' => $user->email,
@@ -72,7 +73,7 @@ class JwtService
             'outlet_id' => $user->outlet_id,
             'department_id' => $user->department_id ?? null,
             'permissions' => $permissions,
-            'session_version' => (int) \Illuminate\Support\Facades\Cache::get('session_version:' . $user->id, 0),
+            'session_version' => (int) $this->getSessionVersion($user->id),
             'iat' => $now,
             'nbf' => $now,
             'exp' => $exp,
@@ -88,7 +89,24 @@ class JwtService
     public function decode(string $token): ?object
     {
         try {
-            return JWT::decode($token, new Key($this->secret, $this->algo));
+            $decoded = JWT::decode($token, new Key($this->secret, $this->algo));
+
+            if (empty($decoded->iss) || !is_string($decoded->iss) || $decoded->iss !== $this->issuer) {
+                Log::warning('Auth JWT decode rejected: missing or untrusted issuer.');
+                return null;
+            }
+
+            $aud = $decoded->aud ?? null;
+            $audienceMatches = is_string($aud)
+                ? $aud === $this->audience
+                : (is_array($aud) && in_array($this->audience, $aud, true));
+
+            if (!$audienceMatches) {
+                Log::warning('Auth JWT decode rejected: missing or mismatched audience.');
+                return null;
+            }
+
+            return $decoded;
         } catch (Exception $e) {
             Log::debug("JWT decode failed: " . $e->getMessage());
             return null;
@@ -105,12 +123,50 @@ class JwtService
     }
 
     /**
+     * Resolve the cross-service shared Redis revocation store when enabled.
+     */
+    protected function sharedRevocationCache(): ?\Illuminate\Contracts\Cache\Repository
+    {
+        if (!config('cache.stores.revocation.enabled', false) && config('cache.default') !== 'redis') {
+            return null;
+        }
+
+        try {
+            return \Illuminate\Support\Facades\Cache::store('revocation');
+        } catch (\Throwable) {
+            return null;
+        }
+    }
+
+    protected function getSessionVersion(int|string $userId): int
+    {
+        $local = (int) \Illuminate\Support\Facades\Cache::get('session_version:' . $userId, 0);
+        $shared = $this->sharedRevocationCache();
+        if ($shared) {
+            try {
+                $remote = (int) $shared->get('session_version:' . $userId, 0);
+                return max($local, $remote);
+            } catch (\Throwable) {
+                // ignore Redis fallback error
+            }
+        }
+        return $local;
+    }
+
+    /**
      * Mark a JWT token as revoked by its unique JTI.
      */
     public function revokeToken(string $jti, ?int $ttl = null): void
     {
         $seconds = $ttl ?? $this->getTtlSeconds();
         \Illuminate\Support\Facades\Cache::put("revoked_jwt:{$jti}", true, $seconds);
+        if ($shared = $this->sharedRevocationCache()) {
+            try {
+                $shared->put("revoked_jwt:{$jti}", true, $seconds);
+            } catch (\Throwable) {
+                // Safeguard
+            }
+        }
     }
 
     /**
@@ -118,7 +174,63 @@ class JwtService
      */
     public function isRevoked(string $jti): bool
     {
-        return (bool) \Illuminate\Support\Facades\Cache::get("revoked_jwt:{$jti}", false);
+        if ((bool) \Illuminate\Support\Facades\Cache::get("revoked_jwt:{$jti}", false)) {
+            return true;
+        }
+
+        if ($shared = $this->sharedRevocationCache()) {
+            try {
+                return (bool) $shared->get("revoked_jwt:{$jti}", false);
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Mark a specific session UUID (sid) as revoked across services.
+     */
+    public function revokeSessionUuid(string $sid, ?int $ttl = null): void
+    {
+        if (trim($sid) === '') {
+            return;
+        }
+
+        $seconds = $ttl ?? ($this->getTtlSeconds() + 60);
+        \Illuminate\Support\Facades\Cache::put("revoked_sid:{$sid}", true, $seconds);
+        if ($shared = $this->sharedRevocationCache()) {
+            try {
+                $shared->put("revoked_sid:{$sid}", true, $seconds);
+            } catch (\Throwable) {
+                // Safeguard
+            }
+        }
+    }
+
+    /**
+     * Check whether a session UUID (sid) has been revoked.
+     */
+    public function isSessionUuidRevoked(string $sid): bool
+    {
+        if (trim($sid) === '') {
+            return false;
+        }
+
+        if ((bool) \Illuminate\Support\Facades\Cache::get("revoked_sid:{$sid}", false)) {
+            return true;
+        }
+
+        if ($shared = $this->sharedRevocationCache()) {
+            try {
+                return (bool) $shared->get("revoked_sid:{$sid}", false);
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -127,9 +239,21 @@ class JwtService
     public function revokeAllUserTokens(int|string $userId, ?int $ttl = null): void
     {
         $seconds = $ttl ?? ($this->refreshTtl * 60);
-        $version = (int) \Illuminate\Support\Facades\Cache::get("session_version:{$userId}", 0);
-        \Illuminate\Support\Facades\Cache::put("session_version:{$userId}", $version + 1, $seconds);
-        \Illuminate\Support\Facades\Cache::put("revoked_user_sessions:{$userId}", time(), $seconds);
+        $version = $this->getSessionVersion($userId);
+        $nextVersion = $version + 1;
+        $now = time();
+
+        \Illuminate\Support\Facades\Cache::put("session_version:{$userId}", $nextVersion, $seconds);
+        \Illuminate\Support\Facades\Cache::put("revoked_user_sessions:{$userId}", $now, $seconds);
+
+        if ($shared = $this->sharedRevocationCache()) {
+            try {
+                $shared->put("session_version:{$userId}", $nextVersion, $seconds);
+                $shared->put("revoked_user_sessions:{$userId}", $now, $seconds);
+            } catch (\Throwable) {
+                // Safeguard
+            }
+        }
     }
 
     /**
@@ -137,9 +261,27 @@ class JwtService
      */
     public function isUserSessionRevoked(int|string $userId, int $tokenIssuedAt, ?int $version = null): bool
     {
-        if ($version !== null) return $version !== (int) \Illuminate\Support\Facades\Cache::get("session_version:{$userId}", 0);
+        if ($version !== null) {
+            return $version !== $this->getSessionVersion($userId);
+        }
+
         $revokedAt = \Illuminate\Support\Facades\Cache::get("revoked_user_sessions:{$userId}");
-        return $revokedAt !== null && $tokenIssuedAt <= (int) $revokedAt;
+        if ($revokedAt !== null && $tokenIssuedAt <= (int) $revokedAt) {
+            return true;
+        }
+
+        if ($shared = $this->sharedRevocationCache()) {
+            try {
+                $sharedRevokedAt = $shared->get("revoked_user_sessions:{$userId}");
+                if ($sharedRevokedAt !== null && $tokenIssuedAt <= (int) $sharedRevokedAt) {
+                    return true;
+                }
+            } catch (\Throwable) {
+                // ignore
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -152,9 +294,10 @@ class JwtService
 
         $payload = array_merge([
             'iss' => $this->issuer,
+            'aud' => $this->audience,
             'sub' => (string) $user->id,
             'token_use' => 'refresh',
-            'session_version' => (int) \Illuminate\Support\Facades\Cache::get('session_version:' . $user->id, 0),
+            'session_version' => $this->getSessionVersion($user->id),
             'iat' => $now,
             'nbf' => $now,
             'exp' => $exp,

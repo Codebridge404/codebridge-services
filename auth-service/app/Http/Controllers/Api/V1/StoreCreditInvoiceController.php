@@ -220,11 +220,18 @@ class StoreCreditInvoiceController extends Controller
             });
         }
 
-        $vouchers = $query->orderBy('created_at', 'desc')->get();
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $paginator = $query->orderBy('created_at', 'desc')->paginate($perPage);
 
         return response()->json([
             'status' => 'success',
-            'data' => DigitalVoucherResource::collection($vouchers),
+            'data' => DigitalVoucherResource::collection($paginator->items()),
+            'pagination' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]);
     }
 

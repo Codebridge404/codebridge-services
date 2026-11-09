@@ -3,8 +3,11 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -33,27 +36,48 @@ use Illuminate\Support\Str;
  */
 class CartController extends Controller
 {
+    use ResolvesTenantContext;
+
+    private function resolveScopedCartCacheKey(Request $request, int $outletId): array
+    {
+        $tenantId = $this->getTenantId($request, true);
+        $isSuperAdminAll = ($tenantId === 'all' && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user()));
+
+        if (!$isSuperAdminAll) {
+            $outlet = DB::table('outlets')->where('id', $outletId)->first();
+            if ($outlet && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== (string) $tenantId) {
+                abort(403, 'Unauthorized: Outlet belongs to another organization.');
+            }
+        }
+
+        $scopeKey = $tenantId === 'all' ? 'global' : $tenantId;
+
+        return [$tenantId === 'all' ? null : $tenantId, "pos_held_carts_tenant_{$scopeKey}_outlet_{$outletId}"];
+    }
+
     public function hold(Request $request)
     {
         $validated = $request->validate([
             'items' => 'required|array|min:1',
             'items.*.product_id' => 'required|integer',
-            'items.*.name' => 'required|string',
-            'items.*.price' => 'required|numeric',
+            'items.*.name' => 'required|string|max:255',
+            'items.*.price' => 'required|numeric|min:0',
             'items.*.qty' => 'required|integer|min:1',
-            'customer_name' => 'nullable|string',
-            'note' => 'nullable|string',
+            'customer_name' => 'nullable|string|max:255',
+            'note' => 'nullable|string|max:1000',
             'outlet_id' => 'nullable|integer',
         ]);
 
-        $outletId = $validated['outlet_id'] ?? 1;
-        $cacheKey = "pos_held_carts_outlet_{$outletId}";
+        $outletId = (int) ($validated['outlet_id'] ?? $request->user()?->outlet_id ?? 1);
+        [$scopedTenantId, $cacheKey] = $this->resolveScopedCartCacheKey($request, $outletId);
 
         $heldCarts = Cache::get($cacheKey, []);
         $holdCode = 'HOLD-' . strtoupper(Str::random(5));
 
         $newCart = [
             'id' => $holdCode,
+            'tenant_id' => $scopedTenantId,
+            'outlet_id' => $outletId,
             'user_name' => $request->user()->name ?? 'Cashier',
             'customer_name' => $validated['customer_name'] ?? 'Walk-in Customer',
             'note' => $validated['note'] ?? '',
@@ -74,8 +98,8 @@ class CartController extends Controller
 
     public function held(Request $request)
     {
-        $outletId = $request->query('outlet_id', 1);
-        $cacheKey = "pos_held_carts_outlet_{$outletId}";
+        $outletId = (int) $request->query('outlet_id', $request->user()?->outlet_id ?? 1);
+        [, $cacheKey] = $this->resolveScopedCartCacheKey($request, $outletId);
 
         $heldCarts = Cache::get($cacheKey, []);
 
@@ -87,8 +111,8 @@ class CartController extends Controller
 
     public function resume(Request $request, $id)
     {
-        $outletId = $request->query('outlet_id', 1);
-        $cacheKey = "pos_held_carts_outlet_{$outletId}";
+        $outletId = (int) $request->query('outlet_id', $request->user()?->outlet_id ?? 1);
+        [, $cacheKey] = $this->resolveScopedCartCacheKey($request, $outletId);
 
         $heldCarts = Cache::get($cacheKey, []);
 
@@ -109,8 +133,8 @@ class CartController extends Controller
 
     public function destroy(Request $request, $id)
     {
-        $outletId = $request->query('outlet_id', 1);
-        $cacheKey = "pos_held_carts_outlet_{$outletId}";
+        $outletId = (int) $request->query('outlet_id', $request->user()?->outlet_id ?? 1);
+        [, $cacheKey] = $this->resolveScopedCartCacheKey($request, $outletId);
 
         $heldCarts = Cache::get($cacheKey, []);
 

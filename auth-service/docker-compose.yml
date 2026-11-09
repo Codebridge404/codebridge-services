@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
 
     container_name: codebridge-auth-service
 
@@ -43,6 +45,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
 
     container_name: codebridge-auth-horizon
 
@@ -72,6 +76,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        INSTALL_DEV: "true"
     restart: unless-stopped
     command: ["php", "artisan", "schedule:work"]
     env_file:

@@ -11,8 +11,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
     ports:
-      - "9000:9000"   # MinIO S3 API Endpoint
-      - "9001:9001"   # MinIO Web Console Dashboard
+      - "127.0.0.1:9000:9000"   # MinIO S3 API Endpoint (Loopback only)
+      - "127.0.0.1:9001:9001"   # MinIO Web Console Dashboard (Loopback only)
     volumes:
       - minio-data:/data
     networks:

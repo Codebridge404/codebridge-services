@@ -17,17 +17,19 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
-    Route::get('/inventory/balances', [InventoryController::class, 'balances']);
-    Route::get('/inventory/nearby-outlets', [InventoryController::class, 'crossOutletStock']);
-    Route::get('/inventory/cross-outlet-stock', [InventoryController::class, 'crossOutletStock']);
-    Route::get('/inventory/movements', [InventoryController::class, 'movements']);
-    Route::get('/inventory/expired', [InventoryController::class, 'expired']);
-    Route::get('/inventory/batches', [InventoryController::class, 'batches']);
-    Route::get('/inventory/transfers', [TransferController::class, 'index']);
-    Route::get('/inventory/transfers/{id}', [TransferController::class, 'show']);
-    Route::get('/purchases', [PurchaseController::class, 'purchases']);
-    Route::get('/purchase-orders', [PurchaseController::class, 'purchaseOrders']);
-    Route::get('/purchase-orders/reorder-suggestions', [PurchaseController::class, 'reorderSuggestions']);
+    Route::middleware('role:organization,organization_owner,owner,admin,super_admin,outlet_manager,inventory_clerk,supervisor,accountant,cashier,employee')->group(function () {
+        Route::get('/inventory/balances', [InventoryController::class, 'balances']);
+        Route::get('/inventory/nearby-outlets', [InventoryController::class, 'crossOutletStock']);
+        Route::get('/inventory/cross-outlet-stock', [InventoryController::class, 'crossOutletStock']);
+        Route::get('/inventory/movements', [InventoryController::class, 'movements']);
+        Route::get('/inventory/expired', [InventoryController::class, 'expired']);
+        Route::get('/inventory/batches', [InventoryController::class, 'batches']);
+        Route::get('/inventory/transfers', [TransferController::class, 'index']);
+        Route::get('/inventory/transfers/{id}', [TransferController::class, 'show']);
+        Route::get('/purchases', [PurchaseController::class, 'purchases']);
+        Route::get('/purchase-orders', [PurchaseController::class, 'purchaseOrders']);
+        Route::get('/purchase-orders/reorder-suggestions', [PurchaseController::class, 'reorderSuggestions']);
+    });
 
     // Stock Mutations (Manager/Clerk)
     Route::middleware('role:organization,admin,super_admin,outlet_manager,inventory_clerk')->group(function () {

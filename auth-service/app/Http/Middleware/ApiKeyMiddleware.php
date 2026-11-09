@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -40,7 +41,7 @@ class ApiKeyMiddleware
 
         if (empty($rawKey)) {
             try {
-                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'api_key_missing',
                         ruleCode: 'SEC_API_KEY_MISSING',
@@ -75,7 +76,7 @@ class ApiKeyMiddleware
 
         if (!$apiKey) {
             try {
-                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'api_key_invalid',
                         ruleCode: 'SEC_API_KEY_INVALID',
@@ -102,7 +103,7 @@ class ApiKeyMiddleware
             $permissions = json_decode($apiKey->permissions ?? '[]', true) ?: [];
             if (!in_array('*', $permissions) && !in_array($permissionRequired, $permissions)) {
                 try {
-                    if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    if (SchemaGuard::hasTable('security_events')) {
                         \App\Models\SecurityEvent::record(
                             eventType: 'api_key_forbidden',
                             ruleCode: 'SEC_API_KEY_FORBIDDEN',

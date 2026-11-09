@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Payment\GenerateKhqrRequest;
 use App\Services\BakongService;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -25,6 +27,8 @@ use Illuminate\Support\Facades\Log;
  */
 class PaymentController extends Controller
 {
+    use ResolvesTenantContext;
+
     protected BakongService $bakongService;
 
     public function __construct(BakongService $bakongService)
@@ -35,18 +39,10 @@ class PaymentController extends Controller
     /**
      * Generate KHQR for Dynamic Cashier Display or Customer-facing Tablet
      */
-    public function generateKhqr(Request $request)
+    public function generateKhqr(GenerateKhqrRequest $request)
     {
-        $validated = $request->validate([
-            'amount' => 'required|numeric|min:0.01',
-            'currency' => 'nullable|string|in:USD,KHR',
-            'sale_id' => 'nullable',
-            'bill_number' => 'nullable|string',
-            'merchant_id' => 'nullable|string',
-            'merchant_name' => 'nullable|string',
-            'merchant_city' => 'nullable|string',
-            'bank_name' => 'nullable|string',
-        ]);
+        $tenantId = $this->getTenantId($request, true);
+        $validated = $request->validated();
 
         $amount = (float) $validated['amount'];
         $currency = strtoupper($validated['currency'] ?? 'USD');
@@ -58,7 +54,11 @@ class PaymentController extends Controller
         $customBankName = $validated['bank_name'] ?? null;
 
         if (!$customMerchantId) {
-            $bankAccount = DB::table('bank_accounts')->orderByDesc('id')->first();
+            $bankAccount = DB::table('bank_accounts')
+                ->when($tenantId !== 'all', fn ($q) => $q->where('tenant_id', $tenantId))
+                ->orderByDesc('id')
+                ->first();
+
             if ($bankAccount && !empty($bankAccount->account_number)) {
                 $customMerchantId = $bankAccount->account_number;
                 if (!$customMerchantName && !empty($bankAccount->account_name)) {
@@ -68,6 +68,27 @@ class PaymentController extends Controller
                     $customBankName = $bankAccount->bank_name;
                 }
             }
+        }
+
+        $saleId = $validated['sale_id'] ?? null;
+        $effectiveTenantId = $tenantId === 'all' ? null : $tenantId;
+
+        if ($saleId !== null) {
+            $sale = DB::table('sales')->where('id', $saleId)->first();
+            if (!$sale) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Referenced sale record not found.',
+                ], 404);
+            }
+            $this->authorizeTenantResource($sale->tenant_id, $request, 'Sale');
+            $effectiveTenantId = $effectiveTenantId ?? ($sale->tenant_id !== null ? (string) $sale->tenant_id : null);
+        } else {
+            $latestSale = DB::table('sales')
+                ->when($tenantId !== 'all', fn ($q) => $q->where('tenant_id', $tenantId))
+                ->orderByDesc('id')
+                ->first();
+            $saleId = $latestSale ? $latestSale->id : 0;
         }
 
         $payload = $this->bakongService->generateKhqrPayload(
@@ -80,14 +101,9 @@ class PaymentController extends Controller
             $customBankName
         );
 
-        $saleId = $validated['sale_id'] ?? null;
-        if (!$saleId) {
-            $latestSale = DB::table('sales')->orderByDesc('id')->first();
-            $saleId = $latestSale ? $latestSale->id : 1;
-        }
-
         // Record Header Payment
         $paymentId = DB::table('payments')->insertGetId([
+            'tenant_id' => $effectiveTenantId,
             'sale_id' => $saleId,
             'tender_type' => 'khqr',
             'amount' => $amount,
@@ -100,6 +116,7 @@ class PaymentController extends Controller
 
         // Record Payment Attempt
         $attemptId = DB::table('payment_attempts')->insertGetId([
+            'tenant_id' => $effectiveTenantId,
             'payment_id' => $paymentId,
             'merchant_reference' => $billNumber,
             'provider_transaction_id' => $payload['md5'],
@@ -133,13 +150,11 @@ class PaymentController extends Controller
      */
     public function checkStatus(Request $request, $id)
     {
-        $attempt = DB::table('payment_attempts')->where('id', $id)->first();
-        if (!$attempt) {
-            $attempt = DB::table('payment_attempts')->where('merchant_reference', $id)->first();
-        }
-        if (!$attempt) {
-            $attempt = DB::table('payment_attempts')->where('payment_id', $id)->first();
-        }
+        $this->getTenantId($request, true);
+
+        $attempt = DB::table('payment_attempts')->where('id', $id)->first()
+            ?? DB::table('payment_attempts')->where('merchant_reference', $id)->first()
+            ?? DB::table('payment_attempts')->where('payment_id', $id)->first();
 
         if (!$attempt) {
             return response()->json([
@@ -147,6 +162,8 @@ class PaymentController extends Controller
                 'message' => 'Payment attempt record not found.',
             ], 404);
         }
+
+        $this->authorizeTenantResource($attempt->tenant_id, $request, 'PaymentAttempt');
 
         if ($attempt->status === 'paid') {
             return response()->json([
@@ -167,36 +184,41 @@ class PaymentController extends Controller
             ?? $request->input('token')
             ?? $request->query('token');
 
-        $amount = (float) ($request->input('amount') ?? $attempt->amount);
-        $currency = (string) ($request->input('currency') ?? $attempt->currency ?? 'USD');
+        // Always verify against authoritative DB attempt amount & currency, never client input
+        $amount = (float) $attempt->amount;
+        $currency = strtoupper((string) ($attempt->currency ?? 'USD'));
 
-        $bakongRes = null;
         if (!empty($hash)) {
-            $bakongRes = $this->bakongService->checkTransactionByHash($hash, $token, $amount, $currency);
+            $bakongRes = $this->bakongService->checkTransactionByHash((string) $hash, $token, $amount, $currency);
         } else {
-            $md5Hash = $attempt->provider_transaction_id;
+            $md5Hash = (string) $attempt->provider_transaction_id;
             $bakongRes = $this->bakongService->checkTransactionByMd5($md5Hash, $token);
         }
 
-        if (!empty($bakongRes['paid'])) {
-            $updateData = [
-                'status' => 'paid',
-                'updated_at' => now(),
-            ];
-            if (!empty($hash)) {
-                $updateData['provider_transaction_id'] = $hash;
-            }
+        $verified = $this->bakongResponseMatchesAttempt($bakongRes, $attempt);
 
-            DB::table('payment_attempts')->where('id', $attempt->id)->update($updateData);
+        if ($verified) {
+            DB::transaction(function () use ($attempt, $hash) {
+                $updated = DB::table('payment_attempts')
+                    ->where('id', $attempt->id)
+                    ->where('status', '!=', 'paid')
+                    ->update(array_filter([
+                        'status' => 'paid',
+                        'provider_transaction_id' => !empty($hash) ? (string) $hash : null,
+                        'updated_at' => now(),
+                    ], fn ($v) => $v !== null));
 
-            DB::table('payments')->where('id', $attempt->payment_id)->update([
-                'status' => 'paid',
-                'updated_at' => now(),
-            ]);
+                if ($updated) {
+                    DB::table('payments')->where('id', $attempt->payment_id)->update([
+                        'status' => 'paid',
+                        'updated_at' => now(),
+                    ]);
+                }
+            });
 
             $attempt->status = 'paid';
             if (!empty($hash)) {
-                $attempt->provider_transaction_id = $hash;
+                $attempt->provider_transaction_id = (string) $hash;
             }
         }
 
@@ -213,13 +235,11 @@ class PaymentController extends Controller
      */
     public function confirmHash(Request $request, $id)
     {
-        $attempt = DB::table('payment_attempts')->where('id', $id)->first();
-        if (!$attempt) {
-            $attempt = DB::table('payment_attempts')->where('merchant_reference', $id)->first();
-        }
-        if (!$attempt) {
-            $attempt = DB::table('payment_attempts')->where('payment_id', $id)->first();
-        }
+        $this->getTenantId($request, true);
+
+        $attempt = DB::table('payment_attempts')->where('id', $id)->first()
+            ?? DB::table('payment_attempts')->where('merchant_reference', $id)->first()
+            ?? DB::table('payment_attempts')->where('payment_id', $id)->first();
 
         if (!$attempt) {
             return response()->json([
@@ -227,6 +247,8 @@ class PaymentController extends Controller
                 'message' => 'Payment attempt not found.',
             ], 404);
         }
+
+        $this->authorizeTenantResource($attempt->tenant_id, $request, 'PaymentAttempt');
 
         $hash = trim((string) ($request->input('hash') ?? $request->input('transaction_hash')));
         if (empty($hash)) {
@@ -237,47 +259,59 @@ class PaymentController extends Controller
         }
 
         $token = $request->header('X-Bakong-Token') ?? $request->input('token') ?? $request->query('token');
-        $amount = (float) ($request->input('amount') ?? $attempt->amount);
-        $currency = (string) ($request->input('currency') ?? $attempt->currency ?? 'USD');
+        // Always enforce DB amount & currency; never accept client-forged confirmation flags or amounts
+        $amount = (float) $attempt->amount;
+        $currency = strtoupper((string) ($attempt->currency ?? 'USD'));
 
         $bakongRes = $this->bakongService->checkTransactionByHash($hash, $token, $amount, $currency);
-        $forceConfirm = (bool) $request->input('force_confirm', false);
-        $isPaid = !empty($bakongRes['paid']) || $forceConfirm;
+        $isPaid = $this->bakongResponseMatchesAttempt($bakongRes, $attempt);
 
         if ($isPaid) {
-            DB::table('payment_attempts')->where('id', $attempt->id)->update([
-                'status' => 'paid',
-                'provider_transaction_id' => $hash,
-                'updated_at' => now(),
-            ]);
+            DB::transaction(function () use ($attempt, $hash) {
+                DB::table('payment_attempts')
+                    ->where('id', $attempt->id)
+                    ->where('status', '!=', 'paid')
+                    ->update([
+                        'status' => 'paid',
+                        'provider_transaction_id' => $hash,
+                        'updated_at' => now(),
+                    ]);
 
-            DB::table('payments')->where('id', $attempt->payment_id)->update([
-                'status' => 'paid',
-                'updated_at' => now(),
-            ]);
+                DB::table('payments')->where('id', $attempt->payment_id)->update([
+                    'status' => 'paid',
+                    'updated_at' => now(),
+                ]);
+            });
 
             $attempt->status = 'paid';
             $attempt->provider_transaction_id = $hash;
         }
 
         return response()->json([
-            'status' => $isPaid ? 'success' : 'pending',
+            'status' => $isPaid ? 'success' : 'error',
             'paid' => $isPaid,
             'transaction_hash' => $hash,
             'bakong_verification' => $bakongRes,
             'attempt' => $attempt,
-        ]);
+        ], $isPaid ? 200 : 422);
     }
 
     /**
-     * Simulate Sandbox Payment Approval for local testing
+     * Simulate Sandbox Payment Approval (strictly disabled outside local/testing opt-in)
      */
     public function simulatePay(Request $request, $id)
     {
-        $attempt = DB::table('payment_attempts')->where('id', $id)->first();
-        if (!$attempt) {
-            $attempt = DB::table('payment_attempts')->where('payment_id', $id)->first();
+        if (!app()->environment(['local', 'testing']) || !config('services.payments.allow_simulation', false)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Payment simulation is disabled in this environment.',
+            ], 403);
         }
+
+        $this->getTenantId($request, true);
+
+        $attempt = DB::table('payment_attempts')->where('id', $id)->first()
+            ?? DB::table('payment_attempts')->where('payment_id', $id)->first();
 
         if (!$attempt) {
             return response()->json([
@@ -286,15 +320,19 @@ class PaymentController extends Controller
             ], 404);
         }
 
-        DB::table('payment_attempts')->where('id', $attempt->id)->update([
-            'status' => 'paid',
-            'updated_at' => now(),
-        ]);
+        $this->authorizeTenantResource($attempt->tenant_id, $request, 'PaymentAttempt');
 
-        DB::table('payments')->where('id', $attempt->payment_id)->update([
-            'status' => 'paid',
-            'updated_at' => now(),
-        ]);
+        DB::transaction(function () use ($attempt) {
+            DB::table('payment_attempts')->where('id', $attempt->id)->update([
+                'status' => 'paid',
+                'updated_at' => now(),
+            ]);
+
+            DB::table('payments')->where('id', $attempt->payment_id)->update([
+                'status' => 'paid',
+                'updated_at' => now(),
+            ]);
+        });
 
         return response()->json([
             'status' => 'success',
@@ -304,19 +342,70 @@ class PaymentController extends Controller
     }
 
     /**
+     * ABA PayWay callback receiver (verifies HMAC when configured and redacts logs)
+     */
+    public function abaCallback(Request $request)
+    {
+        $secret = (string) (config('services.payments.aba_webhook_secret') ?? '');
+        $signatureHeader = $request->header('X-ABA-Signature')
+            ?? $request->header('X-PayWay-Signature')
+            ?? $request->header('X-Webhook-Signature');
+
+        if ($secret !== '' || $signatureHeader !== null) {
+            $expected = $secret !== '' ? hash_hmac('sha256', (string) $request->getContent(), $secret) : '';
+            if ($secret === '' || !is_string($signatureHeader) || !hash_equals($expected, trim($signatureHeader))) {
+                Log::warning('ABA PayWay webhook signature verification failed.', [
+                    'ip' => $request->ip(),
+                    'tran_id' => $request->input('tran_id'),
+                ]);
+
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid webhook signature.',
+                ], 401);
+            }
+        }
+
+        $safePayload = $request->except(['token', 'api_key', 'secret', 'password']);
+        Log::info('ABA PayWay callback received', [
+            'tran_id' => $safePayload['tran_id'] ?? null,
+            'status' => $safePayload['status'] ?? null,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Payment callback received',
+            'data' => $safePayload,
+        ]);
+    }
+
+    /**
      * NBC Bakong KHQR Production Webhook Receiver
      *
-     * POST /api/v1/payments/khqr-webhook
-     * POST /api/v1/payments/callback
-     *
-     * Verifies NBC transaction hash, checks payment status against Bakong Open API,
-     * updates payment & attempt records to 'paid', logs the event in payment_webhook_events,
-     * and auto-settles the corresponding POS sale.
+     * Verifies HMAC webhook signature (when configured) and Bakong Open API status
+     * against authoritative DB payment attempt amount & currency before settling.
      */
     public function khqrWebhook(Request $request)
     {
-        $payload = $request->all();
-        Log::info('NBC Bakong KHQR Webhook received:', $payload);
+        $webhookSecret = (string) (config('services.bakong.webhook_secret') ?? '');
+        $signatureHeader = $request->header('X-Bakong-Signature')
+            ?? $request->header('X-Webhook-Signature');
+
+        if ($webhookSecret !== '' || $signatureHeader !== null) {
+            $expectedSig = $webhookSecret !== '' ? hash_hmac('sha256', (string) $request->getContent(), $webhookSecret) : '';
+            if ($webhookSecret === '' || !is_string($signatureHeader) || !hash_equals($expectedSig, trim($signatureHeader))) {
+                Log::warning('NBC Bakong KHQR webhook signature rejected.', [
+                    'ip' => $request->ip(),
+                ]);
+
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid webhook signature.',
+                ], 401);
+            }
+        }
+
+        $safePayload = $request->except(['token', 'api_key', 'secret', 'password']);
 
         // Normalize fields across different Bakong webhook versions
         $hash = trim((string) (
@@ -338,28 +427,17 @@ class PaymentController extends Controller
             ?? ''
         ));
 
-        $amount = (float) (
-            $request->input('amount')
-            ?? $request->input('data.amount')
-            ?? 0
-        );
-
-        $currency = strtoupper((string) (
-            $request->input('currency')
-            ?? $request->input('data.currency')
-            ?? 'USD'
-        ));
-
-        $token = $request->header('X-Bakong-Token')
-            ?? $request->input('token')
-            ?? $request->query('token');
+        Log::info('NBC Bakong KHQR Webhook received', [
+            'merchant_reference' => $reference ?: null,
+            'has_hash' => $hash !== '',
+            'ip' => $request->ip(),
+        ]);
 
         // Deduplication & Idempotency Key
         $dedupKey = !empty($hash)
             ? 'bakong_' . $hash
-            : (!empty($reference) ? 'bakong_ref_' . $reference : 'bakong_evt_' . md5(json_encode($payload)));
+            : (!empty($reference) ? 'bakong_ref_' . $reference : 'bakong_evt_' . md5(json_encode($safePayload)));
 
-        // Check if event has already been settled
         $existingEvent = DB::table('payment_webhook_events')
             ->where('dedup_key', $dedupKey)
             ->where('status', 'completed')
@@ -377,7 +455,7 @@ class PaymentController extends Controller
             ], 200);
         }
 
-        // Locate internal payment attempt record
+        // Locate internal payment attempt & payment record
         $attempt = null;
         if (!empty($reference)) {
             $attempt = DB::table('payment_attempts')->where('merchant_reference', $reference)->first();
@@ -389,7 +467,6 @@ class PaymentController extends Controller
             $attempt = DB::table('payment_attempts')->where('id', $reference)->orWhere('payment_id', $reference)->first();
         }
 
-        // Locate associated payment record
         $payment = null;
         if ($attempt) {
             $payment = DB::table('payments')->where('id', $attempt->payment_id)->first();
@@ -400,70 +477,65 @@ class PaymentController extends Controller
             }
         }
 
-        // Verify transaction with NBC Bakong Open API
+        // Never allow client-forged flags (force_settle/force_confirm) or raw status strings to settle a payment.
+        // Require a matching internal attempt/payment and server-side verification with NBC Bakong Open API.
         $bakongRes = null;
-        if (!empty($hash)) {
-            $verifyAmount = $amount > 0 ? $amount : (float) ($attempt->amount ?? $payment->amount ?? 0);
-            $verifyCurr = !empty($currency) ? $currency : (string) ($attempt->currency ?? $payment->currency ?? 'USD');
-            $bakongRes = $this->bakongService->checkTransactionByHash($hash, $token, $verifyAmount, $verifyCurr);
-        }
-
-        // Determine if payment is confirmed
         $isPaid = false;
-        if (!empty($bakongRes['paid'])) {
-            $isPaid = true;
-        } elseif ($request->input('force_settle') || $request->input('force_confirm')) {
-            $isPaid = true;
-        } else {
-            $statusStr = strtoupper((string) ($request->input('status') ?? $request->input('data.status') ?? ''));
-            $respCode = $request->input('response_code') ?? $request->input('responseCode');
-            if (in_array($statusStr, ['SUCCESS', 'PAID', 'COMPLETED', 'SETTLED']) || ($respCode !== null && (int) $respCode === 0)) {
-                $isPaid = true;
+
+        if ($attempt) {
+            $verifyAmount = (float) $attempt->amount;
+            $verifyCurr = strtoupper((string) ($attempt->currency ?? $payment->currency ?? 'USD'));
+
+            if ($hash !== '') {
+                $bakongRes = $this->bakongService->checkTransactionByHash($hash, null, $verifyAmount, $verifyCurr);
+            } elseif (!empty($attempt->provider_transaction_id)) {
+                $bakongRes = $this->bakongService->checkTransactionByMd5((string) $attempt->provider_transaction_id, null);
+            }
+
+            if ($bakongRes !== null) {
+                $isPaid = $this->bakongResponseMatchesAttempt($bakongRes, $attempt);
             }
         }
 
-        // Perform settlement updates
-        if ($isPaid) {
-            if ($attempt) {
+        DB::transaction(function () use ($isPaid, $attempt, $payment, $hash, $dedupKey, $safePayload, $bakongRes) {
+            if ($isPaid && $attempt) {
                 DB::table('payment_attempts')->where('id', $attempt->id)->update([
                     'status' => 'paid',
-                    'provider_transaction_id' => !empty($hash) ? $hash : ($attempt->provider_transaction_id ?? $hash),
-                    'updated_at' => now(),
-                ]);
-            }
-
-            if ($payment) {
-                DB::table('payments')->where('id', $payment->id)->update([
-                    'status' => 'paid',
+                    'provider_transaction_id' => $hash !== '' ? $hash : $attempt->provider_transaction_id,
                     'updated_at' => now(),
                 ]);
 
-                // Auto-settle the associated sales record
-                if (!empty($payment->sale_id)) {
-                    DB::table('sales')->where('id', $payment->sale_id)->update([
-                        'status' => 'completed',
+                if ($payment) {
+                    DB::table('payments')->where('id', $payment->id)->update([
+                        'status' => 'paid',
                         'updated_at' => now(),
                     ]);
+
+                    if (!empty($payment->sale_id)) {
+                        DB::table('sales')->where('id', $payment->sale_id)->update([
+                            'status' => 'completed',
+                            'updated_at' => now(),
+                        ]);
+                    }
                 }
             }
-        }
 
-        // Log telemetry to payment_webhook_events
-        $tId = $attempt->tenant_id ?? $payment->tenant_id ?? null;
-        DB::table('payment_webhook_events')->insert([
-            'tenant_id' => (!empty($tId) && is_numeric($tId)) ? (int) $tId : null,
-            'payment_attempt_id' => $attempt?->id ?? null,
-            'dedup_key' => $dedupKey,
-            'event_type' => 'bakong_khqr_webhook',
-            'status' => $isPaid ? 'completed' : 'failed',
-            'verified_payload' => json_encode($payload),
-            'received_at' => now(),
-            'processed_at' => $isPaid ? now() : null,
-            'attempts' => 1,
-            'last_error' => $isPaid ? null : ($bakongRes['response_message'] ?? 'Payment transaction unverified'),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+            $tId = $attempt->tenant_id ?? $payment->tenant_id ?? null;
+            DB::table('payment_webhook_events')->insert([
+                'tenant_id' => (!empty($tId) && is_numeric($tId)) ? (int) $tId : null,
+                'payment_attempt_id' => $attempt?->id,
+                'dedup_key' => $dedupKey,
+                'event_type' => 'bakong_khqr_webhook',
+                'status' => $isPaid ? 'completed' : 'failed',
+                'verified_payload' => json_encode($safePayload),
+                'received_at' => now(),
+                'processed_at' => $isPaid ? now() : null,
+                'attempts' => 1,
+                'last_error' => $isPaid ? null : ($bakongRes['response_message'] ?? 'Payment transaction unverified'),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
 
         return response()->json([
             'status' => 'success',
@@ -474,10 +546,46 @@ class PaymentController extends Controller
                 'settled' => $isPaid,
                 'transaction_hash' => $hash ?: null,
                 'merchant_reference' => $reference ?: null,
-                'payment_id' => $payment?->id ?? null,
-                'sale_id' => $payment?->sale_id ?? null,
+                'payment_id' => $payment?->id,
+                'sale_id' => $payment?->sale_id,
                 'bakong_verification' => $bakongRes,
             ],
         ], $isPaid ? 200 : 202);
+    }
+
+    /**
+     * Confirm Bakong API paid status and ensure returned amount & currency match DB attempt.
+     */
+    protected function bakongResponseMatchesAttempt(array $bakongRes, object $attempt): bool
+    {
+        if (empty($bakongRes['paid'])) {
+            return false;
+        }
+
+        $data = is_array($bakongRes['data'] ?? null) ? $bakongRes['data'] : [];
+        if (isset($data['amount']) && is_numeric($data['amount'])) {
+            if (abs((float) $data['amount'] - (float) $attempt->amount) >= 0.01) {
+                Log::warning('Bakong verification amount mismatch rejected.', [
+                    'attempt_id' => $attempt->id,
+                    'expected' => (float) $attempt->amount,
+                    'received' => (float) $data['amount'],
+                ]);
+                return false;
+            }
+        }
+
+        if (!empty($data['currency']) && is_string($data['currency'])) {
+            $expectedCurrency = strtoupper((string) ($attempt->currency ?? 'USD'));
+            if (strtoupper($data['currency']) !== $expectedCurrency) {
+                Log::warning('Bakong verification currency mismatch rejected.', [
+                    'attempt_id' => $attempt->id,
+                    'expected' => $expectedCurrency,
+                    'received' => strtoupper($data['currency']),
+                ]);
+                return false;
+            }
+        }
+
+        return true;
     }
 }

@@ -7,9 +7,9 @@ use App\Http\Requests\Meeting\StoreMaterialRequest;
 use App\Http\Requests\Meeting\StoreStaffRequest;
 use App\Http\Requests\Meeting\UpdateMaterialRequest;
 use App\Http\Requests\Meeting\UpdateStaffRequest;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 
 /**
@@ -207,7 +207,7 @@ class MeetingLogisticsController extends Controller
         $user = $request->user();
         $tenantId = $user?->tenant_id;
 
-        if (!Schema::hasTable('meeting_staff')) {
+        if (!SchemaGuard::hasTable('meeting_staff')) {
             $query = DB::table('employees as e');
             if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
                 $query->where('e.tenant_id', $tenantId);

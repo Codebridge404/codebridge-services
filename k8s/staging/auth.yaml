@@ -23,10 +23,21 @@ spec:
         app.kubernetes.io/name: auth-service
         environment: staging
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: auth-service
           image: 127.0.0.1:5000/codebridge-auth-service:staging
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           ports:
             - name: php-fpm
               containerPort: 9000
@@ -93,10 +104,21 @@ spec:
         app.kubernetes.io/name: auth-horizon
         environment: staging
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 33
+        runAsGroup: 33
+        fsGroup: 33
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: worker
           image: 127.0.0.1:5000/codebridge-auth-service:staging
           imagePullPolicy: Always
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           command:
             - /bin/sh
             - -c
@@ -138,10 +160,21 @@ spec:
             environment: staging
         spec:
           restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 33
+            runAsGroup: 33
+            fsGroup: 33
+            seccompProfile:
+              type: RuntimeDefault
           containers:
             - name: scheduler
               image: 127.0.0.1:5000/codebridge-auth-service:staging
               imagePullPolicy: Always
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
               command:
                 - php
                 - artisan

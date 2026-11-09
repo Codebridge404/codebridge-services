@@ -12,6 +12,7 @@ class Payment extends Model
     protected $table = 'payments';
 
     protected $fillable = [
+        'tenant_id',
         'sale_id',
         'tender_type',
         'amount',

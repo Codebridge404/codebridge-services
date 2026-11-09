@@ -23,7 +23,7 @@ Route::post('/online-orders', [OnlineOrderController::class, 'store']);
 |--------------------------------------------------------------------------
 */
 Route::middleware('auth:sanctum')->group(function () {
-    Route::middleware('role:organization,cashier,supervisor,outlet_manager,admin,super_admin,accountant,inventory_clerk,user,employee,organization_owner,owner')->group(function () {
+    Route::middleware('role:organization,organization_owner,owner,cashier,supervisor,outlet_manager,admin,super_admin,accountant,inventory_clerk,employee')->group(function () {
         Route::get('/sales', [CheckoutController::class, 'index']);
         Route::post('/sales', [CheckoutController::class, 'store']);
         Route::post('/sales/sync', [OfflineSyncController::class, 'sync']);
@@ -55,11 +55,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::get('/online-orders', [OnlineOrderController::class, 'index']);
         Route::patch('/online-orders/{id}/status', [OnlineOrderController::class, 'updateStatus']);
-    });
 
-    // Cart Parking & Resuming
-    Route::post('/carts/hold', [CartController::class, 'hold']);
-    Route::get('/carts/held', [CartController::class, 'held']);
-    Route::post('/carts/held/{id}/resume', [CartController::class, 'resume']);
-    Route::delete('/carts/held/{id}', [CartController::class, 'destroy']);
+        // Cart Parking & Resuming
+        Route::post('/carts/hold', [CartController::class, 'hold']);
+        Route::get('/carts/held', [CartController::class, 'held']);
+        Route::post('/carts/held/{id}/resume', [CartController::class, 'resume']);
+        Route::delete('/carts/held/{id}', [CartController::class, 'destroy']);
+    });
 });

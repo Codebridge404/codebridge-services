@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\TenantAuthorizationService;
+use App\Support\TenantCatalogCache;
+use App\Traits\ResolvesTenantContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -31,21 +34,76 @@ use Illuminate\Support\Facades\DB;
  */
 class DiscountController extends Controller
 {
+    use ResolvesTenantContext;
+
     public function index(Request $request)
     {
-        $discounts = DB::table('discounts')->orderBy('created_at', 'desc')->get();
-        return response()->json(['status' => 'success', 'data' => $discounts]);
+        $tenantId = $this->getTenantId($request, false);
+        $isPlatformSuperAdmin = $request->user() && TenantAuthorizationService::hasPlatformSuperAdminRole($request->user());
+        $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
+        $page = max(1, (int) $request->query('page', 1));
+
+        $payload = TenantCatalogCache::remember(
+            'discounts',
+            $tenantId,
+            [
+                'super' => $isPlatformSuperAdmin ? 1 : 0,
+                'page' => $page,
+                'per_page' => $perPage,
+            ],
+            function () use ($tenantId, $isPlatformSuperAdmin, $perPage) {
+                $query = DB::table('discounts');
+
+                if (!empty($tenantId) && $tenantId !== 'all') {
+                    $hasTenantDiscounts = DB::table('discounts')->where('tenant_id', $tenantId)->exists();
+                    if ($hasTenantDiscounts) {
+                        $query->where('tenant_id', $tenantId);
+                    } else {
+                        $query->where(function ($q) use ($tenantId) {
+                            $q->where('tenant_id', $tenantId)
+                              ->orWhereNull('tenant_id');
+                        });
+                    }
+                } elseif ($tenantId === 'all' && $isPlatformSuperAdmin) {
+                    // Super admin cross-tenant listing
+                } else {
+                    $query->whereNull('tenant_id');
+                }
+
+                $paginator = $query->orderBy('created_at', 'desc')->paginate($perPage);
+
+                return [
+                    'data' => $paginator->items(),
+                    'pagination' => [
+                        'current_page' => $paginator->currentPage(),
+                        'last_page' => $paginator->lastPage(),
+                        'per_page' => $paginator->perPage(),
+                        'total' => $paginator->total(),
+                    ],
+                ];
+            }
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $payload['data'],
+            'pagination' => $payload['pagination'],
+        ]);
     }
 
     public function store(Request $request)
     {
+        $tenantId = $this->getTenantId($request, true);
+        $writeTenantId = $tenantId === 'all' ? null : $tenantId;
+
         $validated = $request->validate([
-            'name' => 'required|string',
-            'discount_pct' => 'required|string',
-            'applies_to' => 'nullable|string',
+            'name' => 'required|string|max:255',
+            'discount_pct' => 'required|string|max:50',
+            'applies_to' => 'nullable|string|max:255',
         ]);
 
         $id = DB::table('discounts')->insertGetId([
+            'tenant_id' => $writeTenantId,
             'name' => $validated['name'],
             'discount_pct' => $validated['discount_pct'],
             'applies_to' => $validated['applies_to'] ?? 'All Products',
@@ -53,6 +111,8 @@ class DiscountController extends Controller
             'created_at' => now(),
             'updated_at' => now(),
         ]);
+
+        TenantCatalogCache::invalidate($writeTenantId, 'discounts');
 
         return response()->json([
             'status' => 'success',

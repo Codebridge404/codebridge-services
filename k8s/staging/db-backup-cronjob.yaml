@@ -1,0 +1,116 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: auth-db-backup
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: auth-db-backup
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  schedule: "15 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: auth-db-backup
+            environment: staging
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 33
+            runAsGroup: 33
+            fsGroup: 33
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: db-backup
+              image: 127.0.0.1:5000/codebridge-auth-service:staging
+              imagePullPolicy: Always
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              command:
+                - php
+                - artisan
+                - backup:database-encrypted
+                - --destination=minio
+                - --retention=30
+              envFrom:
+                - configMapRef:
+                    name: auth-config
+                - secretRef:
+                    name: auth-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: operations-db-backup
+  namespace: codebridge-staging
+  labels:
+    app.kubernetes.io/name: operations-db-backup
+    app.kubernetes.io/part-of: codebridge
+    environment: staging
+spec:
+  schedule: "30 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: operations-db-backup
+            environment: staging
+        spec:
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 33
+            runAsGroup: 33
+            fsGroup: 33
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: db-backup
+              image: 127.0.0.1:5000/codebridge-operations-service:staging
+              imagePullPolicy: Always
+              securityContext:
+                allowPrivilegeEscalation: false
+                capabilities:
+                  drop: ["ALL"]
+              command:
+                - php
+                - artisan
+                - backup:database-encrypted
+                - --destination=minio
+                - --retention=30
+              envFrom:
+                - configMapRef:
+                    name: operations-config
+                - secretRef:
+                    name: operations-secrets
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+

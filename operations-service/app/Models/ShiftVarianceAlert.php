@@ -12,6 +12,7 @@ class ShiftVarianceAlert extends Model
     protected $table = 'shift_variance_alerts';
 
     protected $fillable = [
+        'tenant_id',
         'shift_id',
         'user_id',
         'outlet_id',

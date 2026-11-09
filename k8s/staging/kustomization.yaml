@@ -21,3 +21,4 @@ resources:
   - gateway.yaml
   - ingress.yaml
   - phpmyadmin.yaml
+  - db-backup-cronjob.yaml

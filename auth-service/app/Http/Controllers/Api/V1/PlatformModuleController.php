@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Platform\StorePlatformModuleRequest;
 use App\Http\Requests\Platform\UpdatePlatformModuleRequest;
 use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -53,7 +54,8 @@ class PlatformModuleController extends Controller
         }
 
         if ($request->filled('search')) {
-            $search = '%' . $request->query('search') . '%';
+            $escaped = SchemaGuard::escapeLike(trim((string) $request->query('search')));
+            $search = '%' . $escaped . '%';
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', $search)
                   ->orWhere('description', 'like', $search)
@@ -61,7 +63,7 @@ class PlatformModuleController extends Controller
             });
         }
 
-        $modules = $query->orderBy('sort_order', 'asc')->orderBy('name', 'asc')->get();
+        $modules = $query->orderBy('sort_order', 'asc')->orderBy('name', 'asc')->limit(100)->get();
 
         // Calculate tenant adoption counts if Super Admin
         if ($isSuperAdmin) {
@@ -136,25 +138,44 @@ class PlatformModuleController extends Controller
             : strtoupper(substr(preg_replace('/[^a-zA-Z]/', '', $validated['name']), 0, 3));
 
         $logoUrl = $validated['logo_url'] ?? null;
+        if ($logoUrl !== null && !\App\Services\ImageService::isSafeImageUrlOrDataUri($logoUrl)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Unsupported or unsafe module logo URL format.',
+            ], 422);
+        }
+
         if ($request->hasFile('logo')) {
             try {
                 /** @var \App\Services\ImageService $imageService */
                 $imageService = app(\App\Services\ImageService::class);
                 $logoUrl = $imageService->storeLogo($request->file('logo'), 'mod_' . $id);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 422);
             } catch (\Throwable $e) {
-                $file = $request->file('logo');
-                $ext = $file->getClientOriginalExtension() ?: 'png';
-                $filename = 'module_' . $id . '_' . time() . '.' . $ext;
-                $file->storeAs('modules', $filename, 'public');
-                $logoUrl = '/storage/modules/' . $filename;
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to process uploaded module logo.',
+                ], 500);
             }
-        } elseif ($request->filled('logo_data') && str_starts_with($request->logo_data, 'data:image')) {
+        } elseif ($request->filled('logo_data') && stripos((string) $request->logo_data, 'data:') === 0) {
             try {
                 /** @var \App\Services\ImageService $imageService */
                 $imageService = app(\App\Services\ImageService::class);
                 $logoUrl = $imageService->storeLogo($request->logo_data, 'mod_' . $id);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 422);
             } catch (\Throwable $e) {
-                // Ignore fallback
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to process module logo data.',
+                ], 422);
             }
         }
 
@@ -225,23 +246,42 @@ class PlatformModuleController extends Controller
                 /** @var \App\Services\ImageService $imageService */
                 $imageService = app(\App\Services\ImageService::class);
                 $updates['logo_url'] = $imageService->storeLogo($request->file('logo'), 'mod_' . $id, $module->logo_url ?? null);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 422);
             } catch (\Throwable $e) {
-                $file = $request->file('logo');
-                $ext = $file->getClientOriginalExtension() ?: 'png';
-                $filename = 'module_' . $id . '_' . time() . '.' . $ext;
-                $file->storeAs('modules', $filename, 'public');
-                $updates['logo_url'] = '/storage/modules/' . $filename;
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to process uploaded module logo.',
+                ], 500);
             }
-        } elseif ($request->filled('logo_data') && str_starts_with($request->logo_data, 'data:image')) {
+        } elseif ($request->filled('logo_data') && stripos((string) $request->logo_data, 'data:') === 0) {
             try {
                 /** @var \App\Services\ImageService $imageService */
                 $imageService = app(\App\Services\ImageService::class);
                 $updates['logo_url'] = $imageService->storeLogo($request->logo_data, 'mod_' . $id, $module->logo_url ?? null);
+            } catch (\InvalidArgumentException $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 422);
             } catch (\Throwable $e) {
-                // Ignore fallback
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Failed to process module logo data.',
+                ], 422);
             }
         } elseif ($request->has('logo_url')) {
-            $updates['logo_url'] = $request->input('logo_url');
+            $candidateLogoUrl = $request->input('logo_url');
+            if ($candidateLogoUrl !== null && !\App\Services\ImageService::isSafeImageUrlOrDataUri((string) $candidateLogoUrl)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unsupported or unsafe module logo URL format.',
+                ], 422);
+            }
+            $updates['logo_url'] = $candidateLogoUrl;
         }
 
         $updates['updated_at'] = now();

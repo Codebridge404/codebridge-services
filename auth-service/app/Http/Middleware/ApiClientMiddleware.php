@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\ApiClient;
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -29,7 +30,7 @@ class ApiClientMiddleware
         if (empty($rawKey)) {
             if ($mode === 'required') {
                 try {
-                    if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                    if (SchemaGuard::hasTable('security_events')) {
                         \App\Models\SecurityEvent::record(
                             eventType: 'app_key_missing',
                             ruleCode: 'SEC_CLIENT_KEY_MISSING',
@@ -71,7 +72,7 @@ class ApiClientMiddleware
 
         if (!$client) {
             try {
-                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'app_key_invalid',
                         ruleCode: 'SEC_INVALID_CLIENT_KEY',
@@ -95,7 +96,7 @@ class ApiClientMiddleware
 
         if (!$client->is_active) {
             try {
-                if (\Illuminate\Support\Facades\Schema::hasTable('security_events')) {
+                if (SchemaGuard::hasTable('security_events')) {
                     \App\Models\SecurityEvent::record(
                         eventType: 'app_key_disabled',
                         ruleCode: 'SEC_CLIENT_INACTIVE',

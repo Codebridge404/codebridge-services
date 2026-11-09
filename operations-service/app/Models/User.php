@@ -4,12 +4,12 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Services\TenantAuthorizationService;
+use App\Support\SchemaGuard;
 use Database\Factories\UserFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
@@ -77,28 +77,28 @@ class User extends Authenticatable
         if (isset($attributes['role'])) {
             $this->pendingRole = (string) $attributes['role'];
             $this->attributes['role'] = (string) $attributes['role'];
-            if (!Schema::connection($conn)->hasColumn('users', 'role')) {
+            if (!SchemaGuard::hasColumn('users', 'role', $conn)) {
                 unset($attributes['role']);
             }
         }
         if (isset($attributes['pin_code'])) {
             $this->pendingPinCode = (string) $attributes['pin_code'];
             $this->attributes['pin_code'] = (string) $attributes['pin_code'];
-            if (!Schema::connection($conn)->hasColumn('users', 'pin_code')) {
+            if (!SchemaGuard::hasColumn('users', 'pin_code', $conn)) {
                 unset($attributes['pin_code']);
             }
         }
         if (isset($attributes['outlet_id'])) {
             $this->pendingOutletId = (int) $attributes['outlet_id'];
             $this->attributes['outlet_id'] = (int) $attributes['outlet_id'];
-            if (!Schema::connection($conn)->hasColumn('users', 'outlet_id')) {
+            if (!SchemaGuard::hasColumn('users', 'outlet_id', $conn)) {
                 unset($attributes['outlet_id']);
             }
         }
         if (isset($attributes['tenant_id'])) {
             $this->pendingTenantId = (string) $attributes['tenant_id'];
             $this->attributes['tenant_id'] = (string) $attributes['tenant_id'];
-            if (!Schema::connection($conn)->hasColumn('users', 'tenant_id')) {
+            if (!SchemaGuard::hasColumn('users', 'tenant_id', $conn)) {
                 unset($attributes['tenant_id']);
             }
         }
@@ -139,7 +139,7 @@ class User extends Authenticatable
         }
 
         $conn = $this->getConnectionName();
-        if (!Schema::connection($conn)->hasTable('tenant_users')) {
+        if (!SchemaGuard::hasTable('tenant_users', $conn)) {
             return null;
         }
 
@@ -229,13 +229,13 @@ class User extends Authenticatable
         static::creating(function (User $user) {
             try {
                 $conn = $user->getConnectionName();
-                if ($conn !== 'sqlite' && empty($user->uuid) && Schema::connection($conn)->hasColumn('users', 'uuid')) {
+                if ($conn !== 'sqlite' && empty($user->uuid) && SchemaGuard::hasColumn('users', 'uuid', $conn)) {
                     $user->uuid = (string) \Illuminate\Support\Str::uuid();
                 }
-                if (!empty($user->pendingPinCode) && Schema::connection($conn)->hasColumn('users', 'pin_code')) {
+                if (!empty($user->pendingPinCode) && SchemaGuard::hasColumn('users', 'pin_code', $conn)) {
                     $user->attributes['pin_code'] = $user->pendingPinCode;
                 }
-                if (!empty($user->pendingRole) && Schema::connection($conn)->hasColumn('users', 'role')) {
+                if (!empty($user->pendingRole) && SchemaGuard::hasColumn('users', 'role', $conn)) {
                     $user->attributes['role'] = $user->pendingRole;
                 }
             } catch (\Throwable) {}
@@ -245,7 +245,7 @@ class User extends Authenticatable
             if (!empty($user->pendingRole)) {
                 try {
                     $conn = $user->getConnectionName();
-                    if (!Schema::connection($conn)->hasTable('roles') || !Schema::connection($conn)->hasTable('user_roles')) {
+                    if (!SchemaGuard::hasTable('roles', $conn) || !SchemaGuard::hasTable('user_roles', $conn)) {
                         return;
                     }
 
@@ -258,7 +258,7 @@ class User extends Authenticatable
                     }
 
                     $roleQuery = DB::connection($conn)->table('roles')->where('slug', $user->pendingRole);
-                    if (Schema::connection($conn)->hasColumn('roles', 'tenant_id')) {
+                    if (SchemaGuard::hasColumn('roles', 'tenant_id', $conn)) {
                         $roleQuery->where(function ($q) use ($targetTenantId) {
                             $q->whereNull('tenant_id');
                             if ($targetTenantId !== null) {
@@ -276,16 +276,16 @@ class User extends Authenticatable
                             'created_at' => now(),
                             'updated_at' => now(),
                         ];
-                        if (Schema::connection($conn)->hasColumn('roles', 'tenant_id')) {
+                        if (SchemaGuard::hasColumn('roles', 'tenant_id', $conn)) {
                             $roleInsert['tenant_id'] = null;
                         }
-                        if (Schema::connection($conn)->hasColumn('roles', 'company_id')) {
+                        if (SchemaGuard::hasColumn('roles', 'company_id', $conn)) {
                             $roleInsert['company_id'] = null;
                         }
-                        if (Schema::connection($conn)->hasColumn('roles', 'is_system')) {
+                        if (SchemaGuard::hasColumn('roles', 'is_system', $conn)) {
                             $roleInsert['is_system'] = true;
                         }
-                        if (Schema::connection($conn)->hasColumn('roles', 'is_active')) {
+                        if (SchemaGuard::hasColumn('roles', 'is_active', $conn)) {
                             $roleInsert['is_active'] = true;
                         }
                         $roleId = DB::connection($conn)->table('roles')->insertGetId($roleInsert);
@@ -293,7 +293,7 @@ class User extends Authenticatable
 
                     if ($roleId) {
                         $match = ['user_id' => $user->id, 'role_id' => $roleId];
-                        if (Schema::connection($conn)->hasColumn('user_roles', 'tenant_id')) {
+                        if (SchemaGuard::hasColumn('user_roles', 'tenant_id', $conn)) {
                             $match['tenant_id'] = $targetTenantId;
                         }
                         DB::connection($conn)->table('user_roles')->updateOrInsert(

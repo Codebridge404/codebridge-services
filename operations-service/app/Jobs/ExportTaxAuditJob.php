@@ -50,11 +50,21 @@ class ExportTaxAuditJob implements ShouldQueue
 
     public function handle(ExchangeRateService $exchangeRateService): void
     {
+        if (!preg_match('/^EXP-[A-Z0-9]{12}$/', $this->exportId)) {
+            throw new \InvalidArgumentException('Invalid export identifier format.');
+        }
+
+        $ownerTenantId = ($this->tenantId === 'all' || $this->tenantId === null || $this->tenantId === '')
+            ? null
+            : (string) $this->tenantId;
+        $isSuperAdminAll = ($this->tenantId === 'all');
+
         Log::info("[ExportTaxAuditJob] Starting async export: {$this->exportId} for period {$this->startDate} to {$this->endDate}");
 
         Cache::put("export_status_{$this->exportId}", [
             'status' => 'processing',
             'progress' => 10,
+            'tenant_id' => $ownerTenantId,
             'started_at' => now()->toIso8601String(),
         ], 3600);
 
@@ -65,11 +75,18 @@ class ExportTaxAuditJob implements ShouldQueue
                 ->whereDate('s.created_at', '<=', $this->endDate)
                 ->where('s.status', '!=', 'cancelled');
 
+            if ($ownerTenantId !== null) {
+                $query->where('s.tenant_id', $ownerTenantId);
+            } elseif (!$isSuperAdminAll) {
+                // Fail closed if dispatched without explicit tenant scope and not super_admin all
+                $query->whereRaw('1 = 0');
+            }
+
             if (!empty($this->outletId) && $this->outletId !== 'all') {
                 $query->where('s.outlet_id', $this->outletId);
             }
 
-            $rate = $exchangeRateService->getActiveRate('USD', 'KHR', $this->tenantId);
+            $rate = $exchangeRateService->getActiveRate('USD', 'KHR', $ownerTenantId);
             if (!$rate || $rate <= 0) {
                 $rate = 4100;
             }
@@ -90,6 +107,7 @@ class ExportTaxAuditJob implements ShouldQueue
             Cache::put("export_status_{$this->exportId}", [
                 'status' => 'processing',
                 'progress' => 50,
+                'tenant_id' => $ownerTenantId,
                 'total_records' => $sales->count(),
             ], 3600);
 
@@ -180,6 +198,7 @@ class ExportTaxAuditJob implements ShouldQueue
             Cache::put("export_status_{$this->exportId}", [
                 'status' => 'completed',
                 'progress' => 100,
+                'tenant_id' => $ownerTenantId,
                 'file_name' => $filename,
                 'file_path' => $filePath,
                 'total_records' => $sales->count(),
@@ -194,6 +213,7 @@ class ExportTaxAuditJob implements ShouldQueue
             Log::error("[ExportTaxAuditJob] Failed async export: {$this->exportId} - " . $e->getMessage());
             Cache::put("export_status_{$this->exportId}", [
                 'status' => 'failed',
+                'tenant_id' => $ownerTenantId,
                 'error' => $e->getMessage(),
                 'failed_at' => now()->toIso8601String(),
             ], 3600);

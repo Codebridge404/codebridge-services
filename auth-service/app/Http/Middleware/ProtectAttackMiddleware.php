@@ -3,10 +3,10 @@
 namespace App\Http\Middleware;
 
 use App\Models\AuditLog;
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -149,7 +149,7 @@ class ProtectAttackMiddleware
     protected function recordAttackBlocked(Request $request, string $threatType, string $details): void
     {
         try {
-            if (Schema::hasTable('security_events')) {
+            if (SchemaGuard::hasTable('security_events')) {
                 \App\Models\SecurityEvent::record(
                     eventType: 'attack_' . $threatType,
                     ruleCode: 'SEC_ATTACK_' . strtoupper($threatType),
@@ -168,7 +168,7 @@ class ProtectAttackMiddleware
                 );
             }
 
-            if (Schema::hasTable('audit_logs')) {
+            if (SchemaGuard::hasTable('audit_logs')) {
                 AuditLog::create([
                     'uuid' => (string) Str::uuid(),
                     'tenant_id' => $request->user()?->tenant_id,

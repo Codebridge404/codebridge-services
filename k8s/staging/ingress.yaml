@@ -57,44 +57,6 @@ spec:
                 name: minio
                 port:
                   number: 9000
-
-    # 4. Nginx Proxy Manager Dashboard (Port 81)
-    - host: npm.servicefixit.me
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: npm-dashboard
-                port:
-                  number: 81
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: npm-dashboard
-  namespace: codebridge-staging
-  labels:
-    app.kubernetes.io/name: npm-dashboard
-    environment: staging
-spec:
-  ports:
-    - name: http
-      port: 81
-      targetPort: 81
----
-apiVersion: v1
-kind: Endpoints
-metadata:
-  name: npm-dashboard
-  namespace: codebridge-staging
-subsets:
-  - addresses:
-      - ip: 217.216.110.153
-    ports:
-      - name: http
-        port: 81
 ---
 apiVersion: traefik.io/v1alpha1
 kind: TLSOption

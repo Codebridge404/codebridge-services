@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\User;
+use App\Support\TenantCatalogCache;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
@@ -27,11 +28,21 @@ use Exception;
  */
 class CheckoutService
 {
-    public function finalizeSale(array $data, ?User $cashier = null): array
+    public function finalizeSale(array $data, ?User $cashier = null, ?string $tenantId = null): array
     {
-        return DB::transaction(function () use ($data, $cashier) {
-            // 1. Idempotency Check
-            $existingSale = DB::table('sales')->where('idempotency_key', $data['idempotency_key'])->first();
+        $result = DB::transaction(function () use ($data, $cashier, $tenantId) {
+            $effectiveTenantId = ($tenantId !== null && $tenantId !== '' && $tenantId !== 'all')
+                ? $tenantId
+                : ($cashier?->tenant_id !== null && $cashier->tenant_id !== 'all' ? (string) $cashier->tenant_id : null);
+            $cashierId = (int) ($cashier?->id ?? $data['user_id'] ?? 1);
+            $outletId = (int) $data['outlet_id'];
+
+            // 1. Tenant-scoped Idempotency Check
+            $existingQuery = DB::table('sales')->where('idempotency_key', $data['idempotency_key']);
+            if ($effectiveTenantId !== null) {
+                $existingQuery->where('tenant_id', $effectiveTenantId);
+            }
+            $existingSale = $existingQuery->first();
             if ($existingSale) {
                 $lines = DB::table('sale_lines')->where('sale_id', $existingSale->id)->get();
                 return [
@@ -41,73 +52,55 @@ class CheckoutService
                 ];
             }
 
-            // 2. Server-side totals calculation
-            $subtotal = 0;
+            // 2. Validate referenced outlet, register, shift, customer, and table belong to this tenant
+            $outlet = DB::table('outlets')->where('id', $outletId)->first();
+            if ($outlet && $effectiveTenantId !== null && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== $effectiveTenantId) {
+                throw new Exception('Unauthorized: Outlet belongs to another organization.');
+            }
+
+            $registerId = (int) $data['register_id'];
+            $register = DB::table('registers')->where('id', $registerId)->first();
+            if ($register && $effectiveTenantId !== null && $register->tenant_id !== null && (string) $register->tenant_id !== $effectiveTenantId) {
+                throw new Exception('Unauthorized: Register belongs to another organization.');
+            }
+
+            if (!empty($data['shift_id'])) {
+                $shift = DB::table('shifts')->where('id', $data['shift_id'])->first();
+                if ($shift && $effectiveTenantId !== null && $shift->tenant_id !== null && (string) $shift->tenant_id !== $effectiveTenantId) {
+                    throw new Exception('Unauthorized: Shift belongs to another organization.');
+                }
+            }
+
+            // 3. Server-side totals calculation against tenant-scoped catalog
+            $subtotal = 0.0;
             $saleLines = [];
 
             foreach ($data['items'] as $item) {
-                $product = DB::table('products')->where('id', $item['product_id'])->where('is_active', true)->first();
-                if (!$product) {
-                    // Check catalog_db.products for catalog-created products
-                    try {
-                        $catalogProduct = DB::table('catalog_db.products')->where('id', $item['product_id'])->first();
-                        if ($catalogProduct) {
-                            DB::table('products')->updateOrInsert(
-                                ['id' => $catalogProduct->id],
-                                [
-                                    'name' => $catalogProduct->name,
-                                    'sku' => $catalogProduct->sku ?? ('SKU-' . substr($catalogProduct->id, 0, 8)),
-                                    'barcode' => $catalogProduct->barcode ?? null,
-                                    'category_id' => $catalogProduct->category_id ?? null,
-                                    'brand_id' => $catalogProduct->brand_id ?? null,
-                                    'selling_price' => $catalogProduct->selling_price ?? 0,
-                                    'cost_price' => $catalogProduct->cost_price ?? 0,
-                                    'is_active' => $catalogProduct->is_active ?? true,
-                                    'min_reorder_point' => $catalogProduct->min_reorder_point ?? 5,
-                                    'created_at' => $catalogProduct->created_at ?? now(),
-                                    'updated_at' => now(),
-                                ]
-                            );
-                            $product = DB::table('products')->where('id', $item['product_id'])->first();
-                        }
-                    } catch (\Exception $syncErr) {
-                        // proceed to next fallback
-                    }
-                }
-
-                // If still not found, create a fallback product stub using payload details
-                if (!$product) {
-                    $fallbackName = $item['name'] ?? ('Product ' . substr($item['product_id'], 0, 8));
-                    $fallbackPrice = $item['price'] ?? 0;
-                    DB::table('products')->updateOrInsert(
-                        ['id' => $item['product_id']],
-                        [
-                            'name' => $fallbackName,
-                            'sku' => 'SKU-' . substr($item['product_id'], 0, 8),
-                            'selling_price' => $fallbackPrice,
-                            'cost_price' => 0,
-                            'is_active' => true,
-                            'min_reorder_point' => 5,
-                            'created_at' => now(),
-                            'updated_at' => now(),
-                        ]
-                    );
-                    $product = DB::table('products')->where('id', $item['product_id'])->first();
-                }
+                $product = DB::table('products')
+                    ->where('id', $item['product_id'])
+                    ->where('is_active', true)
+                    ->first();
 
                 if (!$product) {
                     throw new Exception("Product ID {$item['product_id']} not found or inactive.");
                 }
 
-                $lineSubtotal = $product->selling_price * $item['quantity'];
+                if ($effectiveTenantId !== null && $product->tenant_id !== null && (string) $product->tenant_id !== $effectiveTenantId) {
+                    throw new Exception("Unauthorized: Product ID {$item['product_id']} belongs to another organization.");
+                }
+
+                $qty = (float) $item['quantity'];
+                $unitPrice = (float) $product->selling_price;
+                $lineSubtotal = round($unitPrice * $qty, 2);
                 $subtotal += $lineSubtotal;
 
                 $saleLines[] = [
+                    'tenant_id' => $effectiveTenantId,
                     'product_id' => $product->id,
                     'variant_id' => $item['variant_id'] ?? null,
                     'product_name' => $product->name,
-                    'unit_price' => $product->selling_price,
-                    'quantity' => $item['quantity'],
+                    'unit_price' => $unitPrice,
+                    'quantity' => $qty,
                     'discount_amount' => 0,
                     'subtotal' => $lineSubtotal,
                     'created_at' => now(),
@@ -115,44 +108,60 @@ class CheckoutService
                 ];
             }
 
-            $discountTotal = $data['discount_total'] ?? 0;
-            $taxTotal = $data['tax_total'] ?? 0;
-            $grandTotal = ($subtotal - $discountTotal) + $taxTotal;
+            $discountTotal = max(0.0, (float) ($data['discount_total'] ?? 0));
+            if ($discountTotal > $subtotal) {
+                throw new Exception('Discount total cannot exceed sale subtotal.');
+            }
+            $taxTotal = max(0.0, (float) ($data['tax_total'] ?? 0));
+            $grandTotal = round(($subtotal - $discountTotal) + $taxTotal, 2);
 
-            // 3. Create Immutable Sale Header
-            $outlet = DB::table('outlets')->where('id', $data['outlet_id'])->first();
+            // 4. Create Immutable Sale Header
             $outletCode = $outlet ? strtoupper($outlet->code) : 'MAIN';
 
-            $todayCount = DB::table('sales')
-                ->where('outlet_id', $data['outlet_id'])
-                ->whereDate('created_at', now()->toDateString())
-                ->count();
+            $todayCountQuery = DB::table('sales')
+                ->where('outlet_id', $outletId)
+                ->whereDate('created_at', now()->toDateString());
+            if ($effectiveTenantId !== null) {
+                $todayCountQuery->where('tenant_id', $effectiveTenantId);
+            }
+            $todayCount = $todayCountQuery->count();
 
-            $seqStr = str_pad($todayCount + 1, 5, '0', STR_PAD_LEFT);
+            $seqStr = str_pad((string) ($todayCount + 1), 5, '0', STR_PAD_LEFT);
             $receiptNumber = "REC-{$outletCode}-" . date('Ymd') . "-{$seqStr}";
 
             $customerId = $data['customer_id'] ?? null;
             $customerName = $data['customer_name'] ?? null;
-            if ($customerId && empty($customerName)) {
+            if ($customerId) {
                 $custRow = DB::table('customers')->where('id', $customerId)->first();
                 if ($custRow) {
-                    $customerName = $custRow->name;
+                    if ($effectiveTenantId !== null && $custRow->tenant_id !== null && (string) $custRow->tenant_id !== $effectiveTenantId) {
+                        throw new Exception('Unauthorized: Customer belongs to another organization.');
+                    }
+                    if (empty($customerName)) {
+                        $customerName = $custRow->name;
+                    }
                 }
             }
 
             $tableId = $data['table_id'] ?? null;
             $tableName = $data['table_name'] ?? null;
-            if ($tableId && empty($tableName)) {
+            if ($tableId) {
                 $tableRow = DB::table('restaurant_tables')->where('id', $tableId)->first();
                 if ($tableRow) {
-                    $tableName = $tableRow->name;
+                    if ($effectiveTenantId !== null && $tableRow->tenant_id !== null && (string) $tableRow->tenant_id !== $effectiveTenantId) {
+                        throw new Exception('Unauthorized: Table belongs to another organization.');
+                    }
+                    if (empty($tableName)) {
+                        $tableName = $tableRow->name;
+                    }
                 }
             }
             $orderType = $data['order_type'] ?? ($tableId ? 'dine_in' : 'takeaway');
 
             $saleId = DB::table('sales')->insertGetId([
-                'outlet_id' => $data['outlet_id'],
-                'register_id' => $data['register_id'],
+                'tenant_id' => $effectiveTenantId,
+                'outlet_id' => $outletId,
+                'register_id' => $registerId,
                 'shift_id' => $data['shift_id'] ?? null,
                 'user_id' => $cashierId,
                 'customer_id' => $customerId,
@@ -173,21 +182,24 @@ class CheckoutService
                 'updated_at' => now(),
             ]);
 
-            // 4. Attach Sale Lines & Append Inventory Ledger
+            // 5. Attach Sale Lines & Append Inventory Ledger
             foreach ($saleLines as &$line) {
                 $line['sale_id'] = $saleId;
                 $lineId = DB::table('sale_lines')->insertGetId($line);
                 $line['id'] = $lineId;
 
-                $targetOutletId = $data['outlet_id'];
+                $targetOutletId = $outletId;
                 $targetProductId = $line['product_id'];
 
-                // Deduct stock from balance if record exists
+                // Deduct stock from tenant-scoped balance if record exists
                 try {
-                    $balance = DB::table('inventory_balances')
+                    $balanceQuery = DB::table('inventory_balances')
                         ->where('outlet_id', $targetOutletId)
-                        ->where('product_id', $targetProductId)
-                        ->first();
+                        ->where('product_id', $targetProductId);
+                    if ($effectiveTenantId !== null) {
+                        $balanceQuery->where('tenant_id', $effectiveTenantId);
+                    }
+                    $balance = $balanceQuery->first();
 
                     if ($balance) {
                         DB::table('inventory_balances')
@@ -201,6 +213,7 @@ class CheckoutService
                 // Record append-only movement
                 try {
                     DB::table('inventory_movements')->insert([
+                        'tenant_id' => $effectiveTenantId,
                         'outlet_id' => $targetOutletId,
                         'product_id' => $targetProductId,
                         'variant_id' => $line['variant_id'],
@@ -217,9 +230,10 @@ class CheckoutService
                 }
             }
 
-            // 5. Record Payment
+            // 6. Record Payment
             $tenderType = $data['tender_type'] ?? 'cash';
             DB::table('payments')->insert([
+                'tenant_id' => $effectiveTenantId,
                 'sale_id' => $saleId,
                 'tender_type' => $tenderType,
                 'amount' => $grandTotal,
@@ -229,54 +243,66 @@ class CheckoutService
                 'updated_at' => now(),
             ]);
 
-            // 6. Customer Loyalty & Store Credit Mutation
+            // 7. Customer Loyalty & Store Credit Mutation
             if ($customerId) {
                 try {
+                    $custUpdateQuery = DB::table('customers')->where('id', $customerId);
+                    if ($effectiveTenantId !== null) {
+                        $custUpdateQuery->where('tenant_id', $effectiveTenantId);
+                    }
                     if ($tenderType === 'store_credit') {
-                        DB::table('customers')->where('id', $customerId)->decrement('store_credit', $grandTotal);
+                        $custUpdateQuery->decrement('store_credit', $grandTotal);
                     } else {
                         $earnedPoints = (int) floor($grandTotal);
                         if ($earnedPoints > 0) {
-                            DB::table('customers')->where('id', $customerId)->increment('loyalty_points', $earnedPoints);
+                            $custUpdateQuery->increment('loyalty_points', $earnedPoints);
                         }
                     }
-                    DB::table('customers')->where('id', $customerId)->increment('total_spent', $grandTotal);
+                    DB::table('customers')
+                        ->where('id', $customerId)
+                        ->when($effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
+                        ->increment('total_spent', $grandTotal);
                 } catch (\Exception $custErr) {
                     // Non-fatal if customer update fails
                 }
             }
 
-            // 7. Update Table Occupancy
+            // 8. Update Table Occupancy
             if ($tableId) {
                 try {
-                    DB::table('restaurant_tables')->where('id', $tableId)->update([
-                        'status' => 'occupied',
-                        'active_sale_id' => $saleId,
-                        'updated_at' => now(),
-                    ]);
+                    DB::table('restaurant_tables')
+                        ->where('id', $tableId)
+                        ->when($effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
+                        ->update([
+                            'status' => 'occupied',
+                            'active_sale_id' => $saleId,
+                            'updated_at' => now(),
+                        ]);
                 } catch (\Exception $tableErr) {
                     // Non-fatal
                 }
             }
 
-            // 8. Auto-create KDS Ticket for Kitchen Display
+            // 9. Auto-create KDS Ticket for Kitchen Display (tenant & outlet scoped)
             try {
                 DB::table('kds_tickets')->insert([
+                    'tenant_id' => $effectiveTenantId,
                     'sale_id' => $saleId,
-                    'outlet_id' => $outletId ?? null,
+                    'outlet_id' => $outletId,
                     'ticket_number' => 'TKT-' . substr($receiptNumber, -5),
                     'order_type' => $orderType,
                     'table_name' => $tableName ?? ($orderType === 'dine_in' ? 'Table Order' : 'Takeaway Counter'),
                     'station' => 'all',
-                    'items' => json_encode(array_map(fn($l) => ['name' => $l['product_name'], 'quantity' => $l['quantity']], $saleLines)),
+                    'items' => json_encode(array_map(fn ($l) => ['name' => $l['product_name'], 'quantity' => $l['quantity']], $saleLines)),
                     'status' => 'pending',
                     'prep_time_minutes' => 0,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
 
-                // Signal active real-time SSE kitchen monitors
-                \Illuminate\Support\Facades\Cache::put('kds_last_update_time', microtime(true), 86400);
+                // Signal active real-time SSE kitchen monitors isolated per tenant
+                $kdsCacheKey = 'kds_last_update_time_tenant_' . ($effectiveTenantId ?? 'global');
+                \Illuminate\Support\Facades\Cache::put($kdsCacheKey, microtime(true), 86400);
             } catch (\Exception $kdsErr) {
                 // Non-fatal
             }
@@ -289,14 +315,27 @@ class CheckoutService
                 'is_duplicate' => false,
             ];
         });
+
+        if (empty($result['is_duplicate'])) {
+            $effectiveTenantId = ($tenantId !== null && $tenantId !== '' && $tenantId !== 'all')
+                ? $tenantId
+                : ($cashier?->tenant_id !== null && $cashier->tenant_id !== 'all' ? (string) $cashier->tenant_id : null);
+            TenantCatalogCache::invalidate($effectiveTenantId, 'products');
+        }
+
+        return $result;
     }
 
     /**
      * Process Restaurant Dine-In Split-Bill Calculation and Settlement.
      */
-    public function processSplitBill(array $data, ?User $cashier = null): array
+    public function processSplitBill(array $data, ?User $cashier = null, ?string $tenantId = null): array
     {
-        return DB::transaction(function () use ($data, $cashier) {
+        return DB::transaction(function () use ($data, $cashier, $tenantId) {
+            $effectiveTenantId = ($tenantId !== null && $tenantId !== '' && $tenantId !== 'all')
+                ? $tenantId
+                : ($cashier?->tenant_id !== null && $cashier->tenant_id !== 'all' ? (string) $cashier->tenant_id : null);
+
             $tableId = $data['table_id'] ?? null;
             $saleId = $data['sale_id'] ?? null;
 
@@ -304,6 +343,9 @@ class CheckoutService
                 $table = DB::table('restaurant_tables')->where('id', $tableId)->first();
                 if (!$table) {
                     throw new Exception("Restaurant table #{$tableId} not found.");
+                }
+                if ($effectiveTenantId !== null && $table->tenant_id !== null && (string) $table->tenant_id !== $effectiveTenantId) {
+                    throw new Exception('Unauthorized: Table belongs to another organization.');
                 }
                 if (!$saleId && $table->active_sale_id) {
                     $saleId = $table->active_sale_id;
@@ -313,6 +355,7 @@ class CheckoutService
             if (!$saleId && $tableId) {
                 $latestSale = DB::table('sales')
                     ->where('table_id', $tableId)
+                    ->when($effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
                     ->whereIn('status', ['pending', 'bill_requested', 'completed'])
                     ->orderByDesc('id')
                     ->first();
@@ -329,6 +372,10 @@ class CheckoutService
             if (!$parentSale) {
                 throw new Exception("Sale #{$saleId} not found.");
             }
+            if ($effectiveTenantId !== null && $parentSale->tenant_id !== null && (string) $parentSale->tenant_id !== $effectiveTenantId) {
+                throw new Exception('Unauthorized: Sale belongs to another organization.');
+            }
+            $saleTenantId = $parentSale->tenant_id !== null ? (string) $parentSale->tenant_id : $effectiveTenantId;
 
             $splitType = $data['split_type'] ?? 'equal';
             $cashierId = $cashier ? $cashier->id : ($parentSale->user_id ?? 1);
@@ -352,6 +399,7 @@ class CheckoutService
                     $splitReceipt = "{$parentSale->receipt_number}-S{$i}";
 
                     $childSaleId = DB::table('sales')->insertGetId([
+                        'tenant_id' => $saleTenantId,
                         'parent_sale_id' => $parentSale->id,
                         'outlet_id' => $parentSale->outlet_id,
                         'register_id' => $parentSale->register_id,
@@ -380,6 +428,7 @@ class CheckoutService
 
                     // Record Payment for this equal split
                     DB::table('payments')->insert([
+                        'tenant_id' => $saleTenantId,
                         'sale_id' => $childSaleId,
                         'tender_type' => $customTender,
                         'amount' => $allocatedAmount,
@@ -405,21 +454,28 @@ class CheckoutService
                     $tender = $splitItem['tender_type'] ?? 'cash';
                     $items = $splitItem['items'] ?? [];
 
-                    $splitSubtotal = 0;
+                    $splitSubtotal = 0.0;
                     $splitLines = [];
 
                     foreach ($items as $it) {
-                        $pId = $it['product_id'] ?? $it['id'];
+                        $pId = $it['product_id'] ?? $it['id'] ?? null;
                         $qty = (float) ($it['quantity'] ?? 1);
-                        $product = DB::table('products')->where('id', $pId)->first();
-                        $price = $product ? (float)$product->selling_price : (float)($it['price'] ?? 0);
+                        $product = $pId ? DB::table('products')->where('id', $pId)->where('is_active', true)->first() : null;
+                        if (!$product) {
+                            throw new Exception("Product ID {$pId} not found or inactive for split bill.");
+                        }
+                        if ($saleTenantId !== null && $product->tenant_id !== null && (string) $product->tenant_id !== (string) $saleTenantId) {
+                            throw new Exception("Unauthorized: Product ID {$pId} belongs to another organization.");
+                        }
+                        $price = (float) $product->selling_price;
                         $lineTotal = round($price * $qty, 2);
                         $splitSubtotal += $lineTotal;
 
                         $splitLines[] = [
-                            'product_id' => $pId,
+                            'tenant_id' => $saleTenantId,
+                            'product_id' => $product->id,
                             'variant_id' => $it['variant_id'] ?? null,
-                            'product_name' => $product ? $product->name : ($it['name'] ?? "Item {$pId}"),
+                            'product_name' => $product->name,
                             'unit_price' => $price,
                             'quantity' => $qty,
                             'discount_amount' => 0,
@@ -434,6 +490,7 @@ class CheckoutService
                     $splitReceipt = "{$parentSale->receipt_number}-S{$seatIdx}";
 
                     $childSaleId = DB::table('sales')->insertGetId([
+                        'tenant_id' => $saleTenantId,
                         'parent_sale_id' => $parentSale->id,
                         'outlet_id' => $parentSale->outlet_id,
                         'register_id' => $parentSale->register_id,
@@ -466,6 +523,7 @@ class CheckoutService
                     }
 
                     DB::table('payments')->insert([
+                        'tenant_id' => $saleTenantId,
                         'sale_id' => $childSaleId,
                         'tender_type' => $tender,
                         'amount' => $splitGrandTotal,
