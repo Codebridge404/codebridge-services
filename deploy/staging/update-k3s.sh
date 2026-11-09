@@ -35,7 +35,7 @@ docker push "$AUTH_IMAGE"
 docker build -t "$OPS_IMAGE" ./operations-service
 docker push "$OPS_IMAGE"
 
-# Generate the mounted gateway config from the same routes and docs as Compose.
+# Generate the mounted gateway config from the same routes as Compose.
 # subPath mounts require a pod restart to pick up ConfigMap changes.
 python3 - <<'PY'
 import json, pathlib, subprocess
@@ -49,8 +49,7 @@ nginx = nginx.replace('include /etc/nginx/services/*.conf;', routes)
 config = {'apiVersion': 'v1', 'kind': 'ConfigMap',
           'metadata': {'name': 'gateway-nginx-config', 'namespace': 'codebridge-staging'},
           'data': {'nginx.conf': nginx,
-                   'fastcgi_php.conf': (root / 'services/fastcgi_php.conf').read_text(),
-                   'docs.html': (root / 'docs.html').read_text()}}
+                   'fastcgi_php.conf': (root / 'services/fastcgi_php.conf').read_text()}}
 subprocess.run(['kubectl', 'apply', '-f', '-'], input=json.dumps(config), text=True, check=True)
 PY
 

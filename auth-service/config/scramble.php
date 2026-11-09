@@ -4,6 +4,19 @@ return [
     'ui' => [
         'title' => 'CodeBridges Auth',
     ],
+    'renderer' => 'scalar',
+    'renderers' => [
+        'scalar' => [
+            'view' => 'scramble::scalar',
+            'cdn' => 'https://cdn.jsdelivr.net/npm/@scalar/api-reference',
+            'theme' => 'laravel',
+            // Direct browser requests without proxy.scalar.com so localhost:8080 works and credentials stay local.
+            'darkMode' => false,
+            'showDeveloperTools' => 'never',
+            'agent' => ['disabled' => true],
+            'credentials' => 'include',
+        ],
+    ],
     'servers' => [
         'Staging API' => rtrim(env('APP_URL', 'https://staging-codebridge-api.servicefixit.me'), '/') . '/api',
         'Current Host' => '/api',

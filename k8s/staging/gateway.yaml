@@ -37,9 +37,6 @@ spec:
             - name: nginx-config
               mountPath: /etc/nginx/fastcgi_php.conf
               subPath: fastcgi_php.conf
-            - name: nginx-config
-              mountPath: /usr/share/nginx/html/docs.html
-              subPath: docs.html
           readinessProbe:
             httpGet:
               path: /api/v1/health

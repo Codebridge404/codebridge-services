@@ -227,16 +227,16 @@ data:
                 return 404;
             }
 
-            # Redirect docs subdomains root to interactive documentation hub
+            # Redirect docs subdomains root directly to interactive API docs
             if ($host ~* "^(staging-)?codebridge-docs\.servicefixit\.me$") {
-                rewrite ^/$ /docs permanent;
+                rewrite ^/$ /docs/api redirect;
             }
 
             # Gateway Root Index
             location = / {
                 add_header Access-Control-Allow-Origin * always;
                 default_type application/json;
-                return 200 '{"status":"healthy","gateway":"nginx","system":"CodeBridge Multi-Tenant Platform","environment":"staging","docs":"/docs","health":"/api/v1/health"}\n';
+                return 200 '{"status":"healthy","gateway":"nginx","system":"CodeBridge Multi-Tenant Platform","environment":"staging","docs":"/docs/api","auth_docs":"/docs/auth","operations_docs":"/docs/operations","health":"/api/v1/health"}\n';
             }
 
             # Health Check Endpoints
@@ -252,13 +252,12 @@ data:
                 return 200 '{"status":"healthy","gateway":"nginx","security":"waf_active","system":"CodeBridge@ Multi-Tenant Enterprise Platform"}\n';
             }
 
-            # Central Interactive Documentation Hub
+            # Direct Redirect to Auth Scramble UI (no gateway hub page)
             location = /docs {
-                alias /usr/share/nginx/html/docs.html;
-                default_type text/html;
+                return 302 /docs/api;
             }
             location = /docs/ {
-                return 301 /docs;
+                return 302 /docs/api;
             }
             location /docs/api {
                 fastcgi_pass auth_service;
@@ -270,6 +269,15 @@ data:
                 add_header Access-Control-Allow-Headers "*" always;
                 if ($request_method = OPTIONS) { return 204; }
                 include /etc/nginx/fastcgi_php.conf;
+                fastcgi_pass auth_service;
+            }
+            location = /docs/auth/api.json {
+                add_header Access-Control-Allow-Origin * always;
+                add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "*" always;
+                if ($request_method = OPTIONS) { return 204; }
+                include /etc/nginx/fastcgi_php.conf;
+                fastcgi_param REQUEST_URI /docs/api.json;
                 fastcgi_pass auth_service;
             }
             location /docs/auth {
@@ -284,6 +292,20 @@ data:
                 if ($request_method = OPTIONS) { return 204; }
                 include /etc/nginx/fastcgi_php.conf;
                 fastcgi_param REQUEST_URI /docs/api.json;
+                fastcgi_pass operations_service;
+            }
+            location = /docs/operations-service/api.json {
+                add_header Access-Control-Allow-Origin * always;
+                add_header Access-Control-Allow-Methods "GET, HEAD, OPTIONS" always;
+                add_header Access-Control-Allow-Headers "*" always;
+                if ($request_method = OPTIONS) { return 204; }
+                include /etc/nginx/fastcgi_php.conf;
+                fastcgi_param REQUEST_URI /docs/api.json;
+                fastcgi_pass operations_service;
+            }
+            location /docs/operations-service {
+                include /etc/nginx/fastcgi_php.conf;
+                fastcgi_param REQUEST_URI /docs/api;
                 fastcgi_pass operations_service;
             }
             location /docs/operations {
@@ -405,227 +427,3 @@ data:
     fastcgi_send_timeout 120s;
     fastcgi_connect_timeout 10s;
     include fastcgi_params;
-
-
-  docs.html: |
-    <!DOCTYPE html>
-    <html lang="en">
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>CodeBridge@ — Multi-Tenant Enterprise API Gateway</title>
-      <!-- Stoplight Elements (Same engine as Laravel Scramble) -->
-      <script src="https://unpkg.com/@stoplight/elements/web-components.min.js"></script>
-      <link rel="stylesheet" href="https://unpkg.com/@stoplight/elements/styles.min.css">
-      <link rel="preconnect" href="https://fonts.googleapis.com">
-      <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-      <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet">
-      <style>
-        * { box-sizing: border-box; }
-        body, html {
-          margin: 0;
-          padding: 0;
-          height: 100%;
-          width: 100%;
-          font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-          display: flex;
-          flex-direction: column;
-          background: #0f172a;
-          overflow: hidden;
-        }
-        .gateway-nav {
-          height: 60px;
-          min-height: 60px;
-          background: #090d16;
-          border-bottom: 1px solid #1e293b;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: 0 24px;
-          z-index: 100;
-        }
-        .brand {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          color: #f8fafc;
-          font-size: 16px;
-          font-weight: 700;
-          letter-spacing: -0.02em;
-        }
-        .brand-badge {
-          background: linear-gradient(135deg, #3b82f6, #6366f1);
-          color: #ffffff;
-          font-size: 11px;
-          font-weight: 700;
-          padding: 3px 8px;
-          border-radius: 6px;
-          text-transform: uppercase;
-          letter-spacing: 0.05em;
-        }
-        .selector-box {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-        }
-        .selector-label {
-          color: #94a3b8;
-          font-size: 13px;
-          font-weight: 600;
-        }
-        .service-select {
-          background: #1e293b;
-          color: #f1f5f9;
-          border: 1px solid #334155;
-          padding: 8px 16px;
-          border-radius: 8px;
-          font-size: 13px;
-          font-weight: 600;
-          font-family: inherit;
-          cursor: pointer;
-          outline: none;
-          transition: all 0.2s ease;
-          box-shadow: 0 1px 2px rgba(0,0,0,0.2);
-        }
-        .service-select:hover, .service-select:focus {
-          border-color: #3b82f6;
-          background: #243248;
-        }
-        .docs-container {
-          flex: 1;
-          height: calc(100vh - 60px);
-          background: #ffffff;
-          overflow: hidden;
-          position: relative;
-        }
-        elements-api {
-          height: 100%;
-          width: 100%;
-          display: block;
-        }
-      </style>
-    </head>
-    <body>
-      <header class="gateway-nav">
-        <div class="brand">
-          <span>🌉 CodeBridge@ Multi-Tenant</span>
-          <span class="brand-badge">Enterprise Gateway</span>
-        </div>
-        <div class="selector-box">
-          <label class="selector-label" for="serviceSelect">Service Definition:</label>
-          <select id="serviceSelect" class="service-select" onchange="switchService(this.value)">
-            <option value="/docs/api.json">🔑 Auth, RBAC, CRM & MMS Meeting Service</option>
-            <option value="/docs/operations/api.json">📦 Operations, Inventory, Shifts & Commerce Engine</option>
-          </select>
-        </div>
-      </header>
-    
-      <main class="docs-container" id="docsWrapper">
-        <elements-api id="elementsDoc" apiDescriptionUrl="/docs/api.json" router="hash" layout="sidebar"></elements-api>
-      </main>
-    
-      <script>
-        // Universal Fetch Interceptor for Interactive Documentation
-        // 1. Intercepts OpenAPI spec requests (/docs/api.json & /docs/operations/api.json) to prioritize live staging HTTPS/Current Origin servers
-        // 2. Intercepts "Try It" API calls to rewrite localhost:8080 to current origin when running remotely
-        // 3. Upgrades any insecure http:// calls to https:// to prevent Mixed Content blocking
-
-        const originalFetch = window.fetch;
-        window.fetch = async function(resource, init) {
-          let url = typeof resource === 'string' ? resource : (resource && resource.url ? resource.url : '');
-
-          // Sanitize API request targets
-          if (url) {
-            // Rewrite localhost:8080 to current origin if viewing from a remote domain
-            if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-              if (url.startsWith('http://localhost:8080') || url.startsWith('http://127.0.0.1:8080')) {
-                url = url.replace(/^http:\/\/(localhost|127\.0\.0\.1):8080/, window.location.origin);
-              }
-            }
-
-            // Upgrade http:// to https:// when page is running over https
-            if (window.location.protocol === 'https:' && url.startsWith('http://')) {
-              url = url.replace(/^http:\/\//, 'https://');
-            }
-
-            if (url !== (typeof resource === 'string' ? resource : (resource ? resource.url : ''))) {
-              if (typeof resource === 'string') {
-                resource = url;
-              } else {
-                resource = new Request(url, resource);
-              }
-            }
-          }
-
-          const response = await originalFetch.call(this, resource, init);
-
-          // Dynamically enhance OpenAPI specifications so Stoplight Elements always defaults to a reachable HTTPS server
-          if (url && (url.endsWith('/api.json') || url.includes('/docs/api.json') || url.includes('/docs/operations/api.json'))) {
-            try {
-              const clone = response.clone();
-              const spec = await clone.json();
-              if (spec && spec.servers && Array.isArray(spec.servers)) {
-                const currentOriginApi = window.location.origin + '/api';
-                const stagingApi = 'https://staging-codebridge-api.servicefixit.me/api';
-                
-                const prioritized = [];
-                
-                // Prioritize Current Host (Same Origin - zero CORS issues)
-                prioritized.push({
-                  url: currentOriginApi,
-                  description: 'Current Host (' + window.location.host + ')'
-                });
-                
-                // Staging API Gateway
-                if (currentOriginApi !== stagingApi) {
-                  prioritized.push({
-                    url: stagingApi,
-                    description: 'Staging API Gateway'
-                  });
-                }
-
-                // Keep any other servers from spec (excluding duplicate current origin or staging)
-                for (const s of spec.servers) {
-                  const sUrl = (s.url || '').replace(/\/$/, '');
-                  if (sUrl !== currentOriginApi.replace(/\/$/, '') && sUrl !== stagingApi.replace(/\/$/, '')) {
-                    prioritized.push(s);
-                  }
-                }
-
-                spec.servers = prioritized;
-                return new Response(JSON.stringify(spec), {
-                  status: response.status,
-                  statusText: response.statusText,
-                  headers: {
-                    'content-type': 'application/json; charset=utf-8'
-                  }
-                });
-              }
-            } catch (e) {
-              console.warn('Could not rewrite OpenAPI spec servers:', e);
-            }
-          }
-
-          return response;
-        };
-
-        function switchService(specUrl) {
-          localStorage.setItem('codebridges_selected_doc_spec', specUrl);
-          const wrapper = document.getElementById('docsWrapper');
-          wrapper.innerHTML = '<elements-api id="elementsDoc" apiDescriptionUrl="' + specUrl + '" router="hash" layout="sidebar"></elements-api>';
-        }
-
-        // Restore last selected service if saved
-        window.addEventListener('DOMContentLoaded', () => {
-          const saved = localStorage.getItem('codebridges_selected_doc_spec');
-          if (saved) {
-            const select = document.getElementById('serviceSelect');
-            if (select && Array.from(select.options).some(opt => opt.value === saved)) {
-              select.value = saved;
-              switchService(saved);
-            }
-          }
-        });
-      </script>
-    </body>
-    </html>

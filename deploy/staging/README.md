@@ -119,10 +119,10 @@ KUBECONFIG=/home/deploy/.kube/config bash deploy/staging/update-k3s.sh
 
 This builds and pushes revision-tagged images to the existing local registry,
 updates both APIs, Horizon workers and the scheduler, runs migrations and clears
-Laravel caches. It generates the gateway ConfigMap from `gateway/nginx.conf`,
-`gateway/services/` and `gateway/docs.html`, then restarts the gateway to refresh
-its ConfigMap subPath mounts. Existing Kubernetes secrets and data services are
-preserved. This command changes the serving staging environment.
+Laravel caches. It generates the gateway ConfigMap from `gateway/nginx.conf`
+and `gateway/services/`, then restarts the gateway to refresh its ConfigMap
+subPath mounts. Existing Kubernetes secrets and data services are preserved.
+This command changes the serving staging environment.
 
 The workflow must choose a **readable** kubeconfig. Testing only `-f` selects
 `/etc/rancher/k3s/k3s.yaml` even when the deploy user cannot read it. Kubernetes
@@ -134,11 +134,12 @@ Verify the running images and the public docs after deployment:
 ```bash
 kubectl --kubeconfig /home/deploy/.kube/config -n codebridge-staging get deployments
 curl --fail https://staging-codebridge-api.servicefixit.me/api/v1/health
-curl --fail https://staging-codebridge-docs.servicefixit.me/docs | sha256sum
-sha256sum gateway/docs.html
+curl --fail -L https://staging-codebridge-docs.servicefixit.me/docs/api | head -n 20
 curl --fail https://staging-codebridge-docs.servicefixit.me/docs/api.json
+curl --fail https://staging-codebridge-docs.servicefixit.me/docs/operations/api.json
 ```
 
-The two HTML hashes should match. The auth OpenAPI document should include the
-`appKeyAuth` security scheme using the `X-App-Key` header.
+The auth OpenAPI document (`/docs/api.json`) should include the `appKeyAuth`
+security scheme using the `X-App-Key` header, and `/docs` should redirect
+directly to `/docs/api` without an intermediate `docs.html` gateway page.
 
