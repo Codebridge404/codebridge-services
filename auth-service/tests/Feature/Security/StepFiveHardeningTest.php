@@ -368,17 +368,31 @@ class StepFiveHardeningTest extends TestCase
         $stagingK8sDir = dirname(base_path()) . '/k8s/staging';
         $kubectlCheck = Process::run('command -v kubectl');
         if ($kubectlCheck->successful() && is_dir($stagingK8sDir)) {
-            $kustomize = Process::path($stagingK8sDir)->run('kubectl kustomize .');
-            $this->assertTrue($kustomize->successful(), 'Staging K8s failed kustomize: ' . $kustomize->errorOutput());
+            $createdDummySecret = false;
+            $secretFile = $stagingK8sDir . '/secrets.yaml';
+            $exampleSecret = $stagingK8sDir . '/secrets.example.yaml';
+            if (!file_exists($secretFile) && file_exists($exampleSecret)) {
+                @copy($exampleSecret, $secretFile);
+                $createdDummySecret = true;
+            }
 
-            $rendered = $kustomize->output();
-            $this->assertStringNotContainsString('PMA_ARBITRARY', $rendered);
-            $this->assertStringNotContainsString('npm.servicefixit.me', $rendered);
-            $this->assertStringContainsString('runAsUser: 33', $rendered);
-            $this->assertStringContainsString('name: operations-scheduler', $rendered);
-            $this->assertStringContainsString('name: auth-db-backup', $rendered);
-            $this->assertStringContainsString('name: operations-db-backup', $rendered);
-            $this->assertStringContainsString('TELEMETRY_ENABLED', $rendered);
+            try {
+                $kustomize = Process::path($stagingK8sDir)->run('kubectl kustomize .');
+                $this->assertTrue($kustomize->successful(), 'Staging K8s failed kustomize: ' . $kustomize->errorOutput());
+
+                $rendered = $kustomize->output();
+                $this->assertStringNotContainsString('PMA_ARBITRARY', $rendered);
+                $this->assertStringNotContainsString('npm.servicefixit.me', $rendered);
+                $this->assertStringContainsString('runAsUser: 33', $rendered);
+                $this->assertStringContainsString('name: operations-scheduler', $rendered);
+                $this->assertStringContainsString('name: auth-db-backup', $rendered);
+                $this->assertStringContainsString('name: operations-db-backup', $rendered);
+                $this->assertStringContainsString('TELEMETRY_ENABLED', $rendered);
+            } finally {
+                if ($createdDummySecret && file_exists($secretFile)) {
+                    @unlink($secretFile);
+                }
+            }
         }
     }
 }

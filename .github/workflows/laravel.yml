@@ -49,5 +49,8 @@ jobs:
             mkdir -p database storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
             touch database/database.sqlite
             chmod -R 777 storage bootstrap/cache database
+            if [ -f "../k8s/staging/secrets.example.yaml" ] && [ ! -f "../k8s/staging/secrets.yaml" ]; then
+              cp ../k8s/staging/secrets.example.yaml ../k8s/staging/secrets.yaml
+            fi
             php artisan test --env=testing
           fi

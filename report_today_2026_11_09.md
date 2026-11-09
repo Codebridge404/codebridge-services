@@ -141,3 +141,4 @@ A full infrastructure capacity inspection was performed:
 1. **Deploy Staging Kubernetes Stack**: Trigger automated deployment on staging VPS via `deploy/staging/deploy.sh` or K3s manifest application.
 2. **Docker Cleanup (Optional)**: If additional host disk space is desired, execute `docker system prune --volumes -f` to reclaim ~61 GB of unused build layers and orphaned volumes.
 3. **Continuous Monitoring**: Observe structured stderr JSON logs via container log drivers or Promtail/Loki for real-time telemetry tracking.
+
