@@ -104,3 +104,41 @@ Inspect the live staging health and resource usage anytime:
 ./deploy/staging/status.sh
 ```
 
+## Public K3s stack and deployment troubleshooting
+
+This VPS also runs K3s with Traefik. Public ports 80/443 currently route to
+the `codebridge-staging` Kubernetes namespace. A successful Compose deployment
+alone does not update the public API or docs. Check both stacks before assuming
+that a successful image build means the public endpoint has changed.
+
+For an existing, configured K3s stack, run from the repository root:
+
+```bash
+KUBECONFIG=/home/deploy/.kube/config bash deploy/staging/update-k3s.sh
+```
+
+This builds and pushes revision-tagged images to the existing local registry,
+updates both APIs, Horizon workers and the scheduler, runs migrations and clears
+Laravel caches. It generates the gateway ConfigMap from `gateway/nginx.conf`,
+`gateway/services/` and `gateway/docs.html`, then restarts the gateway to refresh
+its ConfigMap subPath mounts. Existing Kubernetes secrets and data services are
+preserved. This command changes the serving staging environment.
+
+The workflow must choose a **readable** kubeconfig. Testing only `-f` selects
+`/etc/rancher/k3s/k3s.yaml` even when the deploy user cannot read it. Kubernetes
+access, migration and rollout failures must fail the workflow rather than be
+hidden by `|| true`.
+
+Verify the running images and the public docs after deployment:
+
+```bash
+kubectl --kubeconfig /home/deploy/.kube/config -n codebridge-staging get deployments
+curl --fail https://staging-codebridge-api.servicefixit.me/api/v1/health
+curl --fail https://staging-codebridge-docs.servicefixit.me/docs | sha256sum
+sha256sum gateway/docs.html
+curl --fail https://staging-codebridge-docs.servicefixit.me/docs/api.json
+```
+
+The two HTML hashes should match. The auth OpenAPI document should include the
+`appKeyAuth` security scheme using the `X-App-Key` header.
+

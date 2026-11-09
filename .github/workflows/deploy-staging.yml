@@ -147,99 +147,12 @@ jobs:
             # Kubernetes / K3s Staging Stack Rollout (if running on VPS)
             # ------------------------------------------------------------------
             echo "Checking for Kubernetes / K3s cluster on VPS..."
-            KUBECONF=""
-            for kpath in "/etc/rancher/k3s/k3s.yaml" "$HOME/.kube/config" "/home/deploy/.kube/config" "/root/.kube/config"; do
-              if [ -f "$kpath" ]; then
-                KUBECONF="$kpath"
-                break
-              fi
-            done
-
-            if command -v kubectl >/dev/null 2>&1 && [ -n "$KUBECONF" ]; then
-              export KUBECONFIG="$KUBECONF"
-              echo "Kubernetes/K3s detected with config: $KUBECONFIG"
-
-              # 1. Ensure local cluster registry is running on 127.0.0.1:5000
-              if ! docker ps --filter "name=registry" --format '{{.Names}}' | grep -q "^registry$"; then
-                echo "Starting local container registry on 127.0.0.1:5000..."
-                docker start registry 2>/dev/null || docker run -d -p 5000:5000 --restart=always --name registry registry:2
-              fi
-
-              # 2. Build and push updated images to local registry (127.0.0.1:5000)
-              echo "Building and pushing Kubernetes staging images..."
-              docker build -t 127.0.0.1:5000/codebridge-auth-service:staging ./auth-service
-              docker push 127.0.0.1:5000/codebridge-auth-service:staging
-              docker build -t 127.0.0.1:5000/codebridge-operations-service:staging ./operations-service
-              docker push 127.0.0.1:5000/codebridge-operations-service:staging
-
-              # 3. Check if namespace codebridge-staging exists
-              if kubectl get ns codebridge-staging >/dev/null 2>&1; then
-                echo "Running database migrations in K8s auth-service pod..."
-                kubectl exec deployment/auth-service -n codebridge-staging -- php artisan migrate --force 2>/dev/null || true
-                kubectl exec deployment/operations-service -n codebridge-staging -- php artisan migrate --force 2>/dev/null || true
-
-                echo "Clearing application & Scramble OpenAPI caches in K8s..."
-                kubectl exec deployment/auth-service -n codebridge-staging -- php artisan optimize:clear 2>/dev/null || true
-                kubectl exec deployment/auth-service -n codebridge-staging -- php artisan scramble:clear 2>/dev/null || true
-                kubectl exec deployment/operations-service -n codebridge-staging -- php artisan optimize:clear 2>/dev/null || true
-                kubectl exec deployment/operations-service -n codebridge-staging -- php artisan scramble:clear 2>/dev/null || true
-
-                echo "Restarting K8s staging microservices..."
-                kubectl rollout restart deployment/auth-service deployment/operations-service deployment/gateway -n codebridge-staging 2>/dev/null || true
-                echo "Verifying K8s rollout status..."
-                kubectl rollout status deployment/auth-service -n codebridge-staging --timeout=120s 2>/dev/null || true
-                kubectl rollout status deployment/operations-service -n codebridge-staging --timeout=120s 2>/dev/null || true
-                echo "✔ K8s staging stack updated and rolled out successfully."
-              fi
-            else
-              echo "Kubernetes/K3s not detected or kubectl not found; Docker Compose staging deployment active."
+            # The helper selects a readable kubeconfig and fails on rollout errors.
+            if command -v kubectl >/dev/null 2>&1; then
+              bash deploy/staging/update-k3s.sh
+            elif [ -d /etc/rancher/k3s ]; then
+              echo "K3s is installed but kubectl is unavailable."
+              exit 1
             fi
 
             echo "Staging deployment complete."
-
-  # --------------------------------------------------------------------------
-  # 3. KUBERNETES / K3S CLUSTER DEPLOYMENT (OPTIONAL)
-  # --------------------------------------------------------------------------
-  deploy-k8s:
-    name: Apply K3s/Kubernetes Manifests
-    needs: deploy-to-vps
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'demo') }}
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
-
-      - name: Apply Kubernetes Manifests to Cluster
-        env:
-          KUBECONFIG_DATA: ${{ secrets.KUBECONFIG_STAGING }}
-        run: |
-          if [ -z "${KUBECONFIG_DATA:-}" ]; then
-            echo "KUBECONFIG_STAGING secret is not configured. Skipping Kubernetes rollout."
-            exit 0
-          fi
-
-          mkdir -p ~/.kube
-          echo "$KUBECONFIG_DATA" | base64 -d > ~/.kube/config
-          chmod 600 ~/.kube/config
-
-          if ! kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
-            echo "Unable to reach Kubernetes cluster API. Skipping Kubernetes rollout."
-            exit 0
-          fi
-
-          echo "Applying manifests via Kustomize to namespace [codebridge-staging]..."
-          if [ -d "k8s/staging" ]; then
-            if [ -f "k8s/staging/secrets.example.yaml" ] && [ ! -f "k8s/staging/secrets.yaml" ]; then
-              cp k8s/staging/secrets.example.yaml k8s/staging/secrets.yaml
-            fi
-            kubectl apply -k k8s/staging/
-            kubectl rollout status deployment/gateway -n codebridge-staging --timeout=180s
-            kubectl rollout status deployment/auth-service -n codebridge-staging --timeout=180s
-            kubectl rollout status deployment/operations-service -n codebridge-staging --timeout=180s
-          else
-            kubectl apply -k auth-service/k8s/
-            kubectl rollout status deployment/auth-service -n codebridge --timeout=180s
-          fi
-          echo "✔ Kubernetes rollout complete."
