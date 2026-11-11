@@ -179,33 +179,26 @@ BASH;
         $this->assertStringContainsString('CHANGE_ME_', File::get($exampleSecret));
         $this->assertFileDoesNotExist($secretFile, 'Plaintext k8s/secret.yaml must not be stored in the repository.');
 
-        // kubectl kustomize validates manifest syntax and resource assembly offline without needing an active cluster in CI
-        $createdDummySecret = false;
-        if (! File::exists($secretFile) && File::exists($exampleSecret)) {
-            File::copy($exampleSecret, $secretFile);
-            $createdDummySecret = true;
-        }
+        // Verify deploy.sh enforces non-placeholder secret.yaml and applies it before Kustomize resources.
+        $deployScript = File::get("{$k8sDir}/deploy.sh");
+        $this->assertStringContainsString('CHANGE_ME_', $deployScript);
+        $this->assertStringContainsString('kubectl apply -f "${SCRIPT_DIR}/secret.yaml"', $deployScript);
 
-        try {
-            $result = Process::path($k8sDir)->run('kubectl kustomize .');
-            $this->assertTrue($result->successful(), "Kubernetes manifests failed kustomize validation: " . $result->errorOutput());
+        // kubectl kustomize must validate cleanly out-of-the-box without requiring untracked secret.yaml in CI.
+        $result = Process::path($k8sDir)->run('kubectl kustomize .');
+        $this->assertTrue($result->successful(), "Kubernetes manifests failed kustomize validation: " . $result->errorOutput());
 
-            $output = $result->output();
-            $this->assertStringContainsString('name: auth-service', $output);
-            $this->assertStringContainsString('name: auth-scheduler', $output);
-            $this->assertStringContainsString('name: api-gateway', $output);
-            $this->assertStringContainsString('kind: Deployment', $output);
-            $this->assertStringContainsString('kind: Service', $output);
-            $this->assertStringContainsString('kind: CronJob', $output);
-            $this->assertStringContainsString('kind: NetworkPolicy', $output);
-            $this->assertStringContainsString('name: restrict-auth-mysql-network', $output);
-            $this->assertStringContainsString('runAsNonRoot: true', $output);
-            $this->assertStringContainsString('allowPrivilegeEscalation: false', $output);
-        } finally {
-            if ($createdDummySecret && File::exists($secretFile)) {
-                File::delete($secretFile);
-            }
-        }
+        $output = $result->output();
+        $this->assertStringContainsString('name: auth-service', $output);
+        $this->assertStringContainsString('name: auth-scheduler', $output);
+        $this->assertStringContainsString('name: api-gateway', $output);
+        $this->assertStringContainsString('kind: Deployment', $output);
+        $this->assertStringContainsString('kind: Service', $output);
+        $this->assertStringContainsString('kind: CronJob', $output);
+        $this->assertStringContainsString('kind: NetworkPolicy', $output);
+        $this->assertStringContainsString('name: restrict-auth-mysql-network', $output);
+        $this->assertStringContainsString('runAsNonRoot: true', $output);
+        $this->assertStringContainsString('allowPrivilegeEscalation: false', $output);
     }
 
     /**

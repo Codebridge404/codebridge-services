@@ -60,6 +60,8 @@ cp secret.example.yaml secret.yaml
 > **Security Note:** `k8s/secret.yaml` is gitignored. Never commit real credentials to version control; use `secret.example.yaml`, SealedSecrets, or ExternalSecrets.
 Or manually (after creating `secret.yaml`):
 ```bash
+kubectl apply -f codebridge-services/auth-service/k8s/namespace.yaml
+kubectl apply -f codebridge-services/auth-service/k8s/secret.yaml
 kubectl apply -k codebridge-services/auth-service/k8s
 ```
 
@@ -127,6 +129,8 @@ For managed cloud providers:
    - Update `FILESYSTEM_DISK=s3` and S3 bucket credentials in `configmap.yaml` and `secret.yaml`.
 6. Apply to your cluster:
    ```bash
+   kubectl apply -f codebridge-services/auth-service/k8s/namespace.yaml
+   kubectl apply -f codebridge-services/auth-service/k8s/secret.yaml
    kubectl apply -k codebridge-services/auth-service/k8s
    ```
 

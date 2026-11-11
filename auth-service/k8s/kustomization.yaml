@@ -3,10 +3,12 @@ kind: Kustomization
 
 namespace: codebridge
 
+# Note: Secrets are intentionally excluded from Kustomize so untracked plaintext
+# secret.yaml files are never required for CI validation (apply secret.yaml
+# separately via k8s/deploy.sh, SealedSecrets, or ExternalSecrets).
 resources:
   - namespace.yaml
   - configmap.yaml
-  - secret.yaml
   - pvc.yaml
   - mysql.yaml
   - redis.yaml

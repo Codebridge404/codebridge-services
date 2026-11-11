@@ -59,7 +59,11 @@ if [[ "${CURRENT_CONTEXT}" == *"minikube"* ]]; then
     minikube image load codebridge-auth-service:latest || true
 fi
 
-# 3. Apply manifests using Kustomize
+# 3. Apply Namespace, validated Secret, and remaining manifests via Kustomize
+log_info "Applying Kubernetes namespace and secret..."
+kubectl apply -f "${SCRIPT_DIR}/namespace.yaml"
+kubectl apply -f "${SCRIPT_DIR}/secret.yaml"
+
 log_info "Applying Kubernetes manifests via Kustomize..."
 kubectl apply -k .
 
