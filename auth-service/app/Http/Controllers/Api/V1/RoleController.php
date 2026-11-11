@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Role\StoreRoleRequest;
 use App\Http\Requests\Role\UpdateRoleRequest;
 use App\Http\Resources\Role\RoleResource;
+use App\Models\Role;
 use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
@@ -33,6 +34,8 @@ class RoleController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorize('viewAny', Role::class);
+
         $currentUser = $request->user();
         $query = DB::table('roles');
 
@@ -66,6 +69,7 @@ class RoleController extends Controller
 
     public function store(StoreRoleRequest $request)
     {
+        $this->authorize('create', Role::class);
 
         $currentUser = $request->user();
         $isSuperAdmin = UserAuthorizationService::isSuperAdmin($currentUser);
@@ -128,10 +132,14 @@ class RoleController extends Controller
      */
     public function show($id)
     {
-        $role = DB::table('roles')->where('id', $id)->first();
-        if (!$role) {
+        $roleModel = Role::find($id);
+        if (!$roleModel) {
             return response()->json(['success' => false, 'message' => 'Role not found.'], 404);
         }
+
+        $this->authorize('view', $roleModel);
+
+        $role = DB::table('roles')->where('id', $id)->first();
 
         $role->is_system = (bool) $role->is_system;
 
@@ -155,14 +163,18 @@ class RoleController extends Controller
      */
     public function update(UpdateRoleRequest $request, $id)
     {
-        $role = DB::table('roles')->where('id', $id)->first();
-        if (!$role) {
+        $roleModel = Role::find($id);
+        if (!$roleModel) {
             return response()->json(['success' => false, 'message' => 'Role not found.'], 404);
         }
+
+        $role = DB::table('roles')->where('id', $id)->first();
 
         if ($role->is_system) {
             return response()->json(['success' => false, 'message' => 'System default roles cannot be modified.'], 422);
         }
+
+        $this->authorize('update', $roleModel);
 
         $currentUser = $request->user();
         if ($currentUser && !UserAuthorizationService::isSuperAdmin($currentUser) && !empty($currentUser->tenant_id)) {
@@ -205,14 +217,18 @@ class RoleController extends Controller
      */
     public function destroy(Request $request, $id)
     {
-        $role = DB::table('roles')->where('id', $id)->first();
-        if (!$role) {
+        $roleModel = Role::find($id);
+        if (!$roleModel) {
             return response()->json(['success' => false, 'message' => 'Role not found.'], 404);
         }
+
+        $role = DB::table('roles')->where('id', $id)->first();
 
         if ($role->is_system) {
             return response()->json(['success' => false, 'message' => 'System default roles cannot be deleted.'], 422);
         }
+
+        $this->authorize('delete', $roleModel);
 
         $currentUser = $request->user();
         if ($currentUser && !UserAuthorizationService::isSuperAdmin($currentUser) && !empty($currentUser->tenant_id)) {

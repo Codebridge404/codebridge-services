@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Route;
 |--------------------------------------------------------------------------
 */
 Route::middleware('role:super_admin,organization,admin')->group(function () {
+    Route::get('/notification-providers/stats', [NotificationProviderController::class, 'stats']);
     Route::get('/notification-providers', [NotificationProviderController::class, 'index']);
     Route::post('/notification-providers', [NotificationProviderController::class, 'store']);
     Route::get('/notification-providers/{id}', [NotificationProviderController::class, 'show']);

@@ -35,13 +35,37 @@ spec:
       labels:
         app.kubernetes.io/name: minio
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: init-buckets
-          image: busybox:latest
+          image: busybox:1.37
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
           command:
             - /bin/sh
             - -c
-            - mkdir -p /data/codebridge-auth/avatars && chmod -R 777 /data
+            - mkdir -p /data/codebridge-auth/avatars && chmod -R 750 /data
           volumeMounts:
             - name: minio-data
               mountPath: /data
@@ -49,6 +73,14 @@ spec:
         - name: minio
           image: minio/minio:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           command:
             - minio
             - server

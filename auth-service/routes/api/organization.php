@@ -29,7 +29,7 @@ Route::get('/customers', [CustomerController::class, 'index']);
 Route::middleware('role:organization,admin,super_admin,outlet_manager')->group(function () {
     Route::get('/audit-logs', [AuditLogController::class, 'index']);
     Route::get('/gift-cards', [GiftCardController::class, 'index']);
-    Route::post('/gift-cards', [GiftCardController::class, 'store']);
+    Route::post('/gift-cards', [GiftCardController::class, 'store'])->middleware('throttle:30,1');
 
     // Outlets CRUD & POS Business Profiles
     Route::get('/outlets/business-profiles', [OutletController::class, 'listBusinessProfiles']);
@@ -56,22 +56,24 @@ Route::middleware('role:organization,admin,super_admin,outlet_manager')->group(f
     Route::post('/customers', [CustomerController::class, 'store']);
     Route::put('/customers/{id}', [CustomerController::class, 'update']);
     Route::delete('/customers/{id}', [CustomerController::class, 'destroy']);
-    Route::post('/customers/{id}/store-credit', [CustomerLoyaltyController::class, 'adjustStoreCredit']);
-    Route::post('/customers/{id}/loyalty', [CustomerLoyaltyController::class, 'adjustLoyaltyPoints']);
-    Route::post('/customers/{id}/convert-points', [CustomerLoyaltyController::class, 'convertPointsToCredit']);
+    Route::middleware('throttle:30,1')->group(function () {
+        Route::post('/customers/{id}/store-credit', [CustomerLoyaltyController::class, 'adjustStoreCredit']);
+        Route::post('/customers/{id}/loyalty', [CustomerLoyaltyController::class, 'adjustLoyaltyPoints']);
+        Route::post('/customers/{id}/convert-points', [CustomerLoyaltyController::class, 'convertPointsToCredit']);
+        Route::post('/customers/{id}/credit/topup-invoice', [StoreCreditInvoiceController::class, 'topUp']);
+        Route::post('/vouchers/issue', [StoreCreditInvoiceController::class, 'issueVoucher']);
+        Route::post('/vouchers/redeem', [StoreCreditInvoiceController::class, 'redeemVoucher']);
+    });
     Route::get('/customers/{id}/history', [CustomerLoyaltyController::class, 'getHistory']);
 
     // Customer Store Credit Top-Up Invoicing, Statements & Expirations
-    Route::post('/customers/{id}/credit/topup-invoice', [StoreCreditInvoiceController::class, 'topUp']);
     Route::get('/customers/{id}/credit/invoices', [StoreCreditInvoiceController::class, 'customerInvoices']);
     Route::get('/customers/credit/invoices/{invoiceId}', [StoreCreditInvoiceController::class, 'showInvoice']);
     Route::get('/customers/{id}/credit/statement', [StoreCreditInvoiceController::class, 'statement']);
     Route::post('/customers/credit/process-expirations', [StoreCreditInvoiceController::class, 'expireNow']);
 
-    // Digital Vouchers Issuing & Redemptions
+    // Digital Vouchers Listing
     Route::get('/vouchers', [StoreCreditInvoiceController::class, 'vouchers']);
-    Route::post('/vouchers/issue', [StoreCreditInvoiceController::class, 'issueVoucher']);
-    Route::post('/vouchers/redeem', [StoreCreditInvoiceController::class, 'redeemVoucher']);
 
     // Employees CRUD
     Route::get('/employees', [EmployeeController::class, 'index']);

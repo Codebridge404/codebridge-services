@@ -53,6 +53,12 @@ class UserSession extends Model
             if (empty($session->uuid)) {
                 $session->uuid = (string) Str::uuid();
             }
+            if (empty($session->device_uuid)) {
+                $session->device_uuid = (string) Str::uuid();
+            }
+            if (empty($session->expires_at)) {
+                $session->expires_at = now()->addDays(30);
+            }
             if ($session->permissions === null) {
                 $session->permissions = [];
             }
@@ -73,6 +79,22 @@ class UserSession extends Model
     public function client(): BelongsTo
     {
         return $this->belongsTo(ApiClient::class, 'api_client_id');
+    }
+
+    /**
+     * Alias for client relationship.
+     */
+    public function apiClient(): BelongsTo
+    {
+        return $this->client();
+    }
+
+    /**
+     * Alias for currentRefreshToken relationship.
+     */
+    public function activeRefreshToken(): HasOne
+    {
+        return $this->currentRefreshToken();
     }
 
     /**

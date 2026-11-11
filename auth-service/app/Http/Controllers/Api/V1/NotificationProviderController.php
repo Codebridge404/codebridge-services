@@ -88,6 +88,53 @@ class NotificationProviderController extends Controller
     }
 
     /**
+     * Get aggregate statistics of notification providers.
+     * GET /api/v1/notification-providers/stats
+     */
+    public function stats(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $isSuperAdmin = UserAuthorizationService::isSuperAdmin($user);
+
+        $query = DB::table('notification_providers');
+
+        if (!$isSuperAdmin) {
+            abort_unless($user->tenant_id, 403, 'An active workspace membership is required.');
+            $query->where('tenant_id', $user->tenant_id);
+        } elseif ($request->filled('tenant_id')) {
+            $query->where('tenant_id', $request->integer('tenant_id'));
+        }
+
+        $total = (clone $query)->count();
+        $enabled = (clone $query)->where('is_enabled', true)->count();
+        $disabled = (clone $query)->where('is_enabled', false)->count();
+
+        $byChannel = (clone $query)
+            ->select('channel', DB::raw('count(*) as count'))
+            ->groupBy('channel')
+            ->pluck('count', 'channel')
+            ->toArray();
+
+        $byEnvironment = (clone $query)
+            ->select('environment', DB::raw('count(*) as count'))
+            ->groupBy('environment')
+            ->pluck('count', 'environment')
+            ->toArray();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'total_providers' => $total,
+                'enabled_count' => $enabled,
+                'disabled_count' => $disabled,
+                'by_channel' => $byChannel,
+                'by_environment' => $byEnvironment,
+            ],
+            'message' => 'Notification provider statistics retrieved successfully.',
+        ]);
+    }
+
+    /**
      * Register a new notification provider.
      *
      * POST /api/v1/notification-providers

@@ -32,14 +32,42 @@ spec:
       labels:
         app.kubernetes.io/name: auth-redis
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: redis
           image: redis:8-alpine
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           command:
-            - redis-server
-            - --appendonly
-            - "yes"
+            - /bin/sh
+            - -c
+            - |
+              if [ -n "${REDIS_PASSWORD:-}" ] && [ "${REDIS_PASSWORD:-}" != "null" ]; then
+                exec redis-server --appendonly yes --requirepass "${REDIS_PASSWORD}"
+              else
+                exec redis-server --appendonly yes
+              fi
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: auth-secret
+                  key: REDIS_PASSWORD
+                  optional: true
           ports:
             - containerPort: 6379
               name: redis
@@ -56,15 +84,27 @@ spec:
           livenessProbe:
             exec:
               command:
-                - redis-cli
-                - ping
+                - /bin/sh
+                - -c
+                - |
+                  if [ -n "${REDIS_PASSWORD:-}" ] && [ "${REDIS_PASSWORD:-}" != "null" ]; then
+                    redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" ping | grep -q PONG
+                  else
+                    redis-cli ping | grep -q PONG
+                  fi
             initialDelaySeconds: 15
             periodSeconds: 10
           readinessProbe:
             exec:
               command:
-                - redis-cli
-                - ping
+                - /bin/sh
+                - -c
+                - |
+                  if [ -n "${REDIS_PASSWORD:-}" ] && [ "${REDIS_PASSWORD:-}" != "null" ]; then
+                    redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" ping | grep -q PONG
+                  else
+                    redis-cli ping | grep -q PONG
+                  fi
             initialDelaySeconds: 5
             periodSeconds: 5
       volumes:

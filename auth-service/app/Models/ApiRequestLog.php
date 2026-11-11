@@ -50,6 +50,36 @@ class ApiRequestLog extends Model
         'created_at' => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        static::creating(function (ApiRequestLog $log) {
+            if (empty($log->uuid)) {
+                $log->uuid = (string) \Illuminate\Support\Str::uuid();
+            }
+            if (empty($log->request_id)) {
+                $log->request_id = (string) \Illuminate\Support\Str::uuid();
+            }
+            if (empty($log->service_name)) {
+                $log->service_name = 'auth-service';
+            }
+            if (empty($log->environment)) {
+                $log->environment = config('app.env', 'production');
+            }
+            if (! isset($log->duration_ms)) {
+                $log->duration_ms = 0;
+            }
+            if (empty($log->method)) {
+                $log->method = 'GET';
+            }
+            if (empty($log->path)) {
+                $log->path = '/';
+            }
+            if (empty($log->created_at)) {
+                $log->created_at = now();
+            }
+        });
+    }
+
     /**
      * Get the user associated with this request log.
      */

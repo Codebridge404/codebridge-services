@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
             SubscriptionPlanSeeder::class,
             PaymentProviderAccountSeeder::class,
             ApiClientSeeder::class,
+            NotificationProviderSeeder::class,
         ]);
 
         // 1. Seed Platform Super Admin account

@@ -78,10 +78,19 @@ class GiftCardController extends Controller
     public function store(StoreGiftCardRequest $request)
     {
         $tenantId = $this->getTenantId($request);
+        abort_unless(
+            ! empty($tenantId) || \App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($request->user()),
+            403,
+            'Workspace tenant context is required.'
+        );
         $validated = $request->validated();
 
-        $cardNumber = $validated['card_number'] ?? $validated['card_code'] ?? ('GC-' . rand(1000, 9999) . '-' . rand(1000, 9999));
+        $cardNumber = $validated['card_number'] ?? $validated['card_code']
+            ?? ('GC-' . Str::upper(Str::random(4)) . '-' . random_int(1000, 9999));
         $initialValue = (float) ($validated['initial_value'] ?? $validated['balance'] ?? 0.00);
+        if ($initialValue <= 0) {
+            return response()->json(['status' => 'error', 'message' => 'Initial gift card value must be greater than zero.'], 422);
+        }
 
         $id = DB::table('gift_cards')->insertGetId([
             'tenant_id' => $tenantId,
@@ -112,6 +121,11 @@ class GiftCardController extends Controller
     public function checkBalance(Request $request)
     {
         $tenantId = $this->getTenantId($request);
+        abort_unless(
+            ! empty($tenantId) || \App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($request->user()),
+            403,
+            'Workspace tenant context is required.'
+        );
         $code = $request->input('card_number') ?? $request->input('card_code');
 
         $query = DB::table('gift_cards')->where('card_number', $code);
@@ -142,8 +156,17 @@ class GiftCardController extends Controller
     public function redeem(Request $request)
     {
         $tenantId = $this->getTenantId($request);
+        abort_unless(
+            ! empty($tenantId) || \App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($request->user()),
+            403,
+            'Workspace tenant context is required.'
+        );
         $code = $request->input('card_number') ?? $request->input('card_code');
         $amount = (float) $request->input('amount', 0);
+
+        if (empty($code)) {
+            return response()->json(['status' => 'error', 'message' => 'Gift card number is required.'], 422);
+        }
 
         if ($amount <= 0) {
             return response()->json(['status' => 'error', 'message' => 'Redemption amount must be greater than zero.'], 422);

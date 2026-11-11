@@ -207,36 +207,104 @@ class AuthenticateJwt
             }
         } elseif ($token && substr_count($token, '.') !== 2) {
             $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
-            if ($accessToken) {
-                $user = $accessToken->tokenable;
-                if (! $user) {
-                    return response()->json([
-                        'status' => 'error',
-                        'code' => 'USER_NOT_FOUND',
-                        'message' => 'User account does not exist or has been deleted.',
-                    ], 401);
-                }
-
-                if (! $user->is_active) {
-                    return response()->json([
-                        'status' => 'error',
-                        'code' => 'ACCOUNT_DEACTIVATED',
-                        'message' => 'User account is deactivated.',
-                    ], 401);
-                }
-
-                if ($user->isLockedOut()) {
-                    return response()->json([
-                        'status' => 'error',
-                        'code' => 'ACCOUNT_LOCKED_OUT',
-                        'message' => 'User account is temporarily locked out.',
-                    ], 401);
-                }
-
-                Auth::setUser($user);
-                Auth::guard('sanctum')->setUser($user);
-                $request->setUserResolver(fn () => $user);
+            if (! $accessToken) {
+                Auth::forgetGuards();
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'TOKEN_INVALID',
+                    'message' => 'Token is invalid or has been revoked.',
+                ], 401);
             }
+
+            // [P1] Enforce explicit token expiration on Sanctum PersonalAccessToken
+            if ($accessToken->expires_at && $accessToken->expires_at->isPast()) {
+                Auth::forgetGuards();
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'TOKEN_EXPIRED',
+                    'message' => 'Token has expired.',
+                ], 401);
+            }
+
+            // [P1] Enforce configured Sanctum expiration minutes
+            $expiration = config('sanctum.expiration');
+            if ($expiration && $accessToken->created_at && $accessToken->created_at->lte(now()->subMinutes((int) $expiration))) {
+                Auth::forgetGuards();
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'TOKEN_EXPIRED',
+                    'message' => 'Token has expired.',
+                ], 401);
+            }
+
+            // [P1] Enforce custom hard session expiration on Sanctum PersonalAccessToken
+            if (! empty($accessToken->session_expires_at) && \Illuminate\Support\Carbon::parse($accessToken->session_expires_at)->isPast()) {
+                $accessToken->delete();
+                Auth::forgetGuards();
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'SESSION_EXPIRED',
+                    'message' => 'Session has expired.',
+                ], 401);
+            }
+
+            $user = $accessToken->tokenable;
+            if (! $user) {
+                Auth::forgetGuards();
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'USER_NOT_FOUND',
+                    'message' => 'User account does not exist or has been deleted.',
+                ], 401);
+            }
+
+            // [P1] Enforce account session inactivity timeout policy
+            $inactivityDays = $user->session_inactivity_days ?: 180;
+            $lastActive = $accessToken->last_used_at
+                ? \Illuminate\Support\Carbon::parse($accessToken->last_used_at)
+                : ($accessToken->created_at ? \Illuminate\Support\Carbon::parse($accessToken->created_at) : null);
+
+            if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
+                $accessToken->delete();
+                Auth::forgetGuards();
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'SESSION_EXPIRED',
+                    'message' => 'Session has expired due to inactivity.',
+                ], 401);
+            }
+
+            if (! $user->is_active) {
+                Auth::forgetGuards();
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'ACCOUNT_DEACTIVATED',
+                    'message' => 'User account is deactivated.',
+                ], 401);
+            }
+
+            if ($user->isLockedOut()) {
+                Auth::forgetGuards();
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'ACCOUNT_LOCKED_OUT',
+                    'message' => 'User account is temporarily locked out.',
+                ], 401);
+            }
+
+            // Throttle updating last_used_at to at most once every 60 seconds
+            if (! $accessToken->last_used_at || \Illuminate\Support\Carbon::parse($accessToken->last_used_at)->diffInSeconds(now()) >= 60) {
+                $accessToken->forceFill(['last_used_at' => now()])->save();
+            }
+
+            // [P1] Attach validated credential to user so abilities, currentAccessToken and logout operate on it
+            $user->withAccessToken($accessToken);
+
+            Auth::setUser($user);
+            Auth::guard('sanctum')->setUser($user);
+            $request->setUserResolver(fn () => $user);
+            $request->attributes->set('auth_user_id', $user->id);
+            $request->attributes->set('auth_tenant_id', $user->tenant_id);
         }
 
         return $next($request);

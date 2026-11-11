@@ -92,6 +92,9 @@ class RateLimitAuthMiddleware
             '*/auth/login',
             '*/auth/quick-switch',
             '*/auth/verify-pin',
+            '*/auth/verify-invite',
+            '*/auth/accept-invite',
+            '*/auth/password',
             '*/auth/2fa/*',
             'api/v1/auth/2fa/*'
         );

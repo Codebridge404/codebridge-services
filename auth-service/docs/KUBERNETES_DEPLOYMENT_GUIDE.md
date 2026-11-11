@@ -50,12 +50,15 @@ docker build -t codebridge-auth-service:latest codebridge-services/auth-service
 minikube image load codebridge-auth-service:latest
 ```
 
-### Step 3: Deploy All Manifests via Kustomize
+### Step 3: Configure Secrets & Deploy All Manifests via Kustomize
 ```bash
 cd codebridge-services/auth-service/k8s
+cp secret.example.yaml secret.yaml
+# Edit secret.yaml with real production APP_KEY, JWT_SECRET, DB_PASSWORD, REDIS_PASSWORD, and MINIO_ROOT_PASSWORD
 ./deploy.sh
 ```
-Or manually:
+> **Security Note:** `k8s/secret.yaml` is gitignored. Never commit real credentials to version control; use `secret.example.yaml`, SealedSecrets, or ExternalSecrets.
+Or manually (after creating `secret.yaml`):
 ```bash
 kubectl apply -k codebridge-services/auth-service/k8s
 ```
@@ -113,14 +116,16 @@ open http://localhost:8080/docs/api
 ## 4. Production Cloud Deployment (AWS EKS / GCP GKE)
 
 For managed cloud providers:
-1. Update `codebridge-services/auth-service/k8s/secret.yaml` with your production `APP_KEY`, `JWT_SECRET`, and managed database credentials.
-2. If using managed AWS RDS or GCP Cloud SQL:
+1. Copy `codebridge-services/auth-service/k8s/secret.example.yaml` to `codebridge-services/auth-service/k8s/secret.yaml` (never commit `secret.yaml`) and replace every `CHANGE_ME_*` value with generated production `APP_KEY`, `JWT_SECRET`, Redis password, and managed database credentials (or inject via SealedSecrets/ExternalSecrets).
+2. Pin immutable container image tags/digests (`codebridge-auth-service@sha256:...` or release tag) instead of `:latest` using `kustomize edit set image` in your deployment pipeline.
+3. Network segmentation (`k8s/networkpolicy.yaml`) enforces default-deny ingress and restricts `auth-mysql:3306`, `auth-redis:6379`, and `minio:9000` strictly to `auth-service`, `auth-horizon`, `auth-scheduler`, and `auth-migration` pods.
+4. If using managed AWS RDS or GCP Cloud SQL:
    - Remove `mysql.yaml` from `kustomization.yaml`.
    - Update `DB_HOST` in `configmap.yaml` with your RDS endpoint.
-3. If using AWS S3 instead of MinIO:
+5. If using AWS S3 instead of MinIO:
    - Remove `minio.yaml` from `kustomization.yaml`.
    - Update `FILESYSTEM_DISK=s3` and S3 bucket credentials in `configmap.yaml` and `secret.yaml`.
-4. Apply to your cluster:
+6. Apply to your cluster:
    ```bash
    kubectl apply -k codebridge-services/auth-service/k8s
    ```

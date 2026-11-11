@@ -45,6 +45,13 @@ class StoreCreditService
         ?int $outletId = null,
         ?string $tenantId = null
     ): array {
+        if ($amountPaid <= 0) {
+            throw new \InvalidArgumentException('Top-up payment amount must be greater than zero.');
+        }
+        if ($bonusCredit < 0) {
+            throw new \InvalidArgumentException('Bonus credit cannot be negative.');
+        }
+
         return DB::transaction(function () use (
             $customer,
             $amountPaid,
@@ -132,6 +139,10 @@ class StoreCreditService
         ?string $tenantId = null,
         ?string $notes = null
     ): DigitalVoucher {
+        if ($value <= 0) {
+            throw new \InvalidArgumentException('Digital voucher value must be greater than zero.');
+        }
+
         $voucherCode = 'VCH-' . date('Y') . '-' . strtoupper(Str::random(4)) . '-' . strtoupper(Str::random(4));
         $expiresAt = Carbon::now()->addDays($validityDays ?? 90);
 

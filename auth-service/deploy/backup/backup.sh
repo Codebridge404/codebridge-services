@@ -26,6 +26,23 @@ log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
+write_sha256() {
+    local FILE="$1"
+    local DIRNAME
+    local BASENAME
+    DIRNAME="$(dirname "${FILE}")"
+    BASENAME="$(basename "${FILE}")"
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "${DIRNAME}" && sha256sum "${BASENAME}" > "${BASENAME}.sha256")
+    elif command -v shasum >/dev/null 2>&1; then
+        (cd "${DIRNAME}" && shasum -a 256 "${BASENAME}" > "${BASENAME}.sha256")
+    else
+        log_error "Neither sha256sum nor shasum is installed to generate integrity manifests."
+        return 1
+    fi
+}
+
 mkdir -p "${TARGET_DIR}"
 
 log_info "--------------------------------------------------------"
@@ -71,12 +88,12 @@ if [ -n "${MYSQL_CONTAINER}" ]; then
     fi
 
     # Verify integrity
-    if gzip -t "${SQL_FILE}" 2>/dev/null; then
+    if gzip -t "${SQL_FILE}" 2>/dev/null && write_sha256 "${SQL_FILE}"; then
         FILE_SIZE="$(du -h "${SQL_FILE}" | cut -f1)"
-        log_success "MySQL database backup created & verified (${FILE_SIZE}): ${SQL_FILE}"
+        log_success "MySQL database backup created & SHA-256 verified (${FILE_SIZE}): ${SQL_FILE}"
     else
         log_error "MySQL backup integrity check failed!"
-        rm -f "${SQL_FILE}"
+        rm -f "${SQL_FILE}" "${SQL_FILE}.sha256"
     fi
 else
     log_warn "MySQL container not found. Skipping database backup."
@@ -92,12 +109,12 @@ if [ -n "${MINIO_CONTAINER}" ]; then
     # Stream container data directory as tar archive via Docker daemon and gzip
     docker cp "${MINIO_CONTAINER}:/data" - 2>/dev/null | gzip -9 > "${MEDIA_FILE}" || true
 
-    if gzip -t "${MEDIA_FILE}" 2>/dev/null && [ -s "${MEDIA_FILE}" ]; then
+    if gzip -t "${MEDIA_FILE}" 2>/dev/null && [ -s "${MEDIA_FILE}" ] && write_sha256 "${MEDIA_FILE}"; then
         FILE_SIZE="$(du -h "${MEDIA_FILE}" | cut -f1)"
-        log_success "MinIO images backup created & verified (${FILE_SIZE}): ${MEDIA_FILE}"
+        log_success "MinIO images backup created & SHA-256 verified (${FILE_SIZE}): ${MEDIA_FILE}"
     else
         log_warn "MinIO archive empty or failed. Removing partial file."
-        rm -f "${MEDIA_FILE}"
+        rm -f "${MEDIA_FILE}" "${MEDIA_FILE}.sha256"
     fi
 else
     log_warn "MinIO container not found. Skipping image storage backup."
@@ -123,9 +140,11 @@ if docker images --format "{{.Repository}}:{{.Tag}}" | grep -q "^${IMAGE_NAME}$"
     IMAGE_FILE="${TARGET_DIR}/docker_image_$(echo "${IMAGE_NAME}" | tr ':/-' '_')_${TIMESTAMP}.tar.gz"
     
     docker save "${IMAGE_NAME}" | gzip -9 > "${IMAGE_FILE}"
-    if gzip -t "${IMAGE_FILE}" 2>/dev/null; then
+    if gzip -t "${IMAGE_FILE}" 2>/dev/null && write_sha256 "${IMAGE_FILE}"; then
         FILE_SIZE="$(du -h "${IMAGE_FILE}" | cut -f1)"
-        log_success "Docker image snapshot created & verified (${FILE_SIZE}): ${IMAGE_FILE}"
+        log_success "Docker image snapshot created & SHA-256 verified (${FILE_SIZE}): ${IMAGE_FILE}"
+    else
+        rm -f "${IMAGE_FILE}" "${IMAGE_FILE}.sha256"
     fi
 else
     log_info "Release image [${IMAGE_NAME}] not found locally. Skipping image snapshot."
@@ -138,17 +157,17 @@ log_info "Applying retention cleanup for [${BACKUP_TYPE}] backups..."
 case "${BACKUP_TYPE}" in
     daily)
         # Keep last 7 days
-        find "${TARGET_DIR}" -type f -mtime +7 -name "*.gz" -delete
+        find "${TARGET_DIR}" -type f -mtime +7 \( -name "*.gz" -o -name "*.sha256" \) -delete
         log_success "Retention enforced: Daily backups older than 7 days pruned."
         ;;
     weekly)
         # Keep last 4 weeks (28 days)
-        find "${TARGET_DIR}" -type f -mtime +28 -name "*.gz" -delete
+        find "${TARGET_DIR}" -type f -mtime +28 \( -name "*.gz" -o -name "*.sha256" \) -delete
         log_success "Retention enforced: Weekly backups older than 28 days pruned."
         ;;
     monthly)
         # Keep last 12 months (365 days)
-        find "${TARGET_DIR}" -type f -mtime +365 -name "*.gz" -delete
+        find "${TARGET_DIR}" -type f -mtime +365 \( -name "*.gz" -o -name "*.sha256" \) -delete
         log_success "Retention enforced: Monthly backups older than 365 days pruned."
         ;;
 esac

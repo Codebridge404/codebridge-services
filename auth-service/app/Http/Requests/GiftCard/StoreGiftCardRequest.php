@@ -24,8 +24,8 @@ class StoreGiftCardRequest extends FormRequest
         return [
             'card_number' => ['nullable', 'string', 'max:50'],
             'card_code' => ['nullable', 'string', 'max:50'],
-            'initial_value' => ['nullable', 'numeric', 'min:0.01'],
-            'balance' => ['nullable', 'numeric', 'min:0.01'],
+            'initial_value' => ['required_without:balance', 'nullable', 'numeric', 'min:0.01'],
+            'balance' => ['required_without:initial_value', 'nullable', 'numeric', 'min:0.01'],
             'currency' => ['nullable', 'string', 'size:3'],
             'customer' => ['nullable', 'string'],
             'expires_at' => ['nullable', 'date'],

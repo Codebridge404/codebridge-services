@@ -22,7 +22,7 @@ class AdjustStoreCreditRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'amount_change' => ['required', 'numeric'],
+            'amount_change' => ['required', 'numeric', 'not_in:0'],
             'entry_type' => ['required', 'string', 'in:deposit,refund_credit,checkout_use,points_conversion,adjustment'],
             'reference_id' => ['nullable', 'string'],
             'notes' => ['nullable', 'string', 'max:255'],

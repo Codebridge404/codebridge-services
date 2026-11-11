@@ -59,6 +59,11 @@ Route::prefix('v1')->group(function () {
         require __DIR__ . '/api/organization.php';
         require __DIR__ . '/api/notification_providers.php';
         require __DIR__ . '/api/crm.php';
+        require __DIR__ . '/api/security_events.php';
+        require __DIR__ . '/api/request_logs.php';
+        require __DIR__ . '/api/refresh_tokens.php';
+        require __DIR__ . '/api/user_sessions.php';
+        require __DIR__ . '/api/telegram_alerts.php';
         Route::middleware('meeting_access')->group(function () {
             require __DIR__ . '/api/meetings.php';
         });

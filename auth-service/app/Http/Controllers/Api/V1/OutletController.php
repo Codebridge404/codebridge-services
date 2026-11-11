@@ -8,6 +8,7 @@ use App\Http\Requests\Outlet\UpdateBusinessProfileRequest;
 use App\Http\Requests\Outlet\UpdateOutletRequest;
 use App\Http\Requests\Outlet\UpdateTerminalSettingsRequest;
 use App\Http\Resources\Outlet\OutletResource;
+use App\Models\Outlet;
 use App\Services\PosBusinessProfileService;
 use App\Support\SchemaGuard;
 use App\Support\TenantSettingsCache;
@@ -55,6 +56,8 @@ class OutletController extends Controller
 
     public function index(Request $request)
     {
+        $this->authorize('viewAny', Outlet::class);
+
         $user = $request->user();
         $search = $request->query('q');
 
@@ -115,6 +118,8 @@ class OutletController extends Controller
 
     public function store(StoreOutletRequest $request)
     {
+        $this->authorize('create', Outlet::class);
+
         $user = $request->user();
         $validated = $request->validated();
 
@@ -161,15 +166,12 @@ class OutletController extends Controller
     public function update(UpdateOutletRequest $request, $id)
     {
         $user = $request->user();
-        $outlet = DB::table('outlets')->where('id', $id)->first();
-        if (!$outlet) {
+        $outletModel = Outlet::find($id);
+        if (!$outletModel) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user) && !empty($user->tenant_id)) {
-            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
-                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
-            }
-        }
+        $this->authorize('update', $outletModel);
+        $outlet = DB::table('outlets')->where('id', $id)->first();
 
         $validated = $request->validated();
 
@@ -258,15 +260,12 @@ class OutletController extends Controller
     public function updateBusinessProfile(UpdateBusinessProfileRequest $request, $id)
     {
         $user = $request->user();
-        $outlet = DB::table('outlets')->where('id', $id)->first();
-        if (!$outlet) {
+        $outletModel = Outlet::find($id);
+        if (!$outletModel) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user) && !empty($user->tenant_id)) {
-            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
-                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
-            }
-        }
+        $this->authorize('update', $outletModel);
+        $outlet = DB::table('outlets')->where('id', $id)->first();
 
         $validated = $request->validated();
 
@@ -367,15 +366,12 @@ class OutletController extends Controller
     public function updateTerminalSettings(UpdateTerminalSettingsRequest $request, $id)
     {
         $user = $request->user();
-        $outlet = DB::table('outlets')->where('id', $id)->first();
-        if (!$outlet) {
+        $outletModel = Outlet::find($id);
+        if (!$outletModel) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user) && !empty($user->tenant_id)) {
-            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
-                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
-            }
-        }
+        $this->authorize('update', $outletModel);
+        $outlet = DB::table('outlets')->where('id', $id)->first();
 
         $validated = $request->validated();
 
@@ -458,15 +454,12 @@ class OutletController extends Controller
     public function destroy(Request $request, $id)
     {
         $user = $request->user();
-        $outlet = DB::table('outlets')->where('id', $id)->first();
-        if (!$outlet) {
+        $outletModel = Outlet::find($id);
+        if (!$outletModel) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found.'], 404);
         }
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user) && !empty($user->tenant_id)) {
-            if ($outlet->tenant_id && $outlet->tenant_id != $user->tenant_id) {
-                return response()->json(['status' => 'error', 'message' => 'Unauthorized access to outlet.'], 403);
-            }
-        }
+        $this->authorize('delete', $outletModel);
+        $outlet = DB::table('outlets')->where('id', $id)->first();
 
         DB::table('outlets')->where('id', $id)->update([
             'is_active' => false,
@@ -487,10 +480,12 @@ class OutletController extends Controller
     public function updateReceiptBranding(Request $request, $id)
     {
         \App\Services\TenantAccess::record('outlets', $id, $request);
-        $outlet = DB::table('outlets')->where('id', $id)->first();
-        if (!$outlet) {
+        $outletModel = Outlet::find($id);
+        if (!$outletModel) {
             return response()->json(['status' => 'error', 'message' => 'Outlet not found'], 404);
         }
+        $this->authorize('update', $outletModel);
+        $outlet = DB::table('outlets')->where('id', $id)->first();
 
         $validated = $request->validate([
             'logo' => 'nullable|file|image|mimes:jpeg,png,jpg,webp,gif|max:10240',

@@ -387,5 +387,132 @@ class TwoFactorAuthenticationTest extends TestCase
         // Now the secret is updated
         $this->assertEquals($replacementSecret, $this->twoFactorService->getDecryptedSecret($user));
     }
+
+    public function test_2fa_challenge_locks_out_after_five_failed_attempts(): void
+    {
+        $password = 'Lockout2faPass123!';
+        $user = User::factory()->create([
+            'email' => 'twofactor.lockout@codebridge.dev',
+            'password' => Hash::make($password),
+            'two_factor_enabled' => true,
+            'is_active' => true,
+        ]);
+
+        $secret = $this->twoFactorService->generateSecretKey(32);
+        $this->twoFactorService->storeSecret($user, $secret);
+
+        $loginRes = $this->postJson('/api/v1/auth/login', [
+            'email' => 'twofactor.lockout@codebridge.dev',
+            'password' => $password,
+        ])->assertStatus(403);
+
+        $challengeToken = $loginRes->json('challenge_token');
+
+        // Repeated wrong 2FA challenge submissions must lock out by attempt 5-6 (HTTP 429)
+        $lockedResponse = null;
+        for ($i = 1; $i <= 6; $i++) {
+            $res = $this->postJson('/api/v1/auth/2fa/challenge', [
+                'challenge_token' => $challengeToken,
+                'code' => '000000',
+            ]);
+
+            if ($res->getStatusCode() === 429) {
+                $lockedResponse = $res;
+                break;
+            }
+
+            $res->assertStatus(422);
+        }
+
+        $this->assertNotNull($lockedResponse, 'Expected HTTP 429 lockout after repeated failed 2FA attempts.');
+        $lockedResponse->assertStatus(429)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'ACCOUNT_LOCKED_OUT',
+            ])
+            ->assertHeader('Retry-After');
+
+        // Even submitting a valid TOTP code while locked out must remain blocked with 429
+        $validCode = $this->twoFactorService->calculateCode($secret);
+        $this->postJson('/api/v1/auth/2fa/challenge', [
+            'challenge_token' => $challengeToken,
+            'code' => $validCode,
+        ])->assertStatus(429)->assertJsonPath('code', 'ACCOUNT_LOCKED_OUT');
+    }
+
+    public function test_used_2fa_recovery_code_cannot_be_replayed(): void
+    {
+        $password = 'RecoveryReplay2026!';
+        $user = User::factory()->create([
+            'email' => 'twofactor.replay@codebridge.dev',
+            'password' => Hash::make($password),
+            'two_factor_enabled' => true,
+            'is_active' => true,
+        ]);
+
+        $secret = $this->twoFactorService->generateSecretKey(32);
+        $this->twoFactorService->storeSecret($user, $secret);
+        $this->twoFactorService->storeRecoveryCodes($user, ['REPLAY-1111', 'REPLAY-2222']);
+
+        $login1 = $this->postJson('/api/v1/auth/login', [
+            'email' => 'twofactor.replay@codebridge.dev',
+            'password' => $password,
+        ])->assertStatus(403);
+
+        $this->postJson('/api/v1/auth/2fa/challenge', [
+            'challenge_token' => $login1->json('challenge_token'),
+            'code' => 'REPLAY-1111',
+        ])->assertStatus(200);
+
+        // Fresh login challenge must reject the already-consumed recovery code
+        $login2 = $this->postJson('/api/v1/auth/login', [
+            'email' => 'twofactor.replay@codebridge.dev',
+            'password' => $password,
+        ])->assertStatus(403);
+
+        $this->postJson('/api/v1/auth/2fa/challenge', [
+            'challenge_token' => $login2->json('challenge_token'),
+            'code' => 'REPLAY-1111',
+        ])->assertStatus(422);
+    }
+
+    public function test_recovery_codes_view_and_regeneration_require_fresh_reauthentication(): void
+    {
+        $password = 'ReauthSecret2026!';
+        $user = User::factory()->create([
+            'email' => 'twofactor.reauth@codebridge.dev',
+            'password' => Hash::make($password),
+            'two_factor_enabled' => true,
+            'is_active' => true,
+        ]);
+
+        $secret = $this->twoFactorService->generateSecretKey(32);
+        $this->twoFactorService->storeSecret($user, $secret);
+        $this->twoFactorService->storeRecoveryCodes($user, ['INIT-1111', 'INIT-2222']);
+
+        Sanctum::actingAs($user, ['*']);
+
+        // Unconfirmed requests without password or valid TOTP must be rejected with 403
+        $this->getJson('/api/v1/auth/2fa/recovery-codes')->assertStatus(403);
+        $this->postJson('/api/v1/auth/2fa/recovery-codes')->assertStatus(403);
+        $this->postJson('/api/v1/auth/2fa/recovery-codes', ['password' => 'WrongPass!'])->assertStatus(403);
+
+        // Valid password reauthentication returns active recovery codes with no-store header
+        $viewRes = $this->withHeader('X-Reauth-Password', $password)
+            ->getJson('/api/v1/auth/2fa/recovery-codes');
+        $viewRes->assertStatus(200)
+            ->assertJsonPath('recovery_codes', ['INIT-1111', 'INIT-2222']);
+        $this->assertStringContainsString('no-store', (string) $viewRes->headers->get('Cache-Control'));
+
+        // Valid TOTP code regenerates recovery codes and invalidates old codes
+        $validCode = $this->twoFactorService->calculateCode($secret);
+        $regenRes = $this->postJson('/api/v1/auth/2fa/recovery-codes', [
+            'code' => $validCode,
+        ]);
+        $regenRes->assertStatus(200);
+        $newCodes = $regenRes->json('recovery_codes');
+        $this->assertCount(8, $newCodes);
+        $this->assertNotContains('INIT-1111', $newCodes);
+    }
 }
 

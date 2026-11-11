@@ -24,6 +24,17 @@ log_info "--------------------------------------------------------"
 log_info "Deploying CodeBridges Auth Service to Kubernetes"
 log_info "--------------------------------------------------------"
 
+# 0. Verify secret.yaml exists and has no unreplaced template placeholders
+if [ ! -f "${SCRIPT_DIR}/secret.yaml" ]; then
+    log_error "Missing k8s/secret.yaml! Copy k8s/secret.example.yaml to k8s/secret.yaml and populate real credentials first."
+    exit 1
+fi
+
+if grep -q "CHANGE_ME_" "${SCRIPT_DIR}/secret.yaml"; then
+    log_error "k8s/secret.yaml still contains CHANGE_ME_ placeholder values. Refusing to deploy."
+    exit 1
+fi
+
 # 1. Verify kubectl connectivity
 if ! kubectl cluster-info >/dev/null 2>&1; then
     log_warn "Kubernetes cluster is not currently reachable."

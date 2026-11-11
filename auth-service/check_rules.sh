@@ -27,14 +27,14 @@ run_rule_check() {
     local CMD="$3"
 
     echo -e "${YELLOW}[Rule ${RULE_NUM}] Checking: ${RULE_NAME}...${NC}"
-    
-    if eval "${CMD}" > /dev/null 2>&1; then
+
+    local OUTPUT
+    if OUTPUT=$(eval "${CMD}" 2>&1) && ! printf '%s' "${OUTPUT}" | grep -q "No tests found"; then
         echo -e "  ${GREEN}✔ PASS${NC} - ${RULE_NAME}\n"
     else
         echo -e "  ${RED}✘ FAIL${NC} - ${RULE_NAME}\n"
         echo -e "${RED}Detailed error output:${NC}"
-        eval "${CMD}" || true
-        echo ""
+        printf '%s\n\n' "${OUTPUT}"
         FAILED_RULES=$((FAILED_RULES + 1))
     fi
 }
@@ -49,49 +49,49 @@ run_rule_check "1" "Unit Testing (Methods, Classes & Domain Models)" \
 # 2. Functional & API Testing
 # ------------------------------------------------------------------------------
 run_rule_check "2" "Functional & API Testing (Endpoints, Responses & Status Codes)" \
-    "php artisan test --filter=AuthTest,AdminTest,ApiKeysTest,TenantsTest,UsersTest,UserInvitationTest"
+    "php artisan test --filter='AuthTest|AdminTest|ApiKeysTest|TenantsTest|UsersTest|UserInvitationTest'"
 
 # ------------------------------------------------------------------------------
 # 3. Input Validation Testing
 # ------------------------------------------------------------------------------
 run_rule_check "3" "Validation Testing (Rejection of Invalid / Malformed Inputs)" \
-    "php artisan test --filter=InputValidationSecurityTest"
+    "php artisan test --filter='InputValidationSecurityTest'"
 
 # ------------------------------------------------------------------------------
 # 4. Authentication Testing
 # ------------------------------------------------------------------------------
-run_rule_check "4" "Authentication Testing (Login, JWT Lifecycle, 2FA & Logout)" \
-    "php artisan test --filter=AuthTest,TwoFactorAuthenticationTest"
+run_rule_check "4" "Authentication Testing (Login, JWT Lifecycle, 2FA, Session Revocation & Logout)" \
+    "php artisan test --filter='AuthTest|JwtAuthenticationTest|TwoFactorAuthenticationTest|SessionsSecurityTest|RejectExpiredSanctumTokenTest|UserSessionRotationFlowTest'"
 
 # ------------------------------------------------------------------------------
 # 5. Authorization & RBAC Testing
 # ------------------------------------------------------------------------------
-run_rule_check "5" "Authorization Testing (RBAC, Scopes & Super Admin Boundaries)" \
-    "php artisan test --filter=RolesPermissionsTest,SuperAdminTest"
+run_rule_check "5" "Authorization Testing (Policies, RBAC, Scopes & Super Admin Boundaries)" \
+    "php artisan test --filter='RolesPermissionsTest|SuperAdminTest|PolicySecurityEnforcementTest'"
 
 # ------------------------------------------------------------------------------
 # 6. Security & Tenant Isolation Testing
 # ------------------------------------------------------------------------------
-run_rule_check "6" "Security Testing (SQLi, XSS, Tenant Isolation, Audit Redaction)" \
-    "php artisan test --filter=PrivilegeAndTenantIsolationSecurityTest,LoggingAndAuditSecurityTest"
+run_rule_check "6" "Security Testing (WAF, SQLi, XSS, Tenant Isolation, Financial & Log Redaction)" \
+    "php artisan test --filter='ProtectAttackMiddlewareTest|PrivilegeAndTenantIsolationSecurityTest|LoggingAndAuditSecurityTest|FinancialAndApiHardeningTest|StepFiveHardeningTest'"
 
 # ------------------------------------------------------------------------------
 # 7. Integration Testing
 # ------------------------------------------------------------------------------
 run_rule_check "7" "Integration Testing (Database Transactions, Redis & MinIO WebP Uploads)" \
-    "php artisan test --filter=AvatarUploadTest,UserRelationshipsTest"
+    "php artisan test --filter='AvatarUploadTest|UserRelationshipsTest'"
 
 # ------------------------------------------------------------------------------
 # 8. Regression Testing
 # ------------------------------------------------------------------------------
 run_rule_check "8" "Regression Testing (Ensuring Previously Resolved Defects Remain Fixed)" \
-    "php artisan test --filter=ReviewRegressionTest"
+    "php artisan test --filter='ReviewRegressionTest'"
 
 # ------------------------------------------------------------------------------
-# 9. Deployment & Infrastructure Health Testing
+# 9. Deployment, Backup & Recovery Testing
 # ------------------------------------------------------------------------------
-run_rule_check "9" "Deployment Testing (Blue/Green Rollback, Offline K8s Kustomize & Backup Health)" \
-    "php artisan test --filter=DeploymentTest"
+run_rule_check "9" "Deployment & Recovery Testing (Blue/Green Rollback, K8s Kustomize & Backup Recovery)" \
+    "php artisan test --filter='DeploymentTest|RecoveryAndBackupTest'"
 
 # ------------------------------------------------------------------------------
 # 10. Dependency Vulnerability Audit

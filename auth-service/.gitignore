@@ -23,4 +23,5 @@ Homestead.json
 Homestead.yaml
 Thumbs.db
 database/migrations_backup_*/
+k8s/secret.yaml
 

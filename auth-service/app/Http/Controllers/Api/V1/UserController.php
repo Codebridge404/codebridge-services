@@ -54,6 +54,8 @@ class UserController extends Controller
 {
     public function index(Request $request)
     {
+        $this->authorize('viewAny', User::class);
+
         $currentUser = $request->user();
         $role = $request->query('role');
         $search = $request->query('q') ?? $request->query('search');
@@ -276,6 +278,8 @@ class UserController extends Controller
 
     public function attach(AttachUserRequest $request)
     {
+        $this->authorize('create', User::class);
+
         $validated = $request->validated();
 
         $query = DB::table('users');
@@ -396,6 +400,8 @@ class UserController extends Controller
 
     public function store(StoreUserRequest $request)
     {
+        $this->authorize('create', User::class);
+
         $validated = $request->validated();
 
         $currentUser = $request->user();
@@ -485,6 +491,8 @@ class UserController extends Controller
 
     public function invite(InviteUserRequest $request)
     {
+        $this->authorize('create', User::class);
+
         return app(UserInvitationController::class)->store($request);
     }
 
@@ -495,6 +503,8 @@ class UserController extends Controller
         if (! $targetUser) {
             return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
         }
+
+        $this->authorize('update', $targetUser);
 
         // Enforce unified user management authorization policy
         $requestedRole = $request->input('role');
@@ -644,6 +654,8 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'message' => 'User account not found.'], 404);
         }
 
+        $this->authorize('resetPassword', $targetUser);
+
         [$canReset, $resetMsg, $resetCode] = UserAuthorizationService::authorizePasswordReset(
             $currentUser,
             $targetUser
@@ -783,6 +795,8 @@ class UserController extends Controller
                 }
             }
         }
+
+        $this->authorize('delete', $targetUser);
 
         DB::beginTransaction();
         try {

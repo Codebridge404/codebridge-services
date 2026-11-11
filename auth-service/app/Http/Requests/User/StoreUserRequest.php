@@ -32,7 +32,7 @@ class StoreUserRequest extends FormRequest
             'role_id' => ['nullable', 'integer'],
             'outlet_id' => ['nullable', 'string'],
             'pin_code' => ['nullable', 'string', 'max:10'],
-            'phone' => ['nullable', 'string', 'max:30'],
+            'phone' => ['nullable', 'string', 'max:30', 'unique:users,phone'],
             'avatar_url' => ['nullable', 'string', 'max:2048'],
             'tenant_id' => ['nullable'],
         ];

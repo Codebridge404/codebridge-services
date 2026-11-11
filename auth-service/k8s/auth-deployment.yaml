@@ -21,11 +21,23 @@ spec:
       labels:
         app.kubernetes.io/name: auth-service
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         # Container 1: PHP 8.4-FPM Laravel Application
         - name: app
           image: codebridge-auth-service:latest
           imagePullPolicy: IfNotPresent
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 33
+            runAsGroup: 33
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 9000
               name: fastcgi
@@ -46,6 +58,16 @@ spec:
         - name: nginx
           image: nginx:1.27-alpine
           imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
+                - CHOWN
+                - SETGID
+                - SETUID
           ports:
             - containerPort: 80
               name: http

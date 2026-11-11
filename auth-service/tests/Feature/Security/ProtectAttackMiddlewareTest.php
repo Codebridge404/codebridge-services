@@ -94,6 +94,31 @@ class ProtectAttackMiddlewareTest extends TestCase
         }
     }
 
+    public function test_payload_level_attacks_are_blocked(): void
+    {
+        // 1. SQL Injection in JSON payload
+        $resSqli = $this->postJson('/api/v1/health', [
+            'name' => "admin' OR '1'='1",
+            'notes' => "UNION SELECT 1,2,3",
+        ]);
+        $resSqli->assertStatus(403)
+            ->assertJsonPath('code', 'SQL_INJECTION_DETECTED');
+
+        // 2. Command Injection in JSON payload
+        $resCmd = $this->postJson('/api/v1/health', [
+            'command' => 'test; rm -rf /',
+        ]);
+        $resCmd->assertStatus(403)
+            ->assertJsonPath('code', 'COMMAND_INJECTION_DETECTED');
+
+        // 3. Path Traversal in JSON payload
+        $resTraversal = $this->postJson('/api/v1/health', [
+            'avatar' => '../../../../etc/passwd',
+        ]);
+        $resTraversal->assertStatus(403)
+            ->assertJsonPath('code', 'PATH_TRAVERSAL_DETECTED');
+    }
+
     public function test_legitimate_requests_receive_enterprise_security_headers(): void
     {
         $res = $this->getJson('/api/v1/health');

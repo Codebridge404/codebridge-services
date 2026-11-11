@@ -91,6 +91,14 @@ class SecurityEvent extends Model
                 $event->uuid = (string) Str::uuid();
             }
 
+            if (empty($event->request_id)) {
+                $event->request_id = (string) Str::uuid();
+            }
+
+            if (empty($event->rule_code)) {
+                $event->rule_code = 'SEC_' . strtoupper($event->event_type ?? 'GENERIC');
+            }
+
             if (empty($event->service_name)) {
                 $event->service_name = 'auth-service';
             }

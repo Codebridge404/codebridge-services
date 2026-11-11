@@ -18,6 +18,7 @@ resources:
   - scheduler-cronjob.yaml
   - ingress.yaml
   - gateway.yaml
+  - networkpolicy.yaml
 
 labels:
   - pairs:

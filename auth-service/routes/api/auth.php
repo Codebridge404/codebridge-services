@@ -21,10 +21,15 @@ Route::middleware('auth_throttle:5,15')->group(function () {
     Route::post('/auth/2fa/challenge', [TwoFactorController::class, 'challenge']);
 });
 
-Route::post('/auth/register', [AuthController::class, 'register']);
-Route::post('/auth/refresh', [AuthController::class, 'refresh']);
-Route::get('/auth/verify-invite', [AuthController::class, 'verifyInvite']);
-Route::post('/auth/accept-invite', [AuthController::class, 'acceptInvite']);
+Route::middleware('throttle:60,1')->group(function () {
+    Route::post('/auth/register', [AuthController::class, 'register']);
+    Route::post('/auth/refresh', [AuthController::class, 'refresh']);
+});
+
+Route::middleware('auth_throttle:10,15')->group(function () {
+    Route::get('/auth/verify-invite', [AuthController::class, 'verifyInvite']);
+    Route::post('/auth/accept-invite', [AuthController::class, 'acceptInvite']);
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -53,7 +58,7 @@ Route::middleware(['auth:sanctum', 'pos_scope'])->group(function () {
     Route::match(['put', 'post'], '/auth/profile', [AuthController::class, 'update']);
     Route::post('/auth/upload-profile', [AuthController::class, 'uploadProfile']);
     Route::post('/auth/profile/avatar', [AuthController::class, 'uploadProfile']);
-    Route::put('/auth/password', [AuthController::class, 'updatePassword']);
+    Route::put('/auth/password', [AuthController::class, 'updatePassword'])->middleware('auth_throttle:10,15');
     Route::post('/auth/logout', [AuthController::class, 'logout']);
 
     /* Two-Factor Authentication (TOTP Authenticator App) */

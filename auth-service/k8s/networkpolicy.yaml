@@ -1,0 +1,144 @@
+# Default deny all pod-to-pod ingress in namespace `codebridge`, then explicitly
+# allow only least-privilege service-to-service traffic paths.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: codebridge
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# Allow ingress controller and API gateway to reach auth-service pods (HTTP/FastCGI).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-auth-service-ingress
+  namespace: codebridge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: auth-service
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: api-gateway
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 9000
+---
+# Allow ingress traffic into the api-gateway entrypoint on HTTP port 80.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-gateway-ingress
+  namespace: codebridge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: api-gateway
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: 80
+---
+# Restrict MySQL (3306) access strictly to authorized auth-service workloads,
+# and block outbound egress from the database tier.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-auth-mysql-network
+  namespace: codebridge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: auth-mysql
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - auth-service
+                  - auth-horizon
+                  - auth-scheduler
+                  - auth-migration
+      ports:
+        - protocol: TCP
+          port: 3306
+  egress: []
+---
+# Restrict Redis (6379) access strictly to authorized auth-service workloads,
+# and block outbound egress from the cache/queue tier.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-auth-redis-network
+  namespace: codebridge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: auth-redis
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - auth-service
+                  - auth-horizon
+                  - auth-scheduler
+                  - auth-migration
+      ports:
+        - protocol: TCP
+          port: 6379
+  egress: []
+---
+# Restrict MinIO object storage API (9000) to authorized auth-service workloads
+# (management console 9001 stays unexposed to in-cluster pods).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: restrict-minio-network
+  namespace: codebridge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: minio
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values:
+                  - auth-service
+                  - auth-horizon
+                  - auth-scheduler
+      ports:
+        - protocol: TCP
+          port: 9000
+  egress: []
+

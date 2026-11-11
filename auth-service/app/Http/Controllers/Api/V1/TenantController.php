@@ -15,6 +15,7 @@ use App\Http\Requests\Tenant\UpdateTenantModulesRequest;
 use App\Http\Requests\Tenant\UpdateTenantProfileRequest;
 use App\Http\Requests\Tenant\UpdateTenantRequest;
 use App\Http\Resources\Tenant\TenantResource;
+use App\Models\Tenant;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -304,6 +305,8 @@ class TenantController extends Controller
      */
     public function index(Request $request)
     {
+        $this->authorize('viewAny', Tenant::class);
+
         $query = DB::table('tenants')
             ->orderBy('created_at', 'desc');
 
@@ -476,10 +479,13 @@ class TenantController extends Controller
      */
     public function show($id)
     {
-        $tenant = DB::table('tenants')->where('id', $id)->first();
-        if (!$tenant) {
+        $tenantModel = Tenant::find($id);
+        if (!$tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
+        $this->authorize('view', $tenantModel);
+
+        $tenant = DB::table('tenants')->where('id', $id)->first();
 
         $tenant->subscriptions = DB::table('tenant_subscriptions')
             ->where('tenant_id', $id)
@@ -543,10 +549,13 @@ class TenantController extends Controller
      */
     public function update(UpdateTenantRequest $request, $id)
     {
-        $tenant = DB::table('tenants')->where('id', $id)->first();
-        if (!$tenant) {
+        $tenantModel = Tenant::find($id);
+        if (!$tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
+        $this->authorize('update', $tenantModel);
+
+        $tenant = DB::table('tenants')->where('id', $id)->first();
 
         $updateData = [];
         foreach (['name', 'client_tier', 'status', 'email', 'phone', 'address', 'max_outlets', 'max_registers', 'max_users', 'trial_ends_at'] as $field) {
@@ -667,10 +676,13 @@ class TenantController extends Controller
      */
     public function destroy($id)
     {
-        $tenant = DB::table('tenants')->where('id', $id)->first();
-        if (!$tenant) {
+        $tenantModel = Tenant::find($id);
+        if (!$tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
+        $this->authorize('delete', $tenantModel);
+
+        $tenant = DB::table('tenants')->where('id', $id)->first();
 
         if (SchemaGuard::hasColumn('users', 'tenant_id')) {
             DB::table('users')->where('tenant_id', $id)->update(['tenant_id' => null]);
@@ -691,10 +703,13 @@ class TenantController extends Controller
      */
     public function updateSubscription(UpdateSubscriptionRequest $request, $id)
     {
-        $tenant = DB::table('tenants')->where('id', $id)->first();
-        if (!$tenant) {
+        $tenantModel = Tenant::find($id);
+        if (!$tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
+        $this->authorize('manageSubscriptions', $tenantModel);
+
+        $tenant = DB::table('tenants')->where('id', $id)->first();
 
         DB::table('tenant_subscriptions')->insert([
             'tenant_id'     => $id,
@@ -734,10 +749,13 @@ class TenantController extends Controller
      */
     public function suspend(Request $request, $id)
     {
-        $tenant = DB::table('tenants')->where('id', $id)->first();
-        if (!$tenant) {
+        $tenantModel = Tenant::find($id);
+        if (!$tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
+        $this->authorize('suspend', $tenantModel);
+
+        $tenant = DB::table('tenants')->where('id', $id)->first();
 
         $newStatus = $tenant->status === 'suspended' ? 'active' : 'suspended';
 
@@ -900,6 +918,11 @@ class TenantController extends Controller
             ], 404);
         }
 
+        $tenantModel = Tenant::find($tenant->id);
+        if ($tenantModel) {
+            $this->authorize('view', $tenantModel);
+        }
+
         return response()->json([
             'success' => true,
             'data' => [
@@ -939,6 +962,8 @@ class TenantController extends Controller
                 'message' => 'Workspace not found.',
             ], 404);
         }
+
+        $this->authorize('update', Tenant::findOrFail($tenant->id));
 
         $updateData = [];
 

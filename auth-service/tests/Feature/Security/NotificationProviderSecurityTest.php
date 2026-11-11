@@ -81,7 +81,7 @@ class NotificationProviderSecurityTest extends TestCase
 
             // Must never crash with 500 error or leak database exceptions
             $this->assertNotEquals(500, $response->getStatusCode(), "Crashed on SQLi parameter: {$param}");
-            $this->assertContains($response->getStatusCode(), [200, 422]);
+            $this->assertContains($response->getStatusCode(), [200, 403, 422]);
 
             // When status is 200, verify tenant isolation was NOT breached by SQLi
             if ($response->getStatusCode() === 200) {

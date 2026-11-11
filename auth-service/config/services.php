@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'telegram_security' => [
+        'bot_token' => env('TELEGRAM_SECURITY_BOT_TOKEN'),
+        'chat_id' => env('TELEGRAM_SECURITY_CHAT_ID'),
+        'bot_username' => env('TELEGRAM_SECURITY_BOT_USERNAME', 'codebridge_alerts_bot'),
+    ],
+
 ];
