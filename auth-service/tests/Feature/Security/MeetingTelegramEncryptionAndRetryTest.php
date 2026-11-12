@@ -758,4 +758,242 @@ class MeetingTelegramEncryptionAndRetryTest extends TestCase
         $this->assertSame($syntheticToken, $decrypted['bot_token'] ?? null);
         $this->assertSame($syntheticChatId, $decrypted['chat_id'] ?? null);
     }
+
+    /**
+     * Acceptance (P2): Existing disabled or unrelated Telegram providers (e.g., Security/POS bots)
+     * never cause working meeting credentials to be skipped and discarded during migration.
+     */
+    public function test_migration_preserves_meeting_credentials_when_disabled_or_unrelated_telegram_provider_exists(): void
+    {
+        $securityProvider = NotificationProvider::create([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => $this->tenantA->id,
+            'name' => 'Tenant A Security Bot',
+            'channel' => 'telegram',
+            'provider' => 'telegram',
+            'environment' => 'all',
+            'is_enabled' => false,
+            'credentials' => ['bot_token' => '100100:DisabledUnrelatedBot', 'chat_id' => '-100100'],
+            'settings' => ['purpose' => 'security_alerts', 'default_chat_id' => '-100100'],
+        ]);
+
+        $workingMeetingToken = '911911:WorkingMeetingLegacyToken';
+        $workingMeetingChat = '-100911911';
+        DB::table('meeting_telegram_configs')->insert([
+            'tenant_id' => $this->tenantA->id,
+            'bot_token' => $workingMeetingToken,
+            'chat_id' => $workingMeetingChat,
+            'is_active' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $migration = require database_path('migrations/2026_11_10_000001_migrate_meeting_telegram_credentials_to_notification_providers.php');
+        $migration->up();
+
+        // Unrelated provider untouched
+        $this->assertSame(
+            '100100:DisabledUnrelatedBot',
+            $securityProvider->fresh()->getDecryptedCredentials()['bot_token']
+        );
+        $this->assertFalse($securityProvider->fresh()->is_enabled);
+
+        // Meeting provider created cleanly with encrypted legacy credentials
+        $meetingProvider = NotificationProvider::where('tenant_id', $this->tenantA->id)
+            ->where('name', 'Telegram Meeting Alerts')
+            ->first();
+        $this->assertNotNull($meetingProvider);
+        $this->assertTrue($meetingProvider->is_enabled);
+        $this->assertSame('meeting_alerts', $meetingProvider->settings['purpose'] ?? null);
+        $this->assertSame($workingMeetingToken, $meetingProvider->getDecryptedCredentials()['bot_token']);
+
+        // Legacy plaintext token purged only after encrypted storage verified
+        $this->assertSame(
+            '',
+            (string) DB::table('meeting_telegram_configs')->where('tenant_id', $this->tenantA->id)->value('bot_token')
+        );
+
+        Http::fake([
+            "https://api.telegram.org/bot{$workingMeetingToken}/sendMessage" => Http::response([
+                'ok' => true,
+                'result' => ['message_id' => 301],
+            ], 200),
+        ]);
+
+        $this->assertTrue(
+            MeetingTelegramController::deliverTelegramAlertNow('confirmation', [
+                'title' => 'Migrated Meeting With Existing Other Bot',
+            ], (string) $this->tenantA->id)
+        );
+    }
+
+    /**
+     * Acceptance (P2): Incomplete or corrupted existing meeting providers are repaired and verified
+     * before clearing legacy plaintext, and repeated runs of the migration are idempotent.
+     */
+    public function test_migration_repairs_incomplete_and_corrupted_meeting_providers_idempotently(): void
+    {
+        // Tenant A has a corrupted Telegram Meeting Alerts row
+        $corrupted = NotificationProvider::create([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => $this->tenantA->id,
+            'name' => 'Telegram Meeting Alerts',
+            'channel' => 'telegram',
+            'provider' => 'telegram',
+            'environment' => 'all',
+            'is_enabled' => true,
+            'credentials' => ['bot_token' => 'temp', 'chat_id' => '-1001'],
+            'settings' => ['purpose' => 'meeting_alerts'],
+        ]);
+        DB::table('notification_providers')->where('id', $corrupted->id)->update([
+            'credentials' => 'corrupted-ciphertext-not-decryptable',
+        ]);
+
+        $tokenA = '818181:RepairedMeetingTokenA';
+        DB::table('meeting_telegram_configs')->insert([
+            'tenant_id' => $this->tenantA->id,
+            'bot_token' => $tokenA,
+            'chat_id' => '-100818',
+            'is_active' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Tenant B has an incomplete Telegram Meeting Alerts row (missing bot_token)
+        $incomplete = NotificationProvider::create([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => $this->tenantB->id,
+            'name' => 'Telegram Meeting Alerts',
+            'channel' => 'telegram',
+            'provider' => 'telegram',
+            'environment' => 'all',
+            'is_enabled' => false,
+            'credentials' => ['bot_token' => '', 'chat_id' => ''],
+            'settings' => [],
+        ]);
+
+        $tokenB = '828282:RepairedMeetingTokenB';
+        DB::table('meeting_system_settings')->insert([
+            [
+                'tenant_id' => $this->tenantB->id,
+                'setting_key' => 'notification.telegram_enabled',
+                'setting_value' => 'true',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'tenant_id' => $this->tenantB->id,
+                'setting_key' => 'notification.telegram_bot_token',
+                'setting_value' => $tokenB,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'tenant_id' => $this->tenantB->id,
+                'setting_key' => 'notification.telegram_default_chat_id',
+                'setting_value' => '-100828',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        $migration = require database_path('migrations/2026_11_10_000001_migrate_meeting_telegram_credentials_to_notification_providers.php');
+        $migration->up();
+
+        $this->assertSame($tokenA, $corrupted->fresh()->getDecryptedCredentials()['bot_token']);
+        $this->assertSame($tokenB, $incomplete->fresh()->getDecryptedCredentials()['bot_token']);
+        $this->assertTrue($incomplete->fresh()->is_enabled);
+        $this->assertSame('', (string) DB::table('meeting_telegram_configs')->where('tenant_id', $this->tenantA->id)->value('bot_token'));
+        $this->assertNull(
+            DB::table('meeting_system_settings')
+                ->where('tenant_id', $this->tenantB->id)
+                ->where('setting_key', 'notification.telegram_bot_token')
+                ->value('setting_value')
+        );
+
+        // Idempotent rerun creates zero duplicates
+        $countBefore = NotificationProvider::where('channel', 'telegram')->count();
+        $migration->up();
+        $this->assertSame($countBefore, NotificationProvider::where('channel', 'telegram')->count());
+    }
+
+    /**
+     * Acceptance (P2): Conflicting existing meeting provider is preserved intact alongside a
+     * preserved encrypted copy of the legacy credentials rather than discarding either.
+     */
+    public function test_migration_preserves_conflicting_valid_meeting_provider_and_migrated_legacy_separately(): void
+    {
+        $primaryToken = '707070:ActivePrimaryMeetingToken';
+        $legacyToken = '606060:LegacyDifferentMeetingToken';
+
+        $primary = NotificationProvider::create([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => $this->tenantA->id,
+            'name' => 'Telegram Meeting Alerts',
+            'channel' => 'telegram',
+            'provider' => 'telegram',
+            'environment' => 'all',
+            'is_enabled' => true,
+            'credentials' => ['bot_token' => $primaryToken, 'chat_id' => '-100707'],
+            'settings' => ['purpose' => 'meeting_alerts', 'default_chat_id' => '-100707'],
+        ]);
+
+        DB::table('meeting_system_settings')->insert([
+            [
+                'tenant_id' => $this->tenantA->id,
+                'setting_key' => 'notification.telegram_enabled',
+                'setting_value' => 'true',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'tenant_id' => $this->tenantA->id,
+                'setting_key' => 'notification.telegram_bot_token',
+                'setting_value' => $legacyToken,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+            [
+                'tenant_id' => $this->tenantA->id,
+                'setting_key' => 'notification.telegram_default_chat_id',
+                'setting_value' => '-100606',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ],
+        ]);
+
+        $migration = require database_path('migrations/2026_11_10_000001_migrate_meeting_telegram_credentials_to_notification_providers.php');
+        $migration->up();
+
+        // Both encrypted providers exist cleanly
+        $this->assertSame($primaryToken, $primary->fresh()->getDecryptedCredentials()['bot_token']);
+
+        $preserved = NotificationProvider::where('tenant_id', $this->tenantA->id)
+            ->where('name', 'Telegram Meeting Alerts (Migrated Legacy)')
+            ->first();
+        $this->assertNotNull($preserved);
+        $this->assertSame($legacyToken, $preserved->getDecryptedCredentials()['bot_token']);
+        $this->assertTrue((bool) ($preserved->settings['migrated_conflict'] ?? false));
+
+        $this->assertNull(
+            DB::table('meeting_system_settings')
+                ->where('tenant_id', $this->tenantA->id)
+                ->where('setting_key', 'notification.telegram_bot_token')
+                ->value('setting_value')
+        );
+
+        // Delivery continues using the primary active configuration
+        Http::fake([
+            "https://api.telegram.org/bot{$primaryToken}/sendMessage" => Http::response([
+                'ok' => true,
+                'result' => ['message_id' => 404],
+            ], 200),
+        ]);
+
+        $this->assertTrue(
+            MeetingTelegramController::deliverTelegramAlertNow('confirmation', [
+                'title' => 'Primary Bot Kept Active',
+            ], (string) $this->tenantA->id)
+        );
+    }
 }

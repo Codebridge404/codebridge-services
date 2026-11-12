@@ -104,11 +104,20 @@ class ModelPoliciesTest extends TestCase
     public function test_security_event_policy_scoping(): void
     {
         $tenantAdmin = (new User())->forceFill(['id' => 10, 'tenant_id' => 5, 'role' => 'admin']);
+        $superAdmin = (new User())->forceFill(['id' => 1, 'tenant_id' => null, 'role' => 'super_admin']);
         $ownEvent = (new SecurityEvent())->forceFill(['id' => 1, 'tenant_id' => 5]);
         $foreignEvent = (new SecurityEvent())->forceFill(['id' => 2, 'tenant_id' => 9]);
 
         $this->assertTrue(Gate::forUser($tenantAdmin)->allows('view', $ownEvent));
         $this->assertFalse(Gate::forUser($tenantAdmin)->allows('view', $foreignEvent));
         $this->assertFalse(Gate::forUser($tenantAdmin)->allows('manageSettings', SecurityEvent::class));
+        $this->assertFalse(Gate::forUser($tenantAdmin)->allows('viewBannedIps', SecurityEvent::class));
+        $this->assertFalse(Gate::forUser($tenantAdmin)->allows('banIp', SecurityEvent::class));
+        $this->assertFalse(Gate::forUser($tenantAdmin)->allows('unbanIp', SecurityEvent::class));
+
+        $this->assertTrue(Gate::forUser($superAdmin)->allows('manageSettings', SecurityEvent::class));
+        $this->assertTrue(Gate::forUser($superAdmin)->allows('viewBannedIps', SecurityEvent::class));
+        $this->assertTrue(Gate::forUser($superAdmin)->allows('banIp', SecurityEvent::class));
+        $this->assertTrue(Gate::forUser($superAdmin)->allows('unbanIp', SecurityEvent::class));
     }
 }

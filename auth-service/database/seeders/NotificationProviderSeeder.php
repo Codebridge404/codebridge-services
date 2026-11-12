@@ -32,10 +32,18 @@ class NotificationProviderSeeder extends Seeder
             'bot_username' => $botUsername !== '' ? $botUsername : 'codebridge_alerts_bot',
             'default_chat_id' => $chatId,
             'parse_mode' => 'HTML',
+            'purpose' => 'security_alerts',
         ];
 
         $existing = NotificationProvider::where('channel', 'telegram')
             ->whereNull('tenant_id')
+            ->where(function ($q) {
+                $q->where('name', 'CodeBridge Security Alert Bot')
+                    ->orWhere('settings->purpose', 'security_alerts')
+                    ->orWhere(function ($q2) {
+                        $q2->where('name', 'not like', 'Telegram Meeting Alerts%');
+                    });
+            })
             ->first();
 
         if (! $existing) {
@@ -51,6 +59,7 @@ class NotificationProviderSeeder extends Seeder
             $provider->settings = $settings;
             $provider->save();
         } else {
+            $existing->name = 'CodeBridge Security Alert Bot';
             $existing->is_enabled = true;
             $existing->credentials = $credentials;
             $existing->settings = $settings;

@@ -266,4 +266,43 @@ class PolicySecurityEnforcementTest extends TestCase
             'name' => 'Updated By Super Admin',
         ]);
     }
+
+    /**
+     * Rule 8: Tenant-scoped super_admin cannot manage global IP bans or threat settings.
+     */
+    public function test_tenant_scoped_super_admin_cannot_manage_global_ip_bans(): void
+    {
+        $role = Role::create([
+            'name' => 'Super Admin',
+            'slug' => 'super_admin',
+            'tenant_id' => null,
+            'is_active' => true,
+        ]);
+
+        DB::table('user_roles')->insert([
+            'user_id' => $this->adminA->id,
+            'role_id' => $role->id,
+            'tenant_id' => $this->tenantA->id,
+            'is_active' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $ip = '198.51.100.123';
+        \App\Services\IpThreatDefenseService::unbanIp($ip);
+
+        $this->withHeaders(['Authorization' => "Bearer {$this->tokenAdminA}"])
+            ->postJson('/api/v1/security-events/ban-ip', ['ip' => $ip])
+            ->assertStatus(403);
+
+        $this->withHeaders(['Authorization' => "Bearer {$this->tokenAdminA}"])
+            ->getJson('/api/v1/security-events/banned-ips')
+            ->assertStatus(403);
+
+        $this->withHeaders(['Authorization' => "Bearer {$this->tokenAdminA}"])
+            ->putJson('/api/v1/security-events/settings', ['enabled' => false])
+            ->assertStatus(403);
+
+        $this->assertNull(\App\Services\IpThreatDefenseService::isBanned($ip));
+    }
 }

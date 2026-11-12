@@ -114,6 +114,7 @@ final class LogRedactor
         }
 
         $redacted = preg_replace('/\bBearer\s+[A-Za-z0-9\-_\.=]+/i', 'Bearer [REDACTED]', $value) ?? $value;
+        $redacted = preg_replace('/\/bot[^\/\s?]+/i', '/bot[REDACTED]', $redacted) ?? $redacted;
         $redacted = preg_replace('#(email/verify/[^/\s]+/)[^/\s?]+#i', '$1[redacted]', $redacted) ?? $redacted;
         $redacted = preg_replace_callback(
             '/([?&])([^=&#]+)=([^&#\s]*)/',
@@ -142,6 +143,61 @@ final class LogRedactor
         $encoded = http_build_query($sanitizedQuery);
 
         return $encoded !== '' ? ($path . '?' . $encoded) : $path;
+    }
+
+    /**
+     * Sanitize request path and mask ALL query parameter values for external alerts/events.
+     */
+    public static function sanitizePathWithMaskedQuery(Request $request): string
+    {
+        $path = '/' . ltrim(self::redactString($request->path()), '/');
+        $rawQuery = $request->getQueryString();
+        if (! is_string($rawQuery) || trim($rawQuery) === '') {
+            $parsedQuery = parse_url($request->getRequestUri(), PHP_URL_QUERY);
+            $rawQuery = is_string($parsedQuery) ? $parsedQuery : '';
+        }
+
+        if ($rawQuery === '') {
+            return $path;
+        }
+
+        $pairs = [];
+        foreach (explode('&', $rawQuery) as $segment) {
+            if ($segment === '') {
+                continue;
+            }
+            $eqPos = strpos($segment, '=');
+            if ($eqPos === false) {
+                $pairs[] = '[REDACTED]';
+            } else {
+                $key = self::redactString(urldecode(substr($segment, 0, $eqPos)));
+                $pairs[] = ($key !== '' ? $key : 'param') . '=[REDACTED]';
+            }
+        }
+
+        return count($pairs) > 0 ? ($path . '?' . implode('&', $pairs)) : $path;
+    }
+
+    /**
+     * Scrub Telegram bot tokens, URL query values, and sensitive secrets from exception/log messages.
+     */
+    public static function sanitizeTelegramSecrets(?string $message, ?string $rawToken = null): string
+    {
+        $sanitized = preg_replace('/\/bot[^\/\s?]+/i', '/bot[REDACTED]', (string) $message) ?? 'Telegram error';
+        if (! empty($rawToken)) {
+            $sanitized = str_replace($rawToken, '[REDACTED]', $sanitized);
+        }
+
+        // Mask all query parameter values in any URL included inside exception messages
+        $sanitized = preg_replace_callback(
+            '/([?&])([^=&#\s]+)=([^&#\s]*)/',
+            static fn (array $matches): string => $matches[1] . self::redactString(urldecode($matches[2])) . '=[REDACTED]',
+            $sanitized
+        ) ?? $sanitized;
+
+        $sanitized = self::redactString($sanitized);
+
+        return $sanitized !== '' ? $sanitized : 'Telegram error';
     }
 
     public static function normalizeSql(string $sql): string

@@ -140,19 +140,14 @@ class MeetingTelegramController extends Controller
             ? trim($validated['bot_token'])
             : null;
 
-        $provider = NotificationProvider::where('channel', 'telegram')
-            ->where(function ($q) use ($tenantId) {
-                if ($tenantId !== null) $q->where('tenant_id', $tenantId);
-                else $q->whereNull('tenant_id');
-            })
-            ->latest('id')
-            ->first();
+        $scopedTenantId = ($tenantId !== null && $tenantId !== '') ? (int) $tenantId : null;
+        $provider = self::resolveMeetingProvider($scopedTenantId);
 
         if ($botToken !== null || $provider !== null) {
             if (!$provider) {
                 $provider = new NotificationProvider();
                 $provider->uuid = (string) Str::uuid();
-                $provider->tenant_id = $tenantId;
+                $provider->tenant_id = $scopedTenantId;
                 $provider->channel = 'telegram';
                 $provider->provider = 'telegram';
                 $provider->name = 'Telegram Meeting Alerts';
@@ -185,6 +180,7 @@ class MeetingTelegramController extends Controller
             }
 
             $currentSettings = is_array($provider->settings) ? $provider->settings : [];
+            $currentSettings['purpose'] = 'meeting_alerts';
             if (isset($validated['bot_username'])) {
                 $currentSettings['bot_username'] = ltrim(trim($validated['bot_username']), '@');
             }
@@ -624,6 +620,59 @@ class MeetingTelegramController extends Controller
     }
 
     /**
+     * Resolve the dedicated Telegram meeting provider for a tenant, preferring explicit
+     * meeting-alert providers while falling back only to non-security tenant Telegram providers.
+     */
+    protected static function resolveMeetingProvider(?int $scopedTenantId): ?NotificationProvider
+    {
+        $candidates = NotificationProvider::where('channel', 'telegram')
+            ->where(function ($q) use ($scopedTenantId) {
+                if ($scopedTenantId !== null) {
+                    $q->where('tenant_id', $scopedTenantId);
+                } else {
+                    $q->whereNull('tenant_id');
+                }
+            })
+            ->orderByDesc('id')
+            ->get();
+
+        if ($candidates->isEmpty()) {
+            return null;
+        }
+
+        $isExplicitMeeting = static function (NotificationProvider $p): bool {
+            $purpose = is_array($p->settings) ? ($p->settings['purpose'] ?? null) : null;
+
+            return $purpose === 'meeting_alerts'
+                || $p->name === 'Telegram Meeting Alerts'
+                || str_starts_with((string) $p->name, 'Telegram Meeting Alerts (Migrated Legacy');
+        };
+
+        $isSecurityBot = static function (NotificationProvider $p): bool {
+            $purpose = is_array($p->settings) ? ($p->settings['purpose'] ?? null) : null;
+
+            return $purpose === 'security_alerts'
+                || $p->name === 'CodeBridge Security Alert Bot';
+        };
+
+        $explicitMeeting = $candidates->filter($isExplicitMeeting)->values();
+        if ($explicitMeeting->isNotEmpty()) {
+            return $explicitMeeting->first(fn (NotificationProvider $p) => $p->is_enabled && ! ($p->settings['migrated_conflict'] ?? false))
+                ?? $explicitMeeting->first(fn (NotificationProvider $p) => $p->is_enabled)
+                ?? $explicitMeeting->first(fn (NotificationProvider $p) => ! ($p->settings['migrated_conflict'] ?? false))
+                ?? $explicitMeeting->first();
+        }
+
+        $genericProviders = $candidates->reject($isSecurityBot)->values();
+        if ($genericProviders->isNotEmpty()) {
+            return $genericProviders->first(fn (NotificationProvider $p) => $p->is_enabled)
+                ?? $genericProviders->first();
+        }
+
+        return null;
+    }
+
+    /**
      * Resolve enabled Telegram delivery credentials and target chat ID for a tenant.
      * Enforces strict tenant isolation and uses encrypted NotificationProvider store.
      *
@@ -634,16 +683,7 @@ class MeetingTelegramController extends Controller
         $scopedTenantId = ($tenantId !== null && $tenantId !== '') ? (int) $tenantId : null;
 
         // 1. Resolve from encrypted NotificationProvider store (strictly scoped to tenant)
-        $provider = NotificationProvider::where('channel', 'telegram')
-            ->where(function ($q) use ($scopedTenantId) {
-                if ($scopedTenantId !== null) {
-                    $q->where('tenant_id', $scopedTenantId);
-                } else {
-                    $q->whereNull('tenant_id');
-                }
-            })
-            ->latest('id')
-            ->first();
+        $provider = self::resolveMeetingProvider($scopedTenantId);
 
         if ($provider) {
             if (!$provider->is_enabled) {
@@ -740,6 +780,7 @@ class MeetingTelegramController extends Controller
             ];
             $newProvider->settings = [
                 'default_chat_id' => (string) $chatId,
+                'purpose' => 'meeting_alerts',
             ];
             $newProvider->save();
 
@@ -772,16 +813,7 @@ class MeetingTelegramController extends Controller
         $scopedTenantId = ($tenantId !== null && $tenantId !== '') ? (int) $tenantId : null;
 
         // 1. Resolve from encrypted NotificationProvider store (strictly scoped to tenant)
-        $provider = NotificationProvider::where('channel', 'telegram')
-            ->where(function ($q) use ($scopedTenantId) {
-                if ($scopedTenantId !== null) {
-                    $q->where('tenant_id', $scopedTenantId);
-                } else {
-                    $q->whereNull('tenant_id');
-                }
-            })
-            ->latest('id')
-            ->first();
+        $provider = self::resolveMeetingProvider($scopedTenantId);
 
         $token = '';
         $botEnabled = false;

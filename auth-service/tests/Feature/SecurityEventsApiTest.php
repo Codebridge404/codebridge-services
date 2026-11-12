@@ -386,5 +386,72 @@ class SecurityEventsApiTest extends TestCase
         // Clean up
         \App\Services\IpThreatDefenseService::unbanIp($attackerIp);
     }
+
+    /**
+     * Acceptance (P1): Tenant admins (and tenant-scoped super admins) receive 403 for global IP ban,
+     * unban, settings, and banned-IP listing, and Tenant A cannot block Tenant B's requests.
+     */
+    public function test_tenant_admin_cannot_access_global_ip_ban_controls_or_block_other_tenants(): void
+    {
+        $targetIp = '198.51.100.77';
+        \App\Services\IpThreatDefenseService::unbanIp($targetIp);
+
+        // Tenant A admin receives 403 across all global threat-defense endpoints
+        $this->actingAs($this->adminUserA)
+            ->getJson('/api/v1/security-events/settings')
+            ->assertForbidden();
+
+        $this->actingAs($this->adminUserA)
+            ->putJson('/api/v1/security-events/settings', ['enabled' => false])
+            ->assertForbidden();
+
+        $this->actingAs($this->adminUserA)
+            ->getJson('/api/v1/security-events/banned-ips')
+            ->assertForbidden();
+
+        $this->actingAs($this->adminUserA)
+            ->postJson('/api/v1/security-events/ban-ip', [
+                'ip' => $targetIp,
+                'duration_minutes' => 60,
+                'reason' => 'Cross-tenant block attempt',
+            ])
+            ->assertForbidden();
+
+        // Global ban cache entry MUST NOT be created
+        $this->assertNull(\App\Services\IpThreatDefenseService::isBanned($targetIp));
+
+        // Tenant B user sending requests from $targetIp remains completely unaffected
+        $this->actingAs($this->adminUserB)
+            ->withServerVariables(['REMOTE_ADDR' => $targetIp])
+            ->getJson('/api/v1/security-events')
+            ->assertOk();
+
+        // Platform super admin CAN ban and unban globally
+        $this->actingAs($this->superAdmin)
+            ->postJson('/api/v1/security-events/ban-ip', [
+                'ip' => $targetIp,
+                'duration_minutes' => 15,
+                'reason' => 'Platform incident ban',
+            ])
+            ->assertStatus(201);
+
+        $this->assertNotNull(\App\Services\IpThreatDefenseService::isBanned($targetIp));
+
+        // Tenant A admin CANNOT remove a platform ban (testing from a non-banned client IP)
+        $this->actingAs($this->adminUserA)
+            ->withServerVariables(['REMOTE_ADDR' => '127.0.0.1'])
+            ->postJson('/api/v1/security-events/unban-ip', ['ip' => $targetIp])
+            ->assertForbidden();
+
+        $this->assertNotNull(\App\Services\IpThreatDefenseService::isBanned($targetIp));
+
+        // Platform super admin CAN unban
+        $this->actingAs($this->superAdmin)
+            ->withServerVariables(['REMOTE_ADDR' => '127.0.0.1'])
+            ->postJson('/api/v1/security-events/unban-ip', ['ip' => $targetIp])
+            ->assertOk();
+
+        $this->assertNull(\App\Services\IpThreatDefenseService::isBanned($targetIp));
+    }
 }
 

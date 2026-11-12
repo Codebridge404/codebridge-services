@@ -46,29 +46,39 @@ class SecurityEventPolicy
     }
 
     /**
-     * Determine whether the user can manage threat defense settings.
+     * Determine whether the user can manage global threat defense settings.
+     * Restricted strictly to Platform Super Admins.
      */
     public function manageSettings(User $user): bool
     {
-        return UserAuthorizationService::isSuperAdmin($user);
+        return UserAuthorizationService::hasPlatformSuperAdminRole($user);
     }
 
     /**
-     * Determine whether the user can ban an IP.
+     * Determine whether the user can list globally banned IPs.
+     * Restricted strictly to Platform Super Admins.
+     */
+    public function viewBannedIps(User $user): bool
+    {
+        return UserAuthorizationService::hasPlatformSuperAdminRole($user);
+    }
+
+    /**
+     * Determine whether the user can globally ban an IP.
+     * Restricted strictly to Platform Super Admins (global cache scope).
      */
     public function banIp(User $user): bool
     {
-        return UserAuthorizationService::isTenantAdmin($user)
-            || UserAuthorizationService::isSuperAdmin($user);
+        return UserAuthorizationService::hasPlatformSuperAdminRole($user);
     }
 
     /**
-     * Determine whether the user can unban an IP.
+     * Determine whether the user can globally unban an IP.
+     * Restricted strictly to Platform Super Admins (global cache scope).
      */
     public function unbanIp(User $user): bool
     {
-        return UserAuthorizationService::isTenantAdmin($user)
-            || UserAuthorizationService::isSuperAdmin($user);
+        return UserAuthorizationService::hasPlatformSuperAdminRole($user);
     }
 }
 

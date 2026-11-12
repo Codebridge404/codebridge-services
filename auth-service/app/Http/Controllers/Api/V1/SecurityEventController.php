@@ -272,7 +272,7 @@ class SecurityEventController extends Controller
      */
     public function bannedIps(): JsonResponse
     {
-        $this->authorize('viewAny', SecurityEvent::class);
+        $this->authorize('viewBannedIps', SecurityEvent::class);
 
         $banned = \App\Services\IpThreatDefenseService::getBannedIps();
 

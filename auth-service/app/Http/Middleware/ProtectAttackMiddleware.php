@@ -242,6 +242,9 @@ class ProtectAttackMiddleware
     protected function recordAttackBlocked(Request $request, string $threatType, string $details): void
     {
         try {
+            $verifiedAuth = \App\Services\IpThreatDefenseService::extractVerifiedAuthContext($request);
+            $safeUri = substr(\App\Support\LogRedactor::sanitizePathWithMaskedQuery($request), 0, 200);
+
             if (SchemaGuard::hasTable('security_events')) {
                 \App\Models\SecurityEvent::record(
                     eventType: 'attack_' . $threatType,
@@ -250,12 +253,12 @@ class ProtectAttackMiddleware
                     severity: 'high',
                     outcome: 'blocked',
                     confidence: 'confirmed',
-                    userId: $request->user()?->id,
-                    tenantId: $request->user()?->tenant_id,
+                    userId: $verifiedAuth['user_id'],
+                    tenantId: $verifiedAuth['tenant_id'],
                     request: $request,
                     metadata: [
                         'threat_type' => $threatType,
-                        'uri' => substr($request->getRequestUri(), 0, 200),
+                        'uri' => $safeUri,
                     ],
                     statusCode: 403
                 );
@@ -264,8 +267,8 @@ class ProtectAttackMiddleware
             if (SchemaGuard::hasTable('audit_logs')) {
                 AuditLog::create([
                     'uuid' => (string) Str::uuid(),
-                    'tenant_id' => $request->user()?->tenant_id,
-                    'user_id' => $request->user()?->id,
+                    'tenant_id' => $verifiedAuth['tenant_id'],
+                    'user_id' => $verifiedAuth['user_id'],
                     'action' => 'security.attack_blocked',
                     'module' => 'security',
                     'request_id' => $request->header('X-Request-ID') ?? (string) Str::uuid(),
@@ -284,44 +287,46 @@ class ProtectAttackMiddleware
             \App\Services\IpThreatDefenseService::recordOffense($request, $threatType, $details);
 
             // Real-time dispatch to Telegram Security Alert group
-            $this->dispatchTelegramSecurityAlert($request, $threatType, $details);
+            $this->dispatchTelegramSecurityAlert($request, $threatType, $details, $verifiedAuth['tenant_id']);
         } catch (\Throwable $e) {
-            Log::warning('Failed to record security audit log: ' . $e->getMessage());
+            Log::warning('Failed to record security audit log: ' . \App\Support\LogRedactor::sanitizeTelegramSecrets($e->getMessage()));
         }
     }
 
     /**
-     * Dispatch an immediate security alert to the configured Telegram Bot.
+     * Dispatch an immediate security alert to the scoped Telegram Bot.
      */
-    protected function dispatchTelegramSecurityAlert(Request $request, string $threatType, string $details): void
+    protected function dispatchTelegramSecurityAlert(Request $request, string $threatType, string $details, ?int $verifiedTenantId = null): void
     {
+        $token = null;
         try {
-            $provider = \App\Models\NotificationProvider::where('channel', 'telegram')
-                ->where('is_enabled', true)
-                ->latest('id')
-                ->first();
+            if ($verifiedTenantId === null) {
+                $verifiedTenantId = \App\Services\IpThreatDefenseService::extractVerifiedAuthContext($request)['tenant_id'];
+            }
+
+            $provider = \App\Services\IpThreatDefenseService::resolveSecurityAlertProvider($verifiedTenantId);
 
             if (! $provider) {
                 return;
             }
 
             $creds = $provider->getDecryptedCredentials();
-            $token = $creds['bot_token'] ?? null;
-            $chatId = $creds['chat_id'] ?? null;
+            $token = $creds['bot_token'] ?? ($creds['token'] ?? null);
+            $chatId = $creds['chat_id'] ?? ($provider->settings['default_chat_id'] ?? null);
 
             if (empty($token) || empty($chatId)) {
                 return;
             }
 
-            // Anti-flood throttle: max 1 alert per threat type every 10 seconds to avoid spamming Telegram
-            $throttleKey = 'telegram_attack_alert_' . md5($threatType . '_' . $request->ip());
+            // Anti-flood throttle: max 1 alert per threat type + verified tenant + IP every 10 seconds
+            $throttleKey = 'telegram_attack_alert_' . md5($threatType . '_' . ($verifiedTenantId ?? 'platform') . '_' . $request->ip());
             if (\Illuminate\Support\Facades\Cache::has($throttleKey)) {
                 return;
             }
             \Illuminate\Support\Facades\Cache::put($throttleKey, true, now()->addSeconds(10));
 
             $ip = htmlspecialchars((string) $request->ip(), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
-            $uri = htmlspecialchars(substr($request->getRequestUri(), 0, 150), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+            $uri = htmlspecialchars(substr(\App\Support\LogRedactor::sanitizePathWithMaskedQuery($request), 0, 150), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
             $time = now()->toDateTimeString();
             $label = htmlspecialchars(strtoupper(str_replace('_', ' ', $threatType)), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 
@@ -332,13 +337,18 @@ class ProtectAttackMiddleware
                 . "• <b>Action:</b> BLOCKED (HTTP 403)\n"
                 . "• <b>Timestamp:</b> {$time}";
 
-            \Illuminate\Support\Facades\Http::timeout(3)->post("https://api.telegram.org/bot{$token}/sendMessage", [
+            $response = \Illuminate\Support\Facades\Http::timeout(3)->post("https://api.telegram.org/bot{$token}/sendMessage", [
                 'chat_id' => $chatId,
                 'text' => $message,
                 'parse_mode' => 'HTML',
             ]);
-        } catch (\Throwable) {
+
+            if (! $response->successful()) {
+                Log::warning('Failed to dispatch Telegram security attack alert: HTTP ' . $response->status() . ' ' . \App\Support\LogRedactor::sanitizeTelegramSecrets((string) $response->body(), is_string($token) ? $token : null));
+            }
+        } catch (\Throwable $e) {
             // Fail-safe: Notification dispatch failure must never interrupt attack defense
+            Log::warning('Failed to dispatch Telegram security attack alert: ' . \App\Support\LogRedactor::sanitizeTelegramSecrets($e->getMessage(), is_string($token) ? $token : null));
         }
     }
 
