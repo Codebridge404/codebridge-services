@@ -353,5 +353,68 @@ class EmailVerificationTest extends TestCase
         $this->assertEquals('654321', $mail->viewData['code']);
         $this->assertEquals('http://example.com/verify', $mail->viewData['verificationUrl']);
     }
+
+    /**
+     * Regression test for Laravel signed-URL expiry bypass advisories (requires laravel/framework >= 12.72.0):
+     * - Expired temporary signed links for email verification and public check-in must fail with 403.
+     * - Dropping parsed query 'expires' via max_input_vars exhaustion must not bypass expiration when raw QUERY_STRING retains expires.
+     */
+    public function test_expired_signed_verification_and_overflow_query_cannot_bypass_expiry(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'expired.signed@codebridge.dev',
+            'email_verified_at' => null,
+        ]);
+
+        // 1. Generated verification URL always includes explicit expires and signature query params
+        $freshUrl = $user->createEmailVerificationUrl(15);
+        $this->assertStringContainsString('expires=', $freshUrl);
+        $this->assertStringContainsString('signature=', $freshUrl);
+
+        // 2. Expired signed verification URL returns 403
+        $expiredUrl = URL::temporarySignedRoute(
+            'verification.verify',
+            Carbon::now()->subMinute(),
+            [
+                'id' => $user->id,
+                'hash' => sha1($user->getEmailForVerification()),
+            ]
+        );
+
+        $this->getJson($expiredUrl)
+            ->assertStatus(403)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'INVALID_VERIFICATION_HASH',
+            ]);
+        $this->assertFalse($user->fresh()->hasVerifiedEmail());
+
+        // 3. Expired signed URL with > max_input_vars padding must still fail with 403
+        $padding = implode('&', array_map(fn (int $i) => "pad_{$i}=1", range(1, 1050)));
+        $this->getJson($expiredUrl . '&' . $padding)
+            ->assertStatus(403)
+            ->assertJson([
+                'status' => 'error',
+                'code' => 'INVALID_VERIFICATION_HASH',
+            ]);
+        $this->assertFalse($user->fresh()->hasVerifiedEmail());
+
+        // 4. Direct UrlGenerator check: simulate PHP max_input_vars dropping 'expires' from parsed query while keeping QUERY_STRING intact
+        $parsedUrl = parse_url($expiredUrl);
+        $rawQuery = $parsedUrl['query'] ?? '';
+        $simulatedRequest = \Illuminate\Http\Request::create(
+            ($parsedUrl['path'] ?? '/') . '?' . $rawQuery,
+            'GET',
+            server: ['HTTP_HOST' => $parsedUrl['host'] ?? 'localhost']
+        );
+        $simulatedRequest->query->remove('expires');
+        $simulatedRequest->server->set('QUERY_STRING', $rawQuery);
+
+        $this->assertFalse(
+            URL::signatureHasNotExpired($simulatedRequest),
+            'Laravel 12.72.0+ must still parse raw QUERY_STRING to detect expired signatures even if PHP max_input_vars drops query keys.'
+        );
+        $this->assertFalse(URL::hasValidSignature($simulatedRequest, true, ['redirect_url']));
+    }
 }
 

@@ -297,6 +297,8 @@ class ReviewRegressionTest extends TestCase
         $tenant = $this->tenant('one');
         $meeting = $this->meeting($tenant, $this->user($tenant));
         $this->postJson('/api/v1/meetings/' . $meeting . '/check-in/public')->assertForbidden();
+        $expiredUrl = URL::temporarySignedRoute('meetings.public-check-in', now()->subMinute(), ['id' => $meeting]);
+        $this->postJson($expiredUrl)->assertForbidden();
         $url = URL::temporarySignedRoute('meetings.public-check-in', now()->addMinutes(5), ['id' => $meeting]);
         $this->postJson($url)->assertOk();
         DB::table('meetings')->where('id', $meeting)->update(['status' => 'cancelled']);
