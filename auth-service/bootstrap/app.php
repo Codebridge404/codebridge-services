@@ -24,7 +24,10 @@ return Application::configure(basePath: dirname(__DIR__))
         );
 
         $middleware->redirectGuestsTo(fn () => null);
-        $middleware->prepend(\App\Http\Middleware\ProtectAttackMiddleware::class);
+        $middleware->prepend([
+            \Illuminate\Http\Middleware\TrustProxies::class,
+            \App\Http\Middleware\ProtectAttackMiddleware::class,
+        ]);
         $middleware->api(prepend: [
             \App\Http\Middleware\EnsureApiClient::class,
             \App\Http\Middleware\AuthenticateJwt::class,

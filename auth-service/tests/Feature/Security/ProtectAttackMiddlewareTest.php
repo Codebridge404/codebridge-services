@@ -336,5 +336,39 @@ class ProtectAttackMiddlewareTest extends TestCase
 
         IpThreatDefenseService::unbanIp('198.51.100.23');
     }
+
+    public function test_trust_proxies_runs_before_protect_attack_middleware_without_wildcard_spoofing(): void
+    {
+        Cache::flush();
+
+        // 1. Trusted K3s/Docker proxy IP (10.42.0.1) forwards real client IP in X-Forwarded-For
+        $this->withServerVariables(['REMOTE_ADDR' => '10.42.0.1'])
+            ->withHeaders([
+                'X-Forwarded-For' => '203.0.113.45',
+                'User-Agent' => 'sqlmap/1.7',
+            ])
+            ->getJson('/api/v1/health')
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'ATTACK_DETECTED');
+
+        $trustedEvent = SecurityEvent::latest('id')->first();
+        $this->assertNotNull($trustedEvent);
+        $this->assertSame('203.0.113.45', $trustedEvent->ip_address);
+        $this->assertNull(IpThreatDefenseService::isBanned('10.42.0.1'));
+
+        // 2. Untrusted public IP cannot spoof X-Forwarded-For (config/trustedproxy.php is not '*')
+        $this->withServerVariables(['REMOTE_ADDR' => '198.51.100.50'])
+            ->withHeaders([
+                'X-Forwarded-For' => '203.0.113.99',
+                'User-Agent' => 'sqlmap/1.7',
+            ])
+            ->getJson('/api/v1/health')
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'ATTACK_DETECTED');
+
+        $untrustedEvent = SecurityEvent::latest('id')->first();
+        $this->assertNotNull($untrustedEvent);
+        $this->assertSame('198.51.100.50', $untrustedEvent->ip_address);
+    }
 }
 
