@@ -59,6 +59,7 @@ for service in auth-service operations-service; do
     kubectl -n "$NAMESPACE" rollout status "deployment/$service" --timeout=180s
     kubectl -n "$NAMESPACE" exec "deployment/$service" -- php artisan migrate --force
     kubectl -n "$NAMESPACE" exec "deployment/$service" -- php artisan optimize
+    kubectl -n "$NAMESPACE" exec "deployment/$service" -- php artisan scramble:cache
 done
 kubectl -n "$NAMESPACE" set image deployment/auth-horizon "worker=$AUTH_IMAGE"
 kubectl -n "$NAMESPACE" set image deployment/operations-horizon "worker=$OPS_IMAGE"
