@@ -24,4 +24,5 @@ Route::prefix('v1')->group(function () {
     require __DIR__ . '/api/finance.php';
     require __DIR__ . '/api/reports.php';
     require __DIR__ . '/api/currencies.php';
+    require __DIR__ . '/api/pos_bff.php';
 });

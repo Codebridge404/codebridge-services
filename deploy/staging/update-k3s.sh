@@ -38,14 +38,29 @@ docker push "$OPS_IMAGE"
 # Generate the mounted gateway config from the same routes as Compose.
 # subPath mounts require a pod restart to pick up ConfigMap changes.
 python3 - <<'PY'
-import json, pathlib, subprocess
+import json, pathlib, re, subprocess
 root = pathlib.Path('gateway')
 nginx = (root / 'nginx.conf').read_text().replace(
     'resolver 127.0.0.11', 'resolver kube-dns.kube-system.svc.cluster.local')
-routes = '\n'.join(p.read_text() for p in sorted((root / 'services').glob('*.conf'))
-                   if p.name != 'fastcgi_php.conf')
-routes = routes.replace('/etc/nginx/services/fastcgi_php.conf', '/etc/nginx/fastcgi_php.conf')
-nginx = nginx.replace('include /etc/nginx/services/*.conf;', routes)
+
+def inline_service_include(match):
+    target = match.group(1)
+    if target == '*.conf':
+        files = [p for p in sorted((root / 'services').glob('*.conf')) if p.name != 'fastcgi_php.conf']
+        content = '\n'.join(p.read_text() for p in files)
+    else:
+        path = root / 'services' / target
+        content = path.read_text() if path.exists() else ''
+    return content.replace('/etc/nginx/services/fastcgi_php.conf', '/etc/nginx/fastcgi_php.conf')
+
+nginx = re.sub(
+    r'^\s*include\s+/etc/nginx/services/([^;\s]+);\s*$',
+    inline_service_include,
+    nginx,
+    flags=re.MULTILINE,
+)
+assert '/etc/nginx/services/' not in nginx, 'Unresolved /etc/nginx/services include in generated K3s nginx.conf'
+
 config = {'apiVersion': 'v1', 'kind': 'ConfigMap',
           'metadata': {'name': 'gateway-nginx-config', 'namespace': 'codebridge-staging'},
           'data': {'nginx.conf': nginx,
