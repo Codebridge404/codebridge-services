@@ -131,6 +131,7 @@ for i in {1..15}; do
 done
 if [ "$GATEWAY_READY" != true ]; then
     echo "Gateway health check timed out."
+    docker logs --tail 50 codebridge-staging-gateway || true
     exit 1
 fi
 
