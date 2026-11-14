@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Git tag for the release (e.g. v0.1.0)'
+        description: 'Git tag for the release (e.g. v0.2.5)'
         required: true
         type: string
-        default: 'v0.1.0'
+        default: 'v0.2.5'
       draft:
         description: 'Create draft release'
         required: false

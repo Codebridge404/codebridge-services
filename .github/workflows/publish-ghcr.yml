@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: 'Optional custom image tag (e.g. v0.1.0, latest)'
+        description: 'Optional custom image tag (e.g. v0.2.5, latest)'
         required: false
         type: string
-        default: ''
+        default: 'v0.2.5'
       push_latest:
         description: 'Also tag as latest'
         required: false
