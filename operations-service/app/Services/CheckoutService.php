@@ -230,15 +230,18 @@ class CheckoutService
                 }
             }
 
-            // 6. Record Payment
-            $tenderType = $data['tender_type'] ?? 'cash';
+            // 6. Record Payment (asynchronous tenders like KHQR remain pending until verified)
+            $tenderType = strtolower((string) ($data['tender_type'] ?? 'cash'));
+            $isAsynchronousTender = in_array($tenderType, ['khqr', 'qr', 'card_online'], true);
+            $initialPaymentStatus = $isAsynchronousTender ? 'pending' : 'paid';
+
             DB::table('payments')->insert([
                 'tenant_id' => $effectiveTenantId,
                 'sale_id' => $saleId,
                 'tender_type' => $tenderType,
                 'amount' => $grandTotal,
                 'currency' => $data['currency'] ?? 'USD',
-                'status' => 'paid',
+                'status' => $initialPaymentStatus,
                 'created_at' => now(),
                 'updated_at' => now(),
             ]);
@@ -427,13 +430,15 @@ class CheckoutService
                     ]);
 
                     // Record Payment for this equal split
+                    $splitTender = strtolower((string) $customTender);
+                    $isAsyncSplit = in_array($splitTender, ['khqr', 'qr', 'card_online'], true);
                     DB::table('payments')->insert([
                         'tenant_id' => $saleTenantId,
                         'sale_id' => $childSaleId,
                         'tender_type' => $customTender,
                         'amount' => $allocatedAmount,
                         'currency' => $parentSale->currency ?? 'USD',
-                        'status' => 'paid',
+                        'status' => $isAsyncSplit ? 'pending' : 'paid',
                         'reference_number' => "SPLIT-EQ-{$i}",
                         'created_at' => now(),
                         'updated_at' => now(),
@@ -522,13 +527,15 @@ class CheckoutService
                         DB::table('sale_lines')->insert($sl);
                     }
 
+                    $splitTender = strtolower((string) $tender);
+                    $isAsyncSplit = in_array($splitTender, ['khqr', 'qr', 'card_online'], true);
                     DB::table('payments')->insert([
                         'tenant_id' => $saleTenantId,
                         'sale_id' => $childSaleId,
                         'tender_type' => $tender,
                         'amount' => $splitGrandTotal,
                         'currency' => $parentSale->currency ?? 'USD',
-                        'status' => 'paid',
+                        'status' => $isAsyncSplit ? 'pending' : 'paid',
                         'reference_number' => "SPLIT-ITEM-{$seatIdx}",
                         'created_at' => now(),
                         'updated_at' => now(),

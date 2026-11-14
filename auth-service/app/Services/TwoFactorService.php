@@ -119,9 +119,9 @@ class TwoFactorService
     }
 
     /**
-     * Verify a 6-digit TOTP code against a secret with clock drift window.
+     * Verify a 6-digit TOTP code against a secret with clock drift window and time-step replay rejection.
      */
-    public function verifyCode(string $secret, string $code, int $window = 1): bool
+    public function verifyCode(string $secret, string $code, int $window = 1, ?User $user = null): bool
     {
         $cleanCode = preg_replace('/\s+/', '', $code);
         if (strlen($cleanCode) !== self::CODE_DIGITS || !ctype_digit($cleanCode)) {
@@ -135,6 +135,15 @@ class TwoFactorService
             $calculated = $this->calculateCode($secret, $timestamp);
 
             if (hash_equals($calculated, $cleanCode)) {
+                // Reject replay of an accepted time step for this user
+                if ($user) {
+                    $timeStep = (int) floor($timestamp / self::TIME_STEP);
+                    $stepKey = "auth:totp_used_step:{$user->id}:{$timeStep}";
+                    $added = Cache::add($stepKey, true, now()->addSeconds(self::TIME_STEP * 2));
+                    if (! $added) {
+                        return false;
+                    }
+                }
                 return true;
             }
         }
@@ -289,7 +298,22 @@ class TwoFactorService
     }
 
     /**
-     * Validate and retrieve the user associated with a 2FA challenge token.
+     * Atomically validate and consume a 2FA challenge token to prevent concurrent replay.
+     */
+    public function validateAndConsumeChallengeToken(string $challengeToken): ?User
+    {
+        $cacheKey = "auth:2fa_challenge:{$challengeToken}";
+        $data = Cache::pull($cacheKey);
+
+        if (!$data || !isset($data['user_id'])) {
+            return null;
+        }
+
+        return User::find($data['user_id']);
+    }
+
+    /**
+     * Validate and retrieve the user associated with a 2FA challenge token without consuming it.
      */
     public function validateChallengeToken(string $challengeToken): ?User
     {

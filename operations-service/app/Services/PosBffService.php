@@ -589,21 +589,44 @@ class PosBffService
             $amount = round($amount * $rate, -2);
         }
 
-        $customMerchantId = $validated['merchant_id'] ?? null;
-        $customMerchantName = $validated['merchant_name'] ?? null;
-        $customMerchantCity = $validated['merchant_city'] ?? null;
-        $customBankName = $validated['bank_name'] ?? null;
+        // Enforce strict merchant recipient resolution from authorized tenant configuration
+        $merchantId = null;
+        $merchantName = null;
+        $merchantCity = null;
+        $bankName = null;
 
-        if (!$customMerchantId && SchemaGuard::hasTable('bank_accounts')) {
-            $bankAccount = DB::table('bank_accounts')
-                ->when($saleTenantId !== null, fn ($q) => $q->where('tenant_id', $saleTenantId))
-                ->orderByDesc('id')
-                ->first();
+        if (SchemaGuard::hasTable('bank_accounts')) {
+            $bankAccountId = isset($validated['bank_account_id']) && is_numeric($validated['bank_account_id'])
+                ? (int) $validated['bank_account_id']
+                : null;
+
+            if ($bankAccountId !== null) {
+                $bankAccount = DB::table('bank_accounts')->where('id', $bankAccountId)->first();
+                if (!$bankAccount) {
+                    throw new \Exception('Unauthorized: Bank account not found.');
+                }
+                if ($saleTenantId !== null && $bankAccount->tenant_id !== null && (string) $bankAccount->tenant_id !== (string) $saleTenantId) {
+                    throw new \Exception('Unauthorized: Bank account belongs to another organization.');
+                }
+            } else {
+                $bankAccount = DB::table('bank_accounts')
+                    ->when($saleTenantId !== null, fn ($q) => $q->where('tenant_id', $saleTenantId))
+                    ->where('status', '!=', 'inactive')
+                    ->orderByDesc('id')
+                    ->first();
+            }
 
             if ($bankAccount) {
-                $customMerchantId = $bankAccount->account_number ?: $customMerchantId;
-                $customMerchantName = $customMerchantName ?: ($bankAccount->account_name ?? null);
-                $customBankName = $customBankName ?: ($bankAccount->bank_name ?? null);
+                $merchantId = !empty($bankAccount->account_number) ? (string) $bankAccount->account_number : null;
+                $merchantName = !empty($bankAccount->account_name) ? (string) $bankAccount->account_name : null;
+                $bankName = !empty($bankAccount->bank_name) ? (string) $bankAccount->bank_name : null;
+            }
+        }
+
+        if (!$merchantName && $saleTenantId !== null && SchemaGuard::hasTable('tenants')) {
+            $tenant = DB::table('tenants')->where('id', $saleTenantId)->first();
+            if ($tenant && !empty($tenant->name)) {
+                $merchantName = (string) $tenant->name;
             }
         }
 
@@ -612,10 +635,10 @@ class PosBffService
             $amount,
             $currency,
             $billNumber,
-            $customMerchantId,
-            $customMerchantName,
-            $customMerchantCity,
-            $customBankName
+            $merchantId,
+            $merchantName,
+            $merchantCity,
+            $bankName
         );
 
         if ($payment) {
@@ -641,18 +664,36 @@ class PosBffService
             ]);
         }
 
-        $attemptId = DB::table('payment_attempts')->insertGetId([
-            'tenant_id' => $saleTenantId,
-            'payment_id' => $paymentId,
-            'merchant_reference' => $billNumber,
-            'provider_transaction_id' => $generated['md5'],
-            'amount' => $amount,
-            'currency' => $currency,
-            'status' => 'pending',
-            'raw_payload' => json_encode($generated),
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        $existingAttempt = DB::table('payment_attempts')
+            ->where('payment_id', $paymentId)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($existingAttempt) {
+            DB::table('payment_attempts')->where('id', $existingAttempt->id)->update([
+                'merchant_reference' => $billNumber,
+                'provider_transaction_id' => $generated['md5'],
+                'amount' => $amount,
+                'currency' => $currency,
+                'status' => 'pending',
+                'raw_payload' => json_encode($generated),
+                'updated_at' => now(),
+            ]);
+            $attemptId = (int) $existingAttempt->id;
+        } else {
+            $attemptId = DB::table('payment_attempts')->insertGetId([
+                'tenant_id' => $saleTenantId,
+                'payment_id' => $paymentId,
+                'merchant_reference' => $billNumber,
+                'provider_transaction_id' => $generated['md5'],
+                'amount' => $amount,
+                'currency' => $currency,
+                'status' => 'pending',
+                'raw_payload' => json_encode($generated),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
 
         return [
             'payment_id' => $paymentId,

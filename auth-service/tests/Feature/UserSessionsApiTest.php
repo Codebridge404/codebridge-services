@@ -205,5 +205,71 @@ class UserSessionsApiTest extends TestCase
         $activeRemaining = UserSession::where('tenant_id', $this->tenantA->id)->whereNull('revoked_at')->count();
         $this->assertEquals(0, $activeRemaining);
     }
+
+    public function test_super_admin_can_retrieve_user_session_stats_across_all_tenants(): void
+    {
+        $superAdmin = User::factory()->create([
+            'email' => 'superadmin.sess@codebridges.io',
+            'role' => 'super_admin',
+            'tenant_id' => $this->tenantA->id,
+            'is_active' => true,
+        ]);
+
+        UserSession::create([
+            'tenant_id' => $this->tenantA->id,
+            'user_id' => $this->adminUserA->id,
+            'api_client_id' => $this->client->id,
+            'device_name' => 'Session A',
+        ]);
+
+        UserSession::create([
+            'tenant_id' => $this->tenantB->id,
+            'user_id' => $this->adminUserB->id,
+            'api_client_id' => $this->client->id,
+            'device_name' => 'Session B',
+        ]);
+
+        // Super Admin sees all sessions across tenants
+        $response = $this->actingAs($superAdmin)
+            ->getJson('/api/v1/user-sessions/stats');
+
+        $response->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('data.total_sessions', 2)
+            ->assertJsonPath('data.active_sessions', 2);
+
+        // Super Admin can filter by tenant_id
+        $filteredResponse = $this->actingAs($superAdmin)
+            ->getJson('/api/v1/user-sessions/stats?tenant_id=' . $this->tenantA->id);
+
+        $filteredResponse->assertOk()
+            ->assertJsonPath('data.total_sessions', 1)
+            ->assertJsonPath('data.active_sessions', 1);
+    }
+
+    public function test_user_can_retrieve_session_stats_when_session_tenant_id_is_null(): void
+    {
+        $adminNullTenant = User::factory()->create([
+            'email' => 'admin.nullsess@example.com',
+            'role' => 'admin',
+            'tenant_id' => $this->tenantA->id,
+            'is_active' => true,
+        ]);
+
+        UserSession::create([
+            'tenant_id' => null,
+            'user_id' => $adminNullTenant->id,
+            'api_client_id' => $this->client->id,
+            'device_name' => 'Session Null Tenant',
+        ]);
+
+        $response = $this->actingAs($adminNullTenant)
+            ->getJson('/api/v1/user-sessions/stats');
+
+        $response->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('data.total_sessions', 1)
+            ->assertJsonPath('data.active_sessions', 1);
+    }
 }
 

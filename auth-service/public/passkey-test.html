@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CodeBridges SmartPOS - Live Passkey & 2FA Tester</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            padding: 24px;
+            max-width: 800px;
+            margin: auto;
+        }
+
+        h1 {
+            font-size: 24px;
+            margin-bottom: 8px;
+            color: #38bdf8;
+        }
+
+        p {
+            color: #94a3b8;
+            font-size: 14px;
+            margin-top: 0;
+        }
+
+        .card {
+            background: #1e293b;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            border: 1px solid #334155;
+        }
+
+        .card h2 {
+            font-size: 18px;
+            margin-top: 0;
+            color: #f1f5f9;
+        }
+
+        button {
+            background: #0284c7;
+            color: white;
+            border: none;
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-right: 8px;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        button:hover {
+            background: #0369a1;
+        }
+
+        button.secondary {
+            background: #475569;
+        }
+
+        button.secondary:hover {
+            background: #334155;
+        }
+
+        button.success {
+            background: #059669;
+        }
+
+        button.success:hover {
+            background: #047857;
+        }
+
+        input {
+            background: #0f172a;
+            border: 1px solid #475569;
+            color: #f8fafc;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 12px;
+        }
+
+        pre {
+            background: #020617;
+            border: 1px solid #1e293b;
+            padding: 12px;
+            border-radius: 8px;
+            font-size: 12px;
+            overflow-x: auto;
+            color: #a5f3fc;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+
+        .badge-green {
+            background: #064e3b;
+            color: #6ee7b7;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>CodeBridges SmartPOS: Live Passkey & 2FA Test Suite</h1>
+    <p>Test real WebAuthn biometric (Touch ID / Face ID / Android / Security Key) ceremonies directly against the
+        backend API.</p>
+
+    <div class="card">
+        <h2>Step 1: Admin Authentication</h2>
+        <input type="email" id="email" value="codebridge2026@gmail.com" placeholder="Email">
+        <input type="password" id="password" value="Code@2026" placeholder="Password">
+        <button onclick="login()">1. Log In (Get Bearer Token)</button>
+        <span id="login-status"></span>
+    </div>
+
+    <div class="card">
+        <h2>Step 2: Passkey Enrollment (Register Touch ID / Biometric)</h2>
+        <p>Performs Step-Up reauthentication, calls <code>/registration/options</code>, triggers the browser's
+            <code>navigator.credentials.create()</code>, and registers the passkey.
+        </p>
+        <input type="text" id="passkey-name" value="My MacBook Touch ID" placeholder="Passkey Name">
+        <button class="success" onclick="enrollPasskey()">2. Enroll Passkey (Touch ID / Face ID)</button>
+        <button class="secondary" onclick="listPasskeys()">List My Registered Passkeys</button>
+    </div>
+
+    <div class="card">
+        <h2>Step 3: Passkey Login (Authentication)</h2>
+        <p>Calls <code>/authentication/options</code>, triggers <code>navigator.credentials.get()</code>, verifies
+            cryptographic signature, and issues a <code>UserSession</code> + rotating <code>RefreshToken</code>.</p>
+        <button class="success" onclick="loginWithPasskey()">3. Log In With Passkey (Biometric / PIN)</button>
+    </div>
+
+    <div class="card">
+        <h2>Execution Output / Server Response</h2>
+        <pre id="output">// Click a button above to see real-time WebAuthn responses...</pre>
+    </div>
+
+    <script>
+        const API_BASE = '/api/v1/auth';
+        const APP_KEY = 'client_web_admin_cb2026';
+        let accessToken = null;
+
+        const bufferToBase64Url = (buf) => {
+            const bytes = new Uint8Array(buf);
+            let binary = '';
+            for (let i = 0; i < bytes.byteLength; i++) {
+                binary += String.fromCharCode(bytes[i]);
+            }
+            return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+        };
+
+        const base64UrlToBuffer = (str) => {
+            let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+            while (base64.length % 4) base64 += '=';
+            const binary = atob(base64);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) {
+                bytes[i] = binary.charCodeAt(i);
+            }
+            return bytes.buffer;
+        };
+
+        const log = (msg, obj) => {
+            const text = msg + (obj ? '\n' + JSON.stringify(obj, null, 2) : '');
+            document.getElementById('output').textContent = text;
+            console.log(msg, obj);
+        };
+
+        async function login() {
+            try {
+                log('Logging in...');
+                const res = await fetch(`${API_BASE}/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-App-Key': APP_KEY },
+                    body: JSON.stringify({
+                        email: document.getElementById('email').value,
+                        password: document.getElementById('password').value
+                    })
+                });
+                const data = await res.json();
+                if (data.access_token) {
+                    accessToken = data.access_token;
+                    document.getElementById('login-status').innerHTML = '<span class="badge badge-green">Logged In (Token Active)</span>';
+                    log('Login Successful! Access token acquired.', data);
+                    await listPasskeys();
+                } else {
+                    log('Login response:', data);
+                }
+            } catch (e) {
+                log('Login error: ' + e.message);
+            }
+        }
+
+        async function enrollPasskey() {
+            if (!accessToken) {
+                alert('Please click Step 1 to log in first.');
+                return;
+            }
+            try {
+                log('1. Performing step-up reauthentication...');
+                const reauthRes = await fetch(`${API_BASE}/reauthenticate/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-App-Key': APP_KEY,
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({
+                        purpose: 'passkey_enrollment',
+                        password: document.getElementById('password').value
+                    })
+                });
+                const reauthData = await reauthRes.json();
+                if (reauthData.status !== 'success') {
+                    log('Step-up reauthentication failed:', reauthData);
+                    return;
+                }
+
+                log('2. Requesting passkey registration options...');
+                const optRes = await fetch(`${API_BASE}/passkeys/registration/options`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-App-Key': APP_KEY,
+                        'Authorization': `Bearer ${accessToken}`
+                    }
+                });
+                const optData = await optRes.json();
+                const { challenge_id, options } = optData.data;
+
+                log('3. Triggering browser authenticator (Touch ID / Face ID / PIN)...');
+                const publicKeyOptions = {
+                    ...options,
+                    challenge: base64UrlToBuffer(options.challenge),
+                    user: {
+                        ...options.user,
+                        id: base64UrlToBuffer(options.user.id)
+                    },
+                    excludeCredentials: (options.excludeCredentials || []).map(c => ({
+                        ...c,
+                        id: base64UrlToBuffer(c.id)
+                    }))
+                };
+
+                const credential = await navigator.credentials.create({ publicKey: publicKeyOptions });
+
+                log('4. Verifying attestation on server...');
+                const verifyPayload = {
+                    challenge_id: challenge_id,
+                    name: document.getElementById('passkey-name').value,
+                    id: credential.id,
+                    response: {
+                        clientDataJSON: bufferToBase64Url(credential.response.clientDataJSON),
+                        attestationObject: bufferToBase64Url(credential.response.attestationObject)
+                    }
+                };
+
+                const verifyRes = await fetch(`${API_BASE}/passkeys/registration/verify`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-App-Key': APP_KEY,
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify(verifyPayload)
+                });
+                const verifyData = await verifyRes.json();
+                if (verifyData.status === 'success') {
+                    log('🎉 PASSKEY REGISTERED SUCCESSFULLY!\nYou can now test Step 3: Click "3. Log In With Passkey (Biometric / PIN)".', verifyData);
+                    await listPasskeys();
+                } else {
+                    log('Passkey registration failed:', verifyData);
+                }
+            } catch (e) {
+                log('Enrollment failed: ' + e.message);
+            }
+        }
+
+        async function loginWithPasskey() {
+            try {
+                log('1. Requesting authentication options...');
+                const email = document.getElementById('email').value;
+                const optRes = await fetch(`${API_BASE}/passkeys/authentication/options`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-App-Key': APP_KEY },
+                    body: JSON.stringify({ email: email })
+                });
+                const optData = await optRes.json();
+                const { challenge_id, options } = optData.data;
+
+                log('2. Triggering Touch ID / Passkey authentication...');
+                const publicKeyOptions = {
+                    ...options,
+                    challenge: base64UrlToBuffer(options.challenge),
+                    allowCredentials: (options.allowCredentials || []).map(c => ({
+                        ...c,
+                        id: base64UrlToBuffer(c.id)
+                    }))
+                };
+
+                const assertion = await navigator.credentials.get({ publicKey: publicKeyOptions });
+
+                log('3. Verifying cryptographic assertion with server...');
+                const verifyPayload = {
+                    challenge_id: challenge_id,
+                    id: assertion.id,
+                    response: {
+                        clientDataJSON: bufferToBase64Url(assertion.response.clientDataJSON),
+                        authenticatorData: bufferToBase64Url(assertion.response.authenticatorData),
+                        signature: bufferToBase64Url(assertion.response.signature)
+                    },
+                    device_name: 'MacBook Passkey (Web)'
+                };
+
+                const verifyRes = await fetch(`${API_BASE}/passkeys/authentication/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'X-App-Key': APP_KEY },
+                    body: JSON.stringify(verifyPayload)
+                });
+                const verifyData = await verifyRes.json();
+                if (verifyData.access_token) {
+                    accessToken = verifyData.access_token;
+                    document.getElementById('login-status').innerHTML = '<span class="badge badge-green">Logged In Via Passkey!</span>';
+                    log('🚀 PASSKEY AUTHENTICATION SUCCESSFUL!\nLogged in with AMR: ["passkey", "user_verified"].', verifyData);
+                    await listPasskeys();
+                } else {
+                    let extraTip = '';
+                    if (verifyData.code === 'AUTHENTICATION_FAILED') {
+                        extraTip = '\n\n💡 TIP: The passkey stored on your device is not recognized in the database (e.g. after a database reset).\nPlease run Step 1 (Log In) and Step 2 (Enroll Passkey) once to register this device.';
+                    }
+                    log('Verification response:\n' + JSON.stringify(verifyData, null, 2) + extraTip);
+                }
+            } catch (e) {
+                log('Passkey login failed: ' + e.message);
+            }
+        }
+
+        async function listPasskeys() {
+            if (!accessToken) {
+                alert('Please log in first.');
+                return;
+            }
+            try {
+                const res = await fetch(`${API_BASE}/passkeys`, {
+                    headers: {
+                        'X-App-Key': APP_KEY,
+                        'Authorization': `Bearer ${accessToken}`
+                    }
+                });
+                const data = await res.json();
+                log('Registered Passkeys:', data);
+            } catch (e) {
+                log('Error listing passkeys: ' + e.message);
+            }
+        }
+    </script>
+</body>
+
+</html>

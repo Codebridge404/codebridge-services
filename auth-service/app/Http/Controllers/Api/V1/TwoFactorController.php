@@ -12,6 +12,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\TwoFactorChallengeRequest;
 use App\Http\Requests\Auth\TwoFactorConfirmRequest;
 use App\Http\Requests\Auth\TwoFactorDisableRequest;
+use App\Http\Requests\Auth\TwoFactorSetupRequest;
 use App\Http\Resources\User\UserResource;
 use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
@@ -55,7 +56,8 @@ class TwoFactorController extends Controller
         type: 'array{status: string, message: string, secret: string, setup_uri: string, qr_code_url: string, qr_code_svg: string}'
     )]
     #[OpenApiResponse(status: 401, description: 'Unauthenticated', type: 'array{status: string, code: string, message: string}')]
-    public function setup(Request $request)
+    #[OpenApiResponse(status: 422, description: 'Password required when 2FA is already enabled', type: 'array{status: string, code: string, message: string}')]
+    public function setup(TwoFactorSetupRequest $request)
     {
         /** @var User|null $user */
         $user = $request->user();
@@ -196,7 +198,7 @@ class TwoFactorController extends Controller
     #[OpenApiResponse(status: 422, description: 'Invalid challenge token or authentication code', type: 'array{status: string, code: string, message: string}')]
     public function challenge(TwoFactorChallengeRequest $request)
     {
-        $challengeToken = (string) $request->input('challenge_token');
+        $challengeToken = (string) ($request->input('challenge_id') ?? $request->input('challenge_token'));
         $code = trim((string) $request->input('code'));
 
         $user = $this->twoFactorService->validateChallengeToken($challengeToken);
@@ -227,8 +229,8 @@ class TwoFactorController extends Controller
         $secret = $this->twoFactorService->getDecryptedSecret($user);
         $isCodeValid = false;
 
-        // 1. Check TOTP authenticator code
-        if ($secret && $this->twoFactorService->verifyCode($secret, $code)) {
+        // 1. Check TOTP authenticator code (rejecting replayed time steps)
+        if ($secret && $this->twoFactorService->verifyCode($secret, $code, 1, $user)) {
             $isCodeValid = true;
         }
         // 2. Check emergency recovery code
@@ -263,58 +265,68 @@ class TwoFactorController extends Controller
         RateLimiter::clear($accountKey);
         RateLimiter::clear($challengeKey);
 
-        // Invalidate challenge token once verified
-        $this->twoFactorService->consumeChallengeToken($challengeToken);
+        // Atomically consume challenge token to prevent concurrent duplicate verification
+        $consumed = $this->twoFactorService->validateAndConsumeChallengeToken($challengeToken);
+        if (!$consumed) {
+            return $this->errorResponse(
+                'The two-factor challenge token has already been consumed or has expired.',
+                HttpStatus::UNPROCESSABLE_ENTITY,
+                ResponseCode::VALIDATION_ERROR
+            );
+        }
 
-        // Issue tokens
-        $jwtToken = $this->jwtService->generateTokenForUser($user);
-        $refreshToken = $this->jwtService->generateRefreshTokenForUser($user);
+        // Resolve ApiClient
+        $client = $request->attributes->get('api_client');
+        if (! $client) {
+            $clientKey = $request->header('X-Client-Key') ?? $request->header('X-App-Key') ?? $request->input('client_key');
+            if ($clientKey) {
+                $client = \App\Models\ApiClient::where('client_key', $clientKey)->active()->first();
+            }
+            if (! $client) {
+                $client = \App\Models\ApiClient::where('client_key', 'client_web_admin_cb2026')->first() ?? \App\Models\ApiClient::first();
+            }
+            if (! $client) {
+                $client = \App\Models\ApiClient::create([
+                    'uuid' => (string) \Illuminate\Support\Str::uuid(),
+                    'name' => 'Default Platform Client',
+                    'client_key' => 'client_web_admin_cb2026',
+                    'client_type' => 'first_party',
+                    'is_active' => true,
+                ]);
+            }
+        }
 
         /** @var \App\Services\DeviceDetectorService $detector */
         $detector = app(\App\Services\DeviceDetectorService::class);
         $deviceName = $request->input('device_name') ?? $detector->parseDeviceName($request->userAgent());
-        $browser = $detector->parseBrowser($request->userAgent());
-        $platform = $detector->parsePlatform($request->userAgent());
-        $location = $detector->parseLocation($request);
 
-        $expiresAt = now()->addSeconds($this->jwtService->getRefreshTtlSeconds());
-        $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
-        $this->jwtService->bindSession($tokenResult->accessToken);
-        $jwtToken = $this->jwtService->generateTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
-        $refreshToken = $this->jwtService->generateRefreshTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
+        $sessionPermissions = method_exists($user, 'getAllPermissions')
+            ? $user->getAllPermissions()->pluck('name')->values()->toArray()
+            : [];
 
-        $twoFaTokenData = [
-            'ip_address' => $request->ip(),
-            'user_agent' => substr($request->userAgent() ?? '', 0, 500),
+        // Create Enterprise UserSession
+        $userSession = \App\Models\UserSession::create([
+            'user_id' => $user->id,
+            'api_client_id' => $client->id,
+            'tenant_id' => $user->tenant_id,
+            'device_uuid' => $request->header('X-Device-Id') ?? $request->input('device_uuid'),
             'device_name' => $deviceName,
-            'last_used_at' => now(),
-        ];
-        if (SchemaGuard::hasColumn('personal_access_tokens', 'browser')) {
-            $twoFaTokenData['browser'] = $browser;
-        }
-        if (SchemaGuard::hasColumn('personal_access_tokens', 'platform')) {
-            $twoFaTokenData['platform'] = $platform;
-        }
-        if (SchemaGuard::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
-            $twoFaTokenData['location'] = $location;
-        }
+            'ip_address' => $request->ip(),
+            'user_agent' => substr($request->userAgent() ?? '', 0, 512),
+            'permissions' => array_values($sessionPermissions),
+            'expires_at' => now()->addDays(30),
+        ]);
 
-        try {
-            DB::table('personal_access_tokens')
-                ->where('id', $tokenResult->accessToken->id)
-                ->update($twoFaTokenData);
-        } catch (\Throwable $e) {
-            try {
-                DB::table('personal_access_tokens')
-                    ->where('id', $tokenResult->accessToken->id)
-                    ->update([
-                        'ip_address' => $request->ip(),
-                        'user_agent' => substr($request->userAgent() ?? '', 0, 500),
-                        'device_name' => $deviceName,
-                        'last_used_at' => now(),
-                    ]);
-            } catch (\Throwable $ignored) {}
-        }
+        // Issue root rotating refresh token
+        $rootPair = \App\Models\RefreshToken::issueRoot($userSession);
+        $refreshToken = $rootPair['credential'];
+
+        // Mint access JWT with sid = user_sessions.uuid and MFA AMR assurance
+        $jwtToken = $this->jwtService->generateTokenForUser($user, [
+            'sid' => $userSession->uuid,
+            'client_id' => $client->uuid,
+            'amr' => ['pwd', 'mfa'],
+        ]);
 
         // Resolve workspace branding
         if ($user->tenant_id) {
@@ -352,6 +364,8 @@ class TwoFactorController extends Controller
             extra: [
                 'access_token' => $jwtToken,
                 'refresh_token' => $refreshToken,
+                'session_id' => $userSession->uuid,
+                'session_uuid' => $userSession->uuid,
                 'token_type' => 'Bearer',
                 'expires_in' => $this->jwtService->getTtlSeconds(),
                 'user' => new UserResource($user),

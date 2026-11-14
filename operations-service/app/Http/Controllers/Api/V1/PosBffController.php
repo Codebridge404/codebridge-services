@@ -119,10 +119,7 @@ class PosBffController extends Controller
         $extra = $request->validate([
             'generate_khqr' => ['nullable', 'boolean'],
             'khqr_currency' => ['nullable', 'string', 'in:USD,KHR'],
-            'merchant_id' => ['nullable', 'string', 'max:100'],
-            'merchant_name' => ['nullable', 'string', 'max:100'],
-            'merchant_city' => ['nullable', 'string', 'max:100'],
-            'bank_name' => ['nullable', 'string', 'max:100'],
+            'bank_account_id' => ['nullable', 'integer', 'min:1'],
         ]);
 
         [$isSuperAdminAll] = $this->resolveCallerContext($request, $tenantId);

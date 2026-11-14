@@ -22,7 +22,8 @@ class TwoFactorChallengeRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'challenge_token' => ['required', 'string'],
+            'challenge_id' => ['required_without:challenge_token', 'nullable', 'string'],
+            'challenge_token' => ['required_without:challenge_id', 'nullable', 'string'],
             'code' => ['required', 'string'],
             'device_name' => ['nullable', 'string', 'max:255'],
         ];

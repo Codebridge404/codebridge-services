@@ -198,7 +198,9 @@ class AuthController extends Controller
                 ],
                 extra: [
                     'status' => 'requires_mfa',
+                    'requires_two_factor' => true,
                     'two_factor_required' => true,
+                    'challenge_id' => $challengeToken,
                     'challenge_token' => $challengeToken,
                     'expires_in' => 300,
                 ]
@@ -232,7 +234,7 @@ class AuthController extends Controller
                 ->where('tenant_id', $user->tenant_id)
                 ->where('user_id', $user->id)
                 ->exists();
-            if ($hasMembership) {
+            if ($hasMembership || UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
                 $sessionTenantId = $user->tenant_id;
             }
         }

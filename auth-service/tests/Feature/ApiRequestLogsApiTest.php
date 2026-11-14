@@ -185,6 +185,12 @@ class ApiRequestLogsApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('meta.total', 1)
             ->assertJsonPath('data.0.path', 'api/v1/beta');
+
+        // Filter with tenant_id=0 (OpenAPI default parameter) should not filter out all logs
+        $resZero = $this->actingAs($this->superAdmin)
+            ->getJson('/api/v1/request-logs?tenant_id=0')
+            ->assertOk();
+        $this->assertGreaterThanOrEqual(2, $resZero->json('meta.total'));
     }
 
     public function test_request_logs_stats_endpoint(): void

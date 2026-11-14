@@ -35,15 +35,21 @@ class RefreshTokenController extends Controller
         if (! $isSuperAdmin) {
             $tenantId = $user?->tenant_id;
             if ($tenantId) {
-                $query->whereHas('session', function ($q) use ($tenantId) {
-                    $q->where('tenant_id', $tenantId);
+                $query->whereHas('session', function ($q) use ($tenantId, $user) {
+                    $q->where(function ($sub) use ($tenantId, $user) {
+                        $sub->where('tenant_id', $tenantId)
+                            ->orWhere(function ($ownerSub) use ($user) {
+                                $ownerSub->whereNull('tenant_id')
+                                    ->where('user_id', $user?->id);
+                            });
+                    });
                 });
             } else {
                 $query->whereHas('session', function ($q) use ($user) {
                     $q->where('user_id', $user?->id);
                 });
             }
-        } elseif ($request->filled('tenant_id')) {
+        } elseif ($request->filled('tenant_id') && $request->integer('tenant_id') > 0) {
             $tId = $request->integer('tenant_id');
             $query->whereHas('session', function ($q) use ($tId) {
                 $q->where('tenant_id', $tId);
@@ -124,11 +130,17 @@ class RefreshTokenController extends Controller
         if (! $isSuperAdmin) {
             $tenantId = $user?->tenant_id;
             if ($tenantId) {
-                $query->where('us.tenant_id', $tenantId);
+                $query->where(function ($q) use ($tenantId, $user) {
+                    $q->where('us.tenant_id', $tenantId)
+                        ->orWhere(function ($sub) use ($user) {
+                            $sub->whereNull('us.tenant_id')
+                                ->where('us.user_id', $user?->id);
+                        });
+                });
             } else {
                 $query->where('us.user_id', $user?->id);
             }
-        } elseif ($request->filled('tenant_id')) {
+        } elseif ($request->filled('tenant_id') && $request->integer('tenant_id') > 0) {
             $query->where('us.tenant_id', $request->integer('tenant_id'));
         }
 
@@ -178,8 +190,14 @@ class RefreshTokenController extends Controller
         if (! $isSuperAdmin) {
             $tenantId = $user?->tenant_id;
             if ($tenantId) {
-                $query->whereHas('session', function ($q) use ($tenantId) {
-                    $q->where('tenant_id', $tenantId);
+                $query->whereHas('session', function ($q) use ($tenantId, $user) {
+                    $q->where(function ($sub) use ($tenantId, $user) {
+                        $sub->where('tenant_id', $tenantId)
+                            ->orWhere(function ($ownerSub) use ($user) {
+                                $ownerSub->whereNull('tenant_id')
+                                    ->where('user_id', $user?->id);
+                            });
+                    });
                 });
             } else {
                 $query->whereHas('session', function ($q) use ($user) {
@@ -225,8 +243,14 @@ class RefreshTokenController extends Controller
         if (! $isSuperAdmin) {
             $tenantId = $user?->tenant_id;
             if ($tenantId) {
-                $query->whereHas('session', function ($q) use ($tenantId) {
-                    $q->where('tenant_id', $tenantId);
+                $query->whereHas('session', function ($q) use ($tenantId, $user) {
+                    $q->where(function ($sub) use ($tenantId, $user) {
+                        $sub->where('tenant_id', $tenantId)
+                            ->orWhere(function ($ownerSub) use ($user) {
+                                $ownerSub->whereNull('tenant_id')
+                                    ->where('user_id', $user?->id);
+                            });
+                    });
                 });
             } else {
                 $query->whereHas('session', function ($q) use ($user) {

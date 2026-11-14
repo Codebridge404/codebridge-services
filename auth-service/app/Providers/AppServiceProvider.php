@@ -65,6 +65,10 @@ class AppServiceProvider extends ServiceProvider
                             '*payment-callbacks*',
                             '*payments/webhook*',
                             '*health*',
+                            '*.well-known*',
+                            '*assetlinks*',
+                            '*apple-app-site-association*',
+                            '*passkey-test*',
                             'health',
                             'up',
                         ], $uri);

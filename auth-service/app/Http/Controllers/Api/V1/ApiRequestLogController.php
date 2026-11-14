@@ -34,11 +34,17 @@ class ApiRequestLogController extends Controller
         if (! $isSuperAdmin) {
             $tenantId = $user?->tenant_id;
             if ($tenantId) {
-                $query->where('tenant_id', $tenantId);
+                $query->where(function ($q) use ($tenantId, $user) {
+                    $q->where('tenant_id', $tenantId)
+                        ->orWhere(function ($sub) use ($user) {
+                            $sub->whereNull('tenant_id')
+                                ->where('user_id', $user?->id);
+                        });
+                });
             } else {
                 $query->where('user_id', $user?->id);
             }
-        } elseif ($request->filled('tenant_id')) {
+        } elseif ($request->filled('tenant_id') && $request->integer('tenant_id') > 0) {
             $query->where('tenant_id', $request->integer('tenant_id'));
         }
 
@@ -126,11 +132,17 @@ class ApiRequestLogController extends Controller
         if (! $isSuperAdmin) {
             $tenantId = $user?->tenant_id;
             if ($tenantId) {
-                $baseQuery->where('tenant_id', $tenantId);
+                $baseQuery->where(function ($q) use ($tenantId, $user) {
+                    $q->where('tenant_id', $tenantId)
+                        ->orWhere(function ($sub) use ($user) {
+                            $sub->whereNull('tenant_id')
+                                ->where('user_id', $user?->id);
+                        });
+                });
             } else {
                 $baseQuery->where('user_id', $user?->id);
             }
-        } elseif ($request->filled('tenant_id')) {
+        } elseif ($request->filled('tenant_id') && $request->integer('tenant_id') > 0) {
             $baseQuery->where('tenant_id', $request->integer('tenant_id'));
         }
 
@@ -183,7 +195,13 @@ class ApiRequestLogController extends Controller
         if (! $isSuperAdmin) {
             $tenantId = $user?->tenant_id;
             if ($tenantId) {
-                $query->where('tenant_id', $tenantId);
+                $query->where(function ($q) use ($tenantId, $user) {
+                    $q->where('tenant_id', $tenantId)
+                        ->orWhere(function ($sub) use ($user) {
+                            $sub->whereNull('tenant_id')
+                                ->where('user_id', $user?->id);
+                        });
+                });
             } else {
                 $query->where('user_id', $user?->id);
             }

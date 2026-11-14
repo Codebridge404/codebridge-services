@@ -215,5 +215,96 @@ class RefreshTokensApiTest extends TestCase
         $this->assertNotNull($token->fresh()->revoked_at);
         $this->assertNotNull($session->fresh()->revoked_at);
     }
+
+    public function test_super_admin_can_retrieve_aggregate_stats_across_all_tenants(): void
+    {
+        $superAdmin = User::factory()->create([
+            'email' => 'superadmin.test@codebridges.io',
+            'role' => 'super_admin',
+            'tenant_id' => $this->tenantA->id,
+            'is_active' => true,
+        ]);
+
+        $sessionA = UserSession::create([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => $this->tenantA->id,
+            'user_id' => $this->adminUserA->id,
+            'api_client_id' => $this->client->id,
+            'device_name' => 'Session A',
+        ]);
+        RefreshToken::create([
+            'session_id' => $sessionA->id,
+            'token_id' => bin2hex(random_bytes(16)),
+            'token_hash' => hash('sha256', 'hash_a'),
+            'expires_at' => Carbon::now()->addDays(30),
+            'created_at' => now(),
+        ]);
+
+        $sessionB = UserSession::create([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => $this->tenantB->id,
+            'user_id' => $this->adminUserB->id,
+            'api_client_id' => $this->client->id,
+            'device_name' => 'Session B',
+        ]);
+        RefreshToken::create([
+            'session_id' => $sessionB->id,
+            'token_id' => bin2hex(random_bytes(16)),
+            'token_hash' => hash('sha256', 'hash_b'),
+            'expires_at' => Carbon::now()->addDays(30),
+            'created_at' => now(),
+        ]);
+
+        // Super Admin sees all tokens across tenantA and tenantB without filtering
+        $response = $this->actingAs($superAdmin)
+            ->getJson('/api/v1/refresh-tokens/stats');
+
+        $response->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('data.total_tokens', 2)
+            ->assertJsonPath('data.active_count', 2);
+
+        // Super Admin can filter explicitly by tenant_id
+        $filteredResponse = $this->actingAs($superAdmin)
+            ->getJson('/api/v1/refresh-tokens/stats?tenant_id=' . $this->tenantA->id);
+
+        $filteredResponse->assertOk()
+            ->assertJsonPath('data.total_tokens', 1)
+            ->assertJsonPath('data.active_count', 1);
+    }
+
+    public function test_user_can_retrieve_stats_when_session_tenant_id_is_null(): void
+    {
+        $adminNullTenantSession = User::factory()->create([
+            'email' => 'admin.nulltenant@example.com',
+            'role' => 'admin',
+            'tenant_id' => $this->tenantA->id,
+            'is_active' => true,
+        ]);
+
+        // Session created with null tenant_id
+        $session = UserSession::create([
+            'uuid' => (string) Str::uuid(),
+            'tenant_id' => null,
+            'user_id' => $adminNullTenantSession->id,
+            'api_client_id' => $this->client->id,
+            'device_name' => 'Device Null Tenant',
+        ]);
+        RefreshToken::create([
+            'session_id' => $session->id,
+            'token_id' => bin2hex(random_bytes(16)),
+            'token_hash' => hash('sha256', 'hash_null'),
+            'expires_at' => Carbon::now()->addDays(30),
+            'created_at' => now(),
+        ]);
+
+        $response = $this->actingAs($adminNullTenantSession)
+            ->getJson('/api/v1/refresh-tokens/stats');
+
+        $response->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('data.total_tokens', 1)
+            ->assertJsonPath('data.active_count', 1);
+    }
 }
 

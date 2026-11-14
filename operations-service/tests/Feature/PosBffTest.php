@@ -267,4 +267,202 @@ class PosBffTest extends TestCase
         $this->assertSame(1, DB::table('payment_attempts')->where('id', $firstAttemptId)->count());
         $this->assertEquals(22, (float) DB::table('inventory_balances')->where('product_id', $fixture['productId'])->value('on_hand'));
     }
+
+    public function test_cashier_merchant_override_is_ignored_and_uses_tenant_configured_bank_account(): void
+    {
+        $fixture = $this->seedTenantFixture(101, 'A');
+        ['user' => $cashier, 'headers' => $headers] = $this->actingAsTenantCashier(101, $fixture['outletId']);
+
+        // Configure authoritative tenant bank account
+        DB::table('bank_accounts')->insert([
+            'tenant_id' => 101,
+            'bank_name' => 'Canadia Bank',
+            'account_name' => 'Sunny Cafe Phnom Penh',
+            'account_number' => 'sunnycafe@canadia',
+            'currency' => 'USD',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Malicious cashier attempts to divert funds by sending their own personal Bakong ID
+        $checkoutPayload = [
+            'outlet_id' => $fixture['outletId'],
+            'register_id' => $fixture['registerId'],
+            'idempotency_key' => 'pos-bff-khqr-hijack-attempt-001',
+            'tender_type' => 'khqr',
+            'merchant_id' => 'attacker_cashier@bakong',
+            'merchant_name' => 'Attacker Wallet',
+            'merchant_city' => 'Phnom Penh',
+            'bank_name' => 'Attacker Bank',
+            'items' => [
+                ['product_id' => $fixture['productId'], 'quantity' => 1],
+            ],
+        ];
+
+        $res = $this->withHeaders($headers)->postJson('/api/v1/pos-bff/checkout', $checkoutPayload);
+
+        $res->assertStatus(201)
+            ->assertJsonPath('data.khqr.status', 'pending')
+            ->assertJsonPath('data.khqr.merchant_name', 'Sunny Cafe Phnom Penh');
+
+        $khqrString = (string) $res->json('data.khqr.khqr_string');
+        $this->assertStringContainsString('sunnycafe@canadia', $khqrString);
+        $this->assertStringNotContainsString('attacker_cashier@bakong', $khqrString);
+
+        // Payment status in DB must be pending
+        $saleId = $res->json('data.sale.id');
+        $payment = DB::table('payments')->where('sale_id', $saleId)->first();
+        $this->assertNotNull($payment);
+        $this->assertSame('pending', $payment->status);
+    }
+
+    public function test_cross_tenant_bank_account_selection_fails_with_403(): void
+    {
+        $fixtureA = $this->seedTenantFixture(101, 'A');
+        $fixtureB = $this->seedTenantFixture(202, 'B');
+        ['user' => $cashierA, 'headers' => $headersA] = $this->actingAsTenantCashier(101, $fixtureA['outletId']);
+
+        // Bank account belonging to Tenant 202
+        $tenant202BankAccountId = DB::table('bank_accounts')->insertGetId([
+            'tenant_id' => 202,
+            'bank_name' => 'ABA Bank',
+            'account_name' => 'Tenant B Store',
+            'account_number' => 'tenantb@aba',
+            'currency' => 'USD',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $checkoutPayload = [
+            'outlet_id' => $fixtureA['outletId'],
+            'register_id' => $fixtureA['registerId'],
+            'idempotency_key' => 'pos-bff-khqr-cross-tenant-001',
+            'tender_type' => 'khqr',
+            'bank_account_id' => $tenant202BankAccountId,
+            'items' => [
+                ['product_id' => $fixtureA['productId'], 'quantity' => 1],
+            ],
+        ];
+
+        $res = $this->withHeaders($headersA)->postJson('/api/v1/pos-bff/checkout', $checkoutPayload);
+        $res->assertStatus(403)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('message', 'Unauthorized: Bank account belongs to another organization.');
+    }
+
+    public function test_khqr_checkout_with_disabled_qr_generation_leaves_payment_as_pending(): void
+    {
+        $fixture = $this->seedTenantFixture(101, 'A');
+        ['user' => $cashier, 'headers' => $headers] = $this->actingAsTenantCashier(101, $fixture['outletId']);
+
+        $shiftId = DB::table('shifts')->insertGetId([
+            'tenant_id' => 101,
+            'outlet_id' => $fixture['outletId'],
+            'register_id' => $fixture['registerId'],
+            'user_id' => $cashier->id,
+            'opened_at' => now(),
+            'opening_float' => 50.00,
+            'expected_cash' => 50.00,
+            'status' => 'open',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $payload = [
+            'outlet_id' => $fixture['outletId'],
+            'register_id' => $fixture['registerId'],
+            'shift_id' => $shiftId,
+            'idempotency_key' => 'pos-bff-khqr-no-gen-001',
+            'tender_type' => 'khqr',
+            'generate_khqr' => false,
+            'items' => [
+                ['product_id' => $fixture['productId'], 'quantity' => 1],
+            ],
+        ];
+
+        $res = $this->withHeaders($headers)->postJson('/api/v1/pos-bff/checkout', $payload);
+        $res->assertStatus(201)
+            ->assertJsonPath('data.khqr', null);
+
+        $saleId = $res->json('data.sale.id');
+        $payment = DB::table('payments')->where('sale_id', $saleId)->first();
+        $this->assertNotNull($payment);
+        $this->assertSame('pending', $payment->status);
+
+        // Shift summary must not count pending KHQR payment as paid sales
+        $shiftSummaryRes = $this->withHeaders($headers)->getJson("/api/v1/pos-bff/shift-summary?shift_id={$shiftId}");
+        $shiftSummaryRes->assertStatus(200)
+            ->assertJsonPath('data.active_shift.summary.khqr_sales', 0)
+            ->assertJsonPath('data.active_shift.summary.cash_sales', 0);
+    }
+
+    public function test_khqr_checkout_generation_failure_never_marks_payment_as_paid_and_retry_recovers(): void
+    {
+        $fixture = $this->seedTenantFixture(101, 'A');
+        ['user' => $cashier, 'headers' => $headers] = $this->actingAsTenantCashier(101, $fixture['outletId']);
+
+        // First attempt: pass bank_account_id that belongs to another tenant to trigger failure
+        $foreignBankAccountId = DB::table('bank_accounts')->insertGetId([
+            'tenant_id' => 999,
+            'bank_name' => 'Foreign Bank',
+            'account_name' => 'Foreign Tenant',
+            'account_number' => 'foreign@bakong',
+            'currency' => 'USD',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $payload = [
+            'outlet_id' => $fixture['outletId'],
+            'register_id' => $fixture['registerId'],
+            'idempotency_key' => 'pos-bff-khqr-fail-retry-001',
+            'tender_type' => 'khqr',
+            'bank_account_id' => $foreignBankAccountId,
+            'items' => [
+                ['product_id' => $fixture['productId'], 'quantity' => 1],
+            ],
+        ];
+
+        // First attempt fails at authorization
+        $failRes = $this->withHeaders($headers)->postJson('/api/v1/pos-bff/checkout', $payload);
+        $failRes->assertStatus(403);
+
+        // Verify sale was created by finalizeSale, but payment in DB is strictly pending, never paid
+        $sale = DB::table('sales')->where('idempotency_key', 'pos-bff-khqr-fail-retry-001')->first();
+        $this->assertNotNull($sale);
+        $payment = DB::table('payments')->where('sale_id', $sale->id)->first();
+        $this->assertNotNull($payment);
+        $this->assertSame('pending', $payment->status);
+
+        // Stock was decremented once (25 - 1 = 24)
+        $this->assertEquals(24, (float) DB::table('inventory_balances')->where('product_id', $fixture['productId'])->value('on_hand'));
+
+        // Retry with same idempotency key and valid tenant bank account
+        $ownBankAccountId = DB::table('bank_accounts')->insertGetId([
+            'tenant_id' => 101,
+            'bank_name' => 'Bakong System',
+            'account_name' => 'Valid Branch A',
+            'account_number' => 'validbrancha@bakong',
+            'currency' => 'USD',
+            'status' => 'active',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $payload['bank_account_id'] = $ownBankAccountId;
+
+        $retryRes = $this->withHeaders($headers)->postJson('/api/v1/pos-bff/checkout', $payload);
+        $retryRes->assertStatus(200)
+            ->assertJsonPath('data.is_duplicate', true)
+            ->assertJsonPath('data.khqr.status', 'pending');
+
+        // Retries produce no duplicate sale, no duplicate payment, and no duplicate stock deduction
+        $this->assertSame(1, DB::table('sales')->where('idempotency_key', 'pos-bff-khqr-fail-retry-001')->count());
+        $this->assertSame(1, DB::table('payments')->where('sale_id', $sale->id)->count());
+        $this->assertSame(1, DB::table('payment_attempts')->where('payment_id', $payment->id)->count());
+        $this->assertEquals(24, (float) DB::table('inventory_balances')->where('product_id', $fixture['productId'])->value('on_hand'));
+    }
 }

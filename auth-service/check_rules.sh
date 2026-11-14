@@ -60,8 +60,8 @@ run_rule_check "3" "Validation Testing (Rejection of Invalid / Malformed Inputs)
 # ------------------------------------------------------------------------------
 # 4. Authentication Testing
 # ------------------------------------------------------------------------------
-run_rule_check "4" "Authentication Testing (Login, JWT Lifecycle, 2FA, Session Revocation & Logout)" \
-    "php artisan test --filter='AuthTest|JwtAuthenticationTest|TwoFactorAuthenticationTest|SessionsSecurityTest|RejectExpiredSanctumTokenTest|UserSessionRotationFlowTest'"
+run_rule_check "4" "Authentication Testing (Login, JWT Lifecycle, 2FA, Passkeys, Session Revocation & Logout)" \
+    "php artisan test --filter='AuthTest|JwtAuthenticationTest|TwoFactorAuthenticationTest|TwoFactorHardeningTest|PasskeyAuthenticationTest|SessionsSecurityTest|RejectExpiredSanctumTokenTest|UserSessionRotationFlowTest'"
 
 # ------------------------------------------------------------------------------
 # 5. Authorization & RBAC Testing
