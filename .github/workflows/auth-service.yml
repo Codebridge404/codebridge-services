@@ -52,15 +52,6 @@ jobs:
 
       - name: Run Test Suite
         working-directory: ./auth-service
-        env:
-          DB_CONNECTION: sqlite
-          DB_DATABASE: database/database.sqlite
-          CACHE_STORE: array
-          CACHE_DRIVER: array
-          SESSION_DRIVER: array
-          FILESYSTEM_DISK: local
-          JWT_SECRET: testing_jwt_secret_key_minimum_32_characters_long
-          JWT_ISSUER: codebridge-auth-service
         run: |
           set -euo pipefail
           if [ -f .env.example ] && [ ! -f .env ]; then
@@ -109,6 +100,15 @@ jobs:
             echo "=========================================================================="
 
             TARGET_DIR="${STAGING_DEPLOY_PATH:-/opt/codebridge-services/codebridge-services}"
+            if [ -z "${TARGET_DIR}" ] || [ ! -d "${TARGET_DIR}/.git" ]; then
+              for dir in "${TARGET_DIR}" "/opt/codebridge-services/codebridge-services" "$HOME/codebridge-services" "$HOME/codebridge" "/var/www/codebridge-services"; do
+                if [ -n "$dir" ] && [ -d "$dir/.git" ]; then
+                  TARGET_DIR="$dir"
+                  break
+                fi
+              done
+            fi
+
             if [ ! -d "${TARGET_DIR}/.git" ]; then
               echo "ERROR: Tracked repository directory not found at ${TARGET_DIR}." >&2
               exit 1
@@ -117,5 +117,15 @@ jobs:
             cd "${TARGET_DIR}"
             echo "Working directory: $(pwd)"
 
-            chmod +x auth-service/scripts/deploy.sh
+            # Ensure clean tracked working tree before checkout
+            if ! git diff-index --quiet HEAD --; then
+              echo "ERROR: Tracked files have uncommitted changes on VPS. Aborting." >&2
+              exit 1
+            fi
+
+            echo "Fetching latest demo branch on VPS..."
+            git fetch origin demo
+            git checkout "${TARGET_SHA}"
+
+            chmod +x auth-service/scripts/deploy.sh deploy/vps/k3s-service-deploy.sh
             bash auth-service/scripts/deploy.sh "${TARGET_SHA}"
