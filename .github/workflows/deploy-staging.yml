@@ -1,183 +1,94 @@
-name: Deploy Staging (Branch demo)
+name: Deploy Staging Full Infrastructure (K3s)
 
 on:
-  workflow_run:
-    workflows: ["Laravel Microservices CI"]
-    branches:
-      - demo
-    types:
-      - completed
   workflow_dispatch:
     inputs:
-      service:
-        description: "Microservice to build and deploy to K3s staging"
+      target:
+        description: "Shared infrastructure component to roll out on K3s staging"
         required: true
         type: choice
-        default: "all"
+        default: "full-k3s-stack"
         options:
-          - "auth"
-          - "operations"
-          - "all"
+          - "full-k3s-stack"
+          - "gateway-only"
 
 concurrency:
-  group: staging-deploy-${{ github.ref }}
+  group: staging-k3s-deploy
   cancel-in-progress: false
+
+permissions:
+  contents: read
 
 jobs:
   # --------------------------------------------------------------------------
-  # 1. EVALUATE SERVICE CHANGES & SELECT K3S TARGET
+  # EXPLICIT MANUAL FULL INFRASTRUCTURE DEPLOYMENT (K3S)
   # --------------------------------------------------------------------------
-  detect-and-validate:
-    name: Evaluate Changes & Target Service
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
-    outputs:
-      service: ${{ steps.eval.outputs.service }}
-      commit_sha: ${{ steps.eval.outputs.commit_sha }}
-      should_deploy: ${{ steps.eval.outputs.should_deploy }}
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 2
-
-      - name: Determine Target Microservice
-        id: eval
-        run: |
-          set -euo pipefail
-
-          COMMIT_SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
-          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            SELECTED="${{ github.event.inputs.service }}"
-            echo "Manual deployment triggered for service: $SELECTED"
-            echo "service=$SELECTED" >> $GITHUB_OUTPUT
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          echo "Detecting changed paths for commit $COMMIT_SHA..."
-          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
-            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
-          else
-            CHANGED_FILES=$(git show --pretty="" --name-only HEAD)
-          fi
-
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
-
-          AUTH_CHANGED=false
-          OPS_CHANGED=false
-          SHARED_CHANGED=false
-
-          while IFS= read -r file; do
-            [ -z "$file" ] && continue
-            if [[ "$file" =~ ^auth-service/ ]]; then
-              AUTH_CHANGED=true
-            elif [[ "$file" =~ ^operations-service/ ]]; then
-              OPS_CHANGED=true
-            elif [[ "$file" =~ ^(gateway/|k8s/|deploy/|env/|\.github/|docker-compose) ]]; then
-              SHARED_CHANGED=true
-            fi
-          done <<< "$CHANGED_FILES"
-
-          echo "auth-service changed      : $AUTH_CHANGED"
-          echo "operations-service changed: $OPS_CHANGED"
-          echo "shared files changed      : $SHARED_CHANGED"
-
-          # Shared routing, infrastructure, secrets or workflows must not use service-only deploy
-          if [ "$SHARED_CHANGED" = "true" ]; then
-            echo "::warning ::Shared routing, infrastructure, or workflow files changed. Skipping service-only K3s deployment per policy."
-            echo "should_deploy=false" >> $GITHUB_OUTPUT
-            echo "service=none" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          if [ "$AUTH_CHANGED" = "true" ] && [ "$OPS_CHANGED" = "true" ]; then
-            echo "Both services changed. Deploying all."
-            echo "service=all" >> $GITHUB_OUTPUT
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
-          elif [ "$AUTH_CHANGED" = "true" ]; then
-            echo "Auth service changed. Deploying auth only."
-            echo "service=auth" >> $GITHUB_OUTPUT
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
-          elif [ "$OPS_CHANGED" = "true" ]; then
-            echo "Operations service changed. Deploying operations only."
-            echo "service=operations" >> $GITHUB_OUTPUT
-            echo "should_deploy=true" >> $GITHUB_OUTPUT
-          else
-            echo "No microservice source changes detected. Skipping deployment."
-            echo "service=none" >> $GITHUB_OUTPUT
-            echo "should_deploy=false" >> $GITHUB_OUTPUT
-          fi
-
-  # --------------------------------------------------------------------------
-  # 2. DEPLOY TARGET MICROSERVICE TO K3S RUNTIME VIA SSH
-  # --------------------------------------------------------------------------
-  deploy-k3s:
-    name: Deploy to K3s (${{ needs.detect-and-validate.outputs.service }})
-    needs: detect-and-validate
-    if: needs.detect-and-validate.outputs.should_deploy == 'true'
+  deploy-infra:
+    name: Deploy Shared Infrastructure to K3s
+    if: github.ref == 'refs/heads/demo'
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy Service via SSH
+      - name: Deploy Shared Infrastructure via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
-          TARGET_SERVICE: ${{ needs.detect-and-validate.outputs.service }}
-          TARGET_SHA: ${{ needs.detect-and-validate.outputs.commit_sha }}
+          TARGET_COMPONENT: ${{ github.event.inputs.target }}
+          TARGET_SHA: ${{ github.sha }}
+          STAGING_DEPLOY_PATH: ${{ secrets.STAGING_DEPLOY_PATH || '/opt/codebridge-services/codebridge-services' }}
         with:
           host: ${{ secrets.STAGING_VPS_HOST }}
           username: ${{ secrets.STAGING_VPS_USER }}
           key: ${{ secrets.STAGING_VPS_SSH_KEY }}
           port: ${{ secrets.STAGING_VPS_PORT || 22 }}
+          fingerprint: ${{ secrets.STAGING_VPS_FINGERPRINT || '' }}
           command_timeout: 30m
           timeout: 60s
-          envs: TARGET_SERVICE,TARGET_SHA
+          envs: TARGET_COMPONENT,TARGET_SHA,STAGING_DEPLOY_PATH
           script: |
             set -euo pipefail
 
             echo "=========================================================================="
-            echo "Starting K3s Staging Deployment"
-            echo "  Selected Service: $TARGET_SERVICE"
-            echo "  Commit Revision : $TARGET_SHA"
+            echo "Starting K3s Shared Infrastructure Staging Deployment"
+            echo "  Target Component: ${TARGET_COMPONENT}"
+            echo "  Commit Revision : ${TARGET_SHA}"
             echo "=========================================================================="
 
-            # 1. Resolve repository directory on VPS
-            TARGET_DIR=""
-            CONFIGURED_DIR="${{ secrets.STAGING_DEPLOY_PATH }}"
-            if [ -n "$CONFIGURED_DIR" ] && [ -d "$CONFIGURED_DIR/.git" ]; then
-              TARGET_DIR="$CONFIGURED_DIR"
-              echo "Using configured STAGING_DEPLOY_PATH: $TARGET_DIR"
+            LOCK_FILE="/tmp/codebridge-staging-deploy.lock"
+            exec 200>"${LOCK_FILE}"
+            echo "Acquiring VPS deployment lock..."
+            flock -w 600 200
+
+            TARGET_DIR="${STAGING_DEPLOY_PATH:-/opt/codebridge-services/codebridge-services}"
+            if [ ! -d "${TARGET_DIR}/.git" ]; then
+              echo "ERROR: Tracked repository directory not found at ${TARGET_DIR}." >&2
+              exit 1
             fi
 
-            if [ -z "$TARGET_DIR" ]; then
-              for dir in "$CONFIGURED_DIR" "$HOME/codebridge-services" "$HOME/codebridge" "/var/www/codebridge-services" "/root/codebridge-services"; do
-                if [ -n "$dir" ] && [ -d "$dir/.git" ]; then
-                  TARGET_DIR="$dir"
+            cd "${TARGET_DIR}"
+            echo "Working directory: $(pwd)"
+
+            # Ensure clean tracked working tree
+            if ! git diff-index --quiet HEAD --; then
+              echo "ERROR: Tracked files have uncommitted changes on VPS. Aborting." >&2
+              exit 1
+            fi
+
+            echo "Fetching latest demo branch..."
+            git fetch origin demo
+            git checkout "${TARGET_SHA}"
+
+            echo "Applying Kubernetes manifests in k8s/staging/..."
+            if [ -n "${KUBECONFIG:-}" ] && [ -r "${KUBECONFIG}" ]; then
+              export KUBECONFIG
+            else
+              for candidate in "${HOME}/.kube/config" /home/deploy/.kube/config /etc/rancher/k3s/k3s.yaml; do
+                if [ -r "$candidate" ]; then
+                  export KUBECONFIG="$candidate"
                   break
                 fi
               done
             fi
 
-            if [ -z "$TARGET_DIR" ]; then
-              CLONE_DEST="${CONFIGURED_DIR:-$HOME/codebridge-services}"
-              echo "Repository not found on VPS. Cloning demo branch into $CLONE_DEST..."
-              git clone -b demo https://github.com/Codebridge404/codebridge-services.git "$CLONE_DEST"
-              TARGET_DIR="$CLONE_DEST"
-            fi
+            kubectl apply -k k8s/staging/
+            kubectl -n codebridge-staging rollout status deployment/gateway --timeout=180s
 
-            cd "$TARGET_DIR"
-            echo "Working directory: $(pwd)"
-
-            echo "Fetching latest demo branch..."
-            git fetch origin demo
-            git checkout demo
-            git pull --ff-only origin demo || git reset --hard "$TARGET_SHA"
-
-            # 2. Execute K3s service rollout script
-            chmod +x deploy/staging/update-k3s.sh
-            bash deploy/staging/update-k3s.sh "$TARGET_SERVICE" "$TARGET_SHA"
-
-            echo "✔ Successfully completed K3s staging deployment for '$TARGET_SERVICE' ($TARGET_SHA)."
+            echo "✔ Shared infrastructure deployment to K3s completed successfully."

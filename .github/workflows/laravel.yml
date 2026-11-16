@@ -2,9 +2,9 @@ name: Laravel Microservices CI
 
 on:
   push:
-    branches: [ "master", "main", "demo", "front-develop", "feature/**" ]
+    branches: [ "master", "main", "front-develop", "feature/**" ]
   pull_request:
-    branches: [ "master", "main", "demo" ]
+    branches: [ "master", "main" ]
   workflow_dispatch:
 
 jobs:

@@ -1,0 +1,121 @@
+name: Operations Service CI/CD (K3s Staging)
+
+on:
+  push:
+    branches:
+      - demo
+    paths:
+      - "operations-service/**"
+      - ".github/workflows/operations-service.yml"
+      - "deploy/vps/**"
+  pull_request:
+    branches:
+      - demo
+    paths:
+      - "operations-service/**"
+      - ".github/workflows/operations-service.yml"
+      - "deploy/vps/**"
+  workflow_dispatch:
+
+concurrency:
+  group: staging-k3s-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # --------------------------------------------------------------------------
+  # 1. TEST OPERATIONS SERVICE
+  # --------------------------------------------------------------------------
+  test:
+    name: Test Operations Service
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP & Extensions
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: pdo, pdo_sqlite, pdo_mysql, bcmath, zip, sockets, redis, gd
+          coverage: none
+
+      - name: Cache Composer Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.composer/cache/files
+          key: ${{ runner.os }}-composer-${{ hashFiles('operations-service/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Run Test Suite
+        working-directory: ./operations-service
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: database/database.sqlite
+          CACHE_STORE: array
+          CACHE_DRIVER: array
+          SESSION_DRIVER: array
+          FILESYSTEM_DISK: local
+          JWT_SECRET: testing_jwt_secret_key_minimum_32_characters_long
+          JWT_ISSUER: codebridge-operations-service
+        run: |
+          set -euo pipefail
+          if [ -f .env.example ] && [ ! -f .env ]; then
+            cp .env.example .env
+          fi
+          composer install --no-interaction --prefer-dist --optimize-autoloader
+          php artisan key:generate --force
+          mkdir -p database storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+          touch database/database.sqlite
+          chmod -R 777 storage bootstrap/cache database
+          php artisan test
+
+  # --------------------------------------------------------------------------
+  # 2. DEPLOY OPERATIONS SERVICE TO K3S RUNTIME VIA SSH
+  # --------------------------------------------------------------------------
+  deploy:
+    name: Deploy Operations Service to K3s Staging
+    needs: test
+    if: |
+      always() &&
+      needs.test.result == 'success' &&
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/demo' || github.event.ref == 'refs/heads/demo')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy Service via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          TARGET_SHA: ${{ github.sha }}
+          STAGING_DEPLOY_PATH: ${{ secrets.STAGING_DEPLOY_PATH || '/opt/codebridge-services/codebridge-services' }}
+        with:
+          host: ${{ secrets.STAGING_VPS_HOST }}
+          username: ${{ secrets.STAGING_VPS_USER }}
+          key: ${{ secrets.STAGING_VPS_SSH_KEY }}
+          port: ${{ secrets.STAGING_VPS_PORT || 22 }}
+          fingerprint: ${{ secrets.STAGING_VPS_FINGERPRINT || '' }}
+          command_timeout: 30m
+          timeout: 60s
+          envs: TARGET_SHA,STAGING_DEPLOY_PATH
+          script: |
+            set -euo pipefail
+
+            echo "=========================================================================="
+            echo "Starting K3s Operations Service Staging Deployment"
+            echo "  Commit Revision : ${TARGET_SHA}"
+            echo "=========================================================================="
+
+            TARGET_DIR="${STAGING_DEPLOY_PATH:-/opt/codebridge-services/codebridge-services}"
+            if [ ! -d "${TARGET_DIR}/.git" ]; then
+              echo "ERROR: Tracked repository directory not found at ${TARGET_DIR}." >&2
+              exit 1
+            fi
+
+            cd "${TARGET_DIR}"
+            echo "Working directory: $(pwd)"
+
+            chmod +x operations-service/scripts/deploy.sh
+            bash operations-service/scripts/deploy.sh "${TARGET_SHA}"
