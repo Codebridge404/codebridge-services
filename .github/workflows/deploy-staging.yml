@@ -8,6 +8,16 @@ on:
     types:
       - completed
   workflow_dispatch:
+    inputs:
+      service:
+        description: "Microservice to build and deploy to K3s staging"
+        required: true
+        type: choice
+        default: "all"
+        options:
+          - "auth"
+          - "operations"
+          - "all"
 
 concurrency:
   group: staging-deploy-${{ github.ref }}
@@ -15,64 +25,104 @@ concurrency:
 
 jobs:
   # --------------------------------------------------------------------------
-  # 1. CI GATE: BUILD STAGING IMAGES & VALIDATE K8S MANIFESTS
+  # 1. EVALUATE SERVICE CHANGES & SELECT K3S TARGET
   # --------------------------------------------------------------------------
-  build-and-verify:
-    name: Build Staging Images & K8s Validation
+  detect-and-validate:
+    name: Evaluate Changes & Target Service
     runs-on: ubuntu-latest
     if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success') }}
+    outputs:
+      service: ${{ steps.eval.outputs.service }}
+      commit_sha: ${{ steps.eval.outputs.commit_sha }}
+      should_deploy: ${{ steps.eval.outputs.should_deploy }}
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Prepare Staging Env for Build Validation
+      - name: Determine Target Microservice
+        id: eval
         run: |
-          cp env/staging/compose.env.example env/staging/compose.env
-          cp env/staging/auth.env.example env/staging/auth.env
-          cp env/staging/operations.env.example env/staging/operations.env
-          if [ -f "k8s/staging/secrets.example.yaml" ] && [ ! -f "k8s/staging/secrets.yaml" ]; then
-            cp k8s/staging/secrets.example.yaml k8s/staging/secrets.yaml
+          set -euo pipefail
+
+          COMMIT_SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            SELECTED="${{ github.event.inputs.service }}"
+            echo "Manual deployment triggered for service: $SELECTED"
+            echo "service=$SELECTED" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+            exit 0
           fi
 
-      - name: Validate Staging Docker Compose Configuration
-        run: |
-          docker compose -p codebridge-staging --env-file env/staging/compose.env -f docker-compose.staging.yml config --quiet
-          echo "✔ docker-compose.staging.yml configuration is valid."
-
-      - name: Build Staging Docker Images
-        run: |
-          echo "Building all staging images..."
-          docker compose -p codebridge-staging --env-file env/staging/compose.env -f docker-compose.staging.yml build
-          echo "✔ All staging Docker images built successfully."
-
-      - name: Validate Kubernetes Manifests (Kustomize)
-        run: |
-          if [ -d "k8s/staging" ]; then
-            echo "Validating k8s/staging manifests..."
-            kubectl kustomize k8s/staging > /dev/null
-            echo "✔ k8s/staging manifests valid."
+          echo "Detecting changed paths for commit $COMMIT_SHA..."
+          if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD)
+          else
+            CHANGED_FILES=$(git show --pretty="" --name-only HEAD)
           fi
-          if [ -d "auth-service/k8s" ]; then
-            echo "Validating auth-service K8s manifests..."
-            kubectl kustomize auth-service/k8s > /dev/null
-            echo "✔ auth-service K8s manifests valid."
+
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          AUTH_CHANGED=false
+          OPS_CHANGED=false
+          SHARED_CHANGED=false
+
+          while IFS= read -r file; do
+            [ -z "$file" ] && continue
+            if [[ "$file" =~ ^auth-service/ ]]; then
+              AUTH_CHANGED=true
+            elif [[ "$file" =~ ^operations-service/ ]]; then
+              OPS_CHANGED=true
+            elif [[ "$file" =~ ^(gateway/|k8s/|deploy/|env/|\.github/|docker-compose) ]]; then
+              SHARED_CHANGED=true
+            fi
+          done <<< "$CHANGED_FILES"
+
+          echo "auth-service changed      : $AUTH_CHANGED"
+          echo "operations-service changed: $OPS_CHANGED"
+          echo "shared files changed      : $SHARED_CHANGED"
+
+          # Shared routing, infrastructure, secrets or workflows must not use service-only deploy
+          if [ "$SHARED_CHANGED" = "true" ]; then
+            echo "::warning ::Shared routing, infrastructure, or workflow files changed. Skipping service-only K3s deployment per policy."
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
+            echo "service=none" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          if [ "$AUTH_CHANGED" = "true" ] && [ "$OPS_CHANGED" = "true" ]; then
+            echo "Both services changed. Deploying all."
+            echo "service=all" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          elif [ "$AUTH_CHANGED" = "true" ]; then
+            echo "Auth service changed. Deploying auth only."
+            echo "service=auth" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          elif [ "$OPS_CHANGED" = "true" ]; then
+            echo "Operations service changed. Deploying operations only."
+            echo "service=operations" >> $GITHUB_OUTPUT
+            echo "should_deploy=true" >> $GITHUB_OUTPUT
+          else
+            echo "No microservice source changes detected. Skipping deployment."
+            echo "service=none" >> $GITHUB_OUTPUT
+            echo "should_deploy=false" >> $GITHUB_OUTPUT
           fi
 
   # --------------------------------------------------------------------------
-  # 2. DEPLOY STAGING DOCKER COMPOSE TO VPS
+  # 2. DEPLOY TARGET MICROSERVICE TO K3S RUNTIME VIA SSH
   # --------------------------------------------------------------------------
-  deploy-to-vps:
-    name: Deploy to Staging VPS
-    needs: build-and-verify
+  deploy-k3s:
+    name: Deploy to K3s (${{ needs.detect-and-validate.outputs.service }})
+    needs: detect-and-validate
+    if: needs.detect-and-validate.outputs.should_deploy == 'true'
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'demo') }}
     steps:
-      - name: Deploy Staging Stack via SSH
+      - name: Deploy Service via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.STAGING_VPS_HOST }}
@@ -81,78 +131,53 @@ jobs:
           port: ${{ secrets.STAGING_VPS_PORT || 22 }}
           command_timeout: 30m
           timeout: 60s
-          script: |
-            set -eu
+          envs: TARGET_SERVICE,TARGET_SHA
+        env:
+          TARGET_SERVICE: ${{ needs.detect-and-validate.outputs.service }}
+          TARGET_SHA: ${{ needs.detect-and-validate.outputs.commit_sha }}
+        script: |
+          set -euo pipefail
 
-            echo "Deploying CodeBridge staging..."
+          echo "=========================================================================="
+          echo "Starting K3s Staging Deployment"
+          echo "  Selected Service: $TARGET_SERVICE"
+          echo "  Commit Revision : $TARGET_SHA"
+          echo "=========================================================================="
 
-            # 1. Check configured STAGING_DEPLOY_PATH secret first, then search standard paths
-            TARGET_DIR=""
-            CONFIGURED_DIR="${{ secrets.STAGING_DEPLOY_PATH }}"
-            if [ -n "$CONFIGURED_DIR" ] && [ -d "$CONFIGURED_DIR/.git" ]; then
-              TARGET_DIR="$CONFIGURED_DIR"
-              echo "Using configured STAGING_DEPLOY_PATH: $TARGET_DIR"
-            fi
+          # 1. Resolve repository directory on VPS
+          TARGET_DIR=""
+          CONFIGURED_DIR="${{ secrets.STAGING_DEPLOY_PATH }}"
+          if [ -n "$CONFIGURED_DIR" ] && [ -d "$CONFIGURED_DIR/.git" ]; then
+            TARGET_DIR="$CONFIGURED_DIR"
+            echo "Using configured STAGING_DEPLOY_PATH: $TARGET_DIR"
+          fi
 
-            if [ -z "$TARGET_DIR" ]; then
-              for dir in "$CONFIGURED_DIR" "$HOME/codebridge-services" "$HOME/codebridge" "/var/www/codebridge-services" "/root/codebridge-services"; do
-                if [ -n "$dir" ] && [ -d "$dir/.git" ]; then
-                  TARGET_DIR="$dir"
-                  break
-                fi
-              done
-            fi
-
-            if [ -z "$TARGET_DIR" ]; then
-              CLONE_DEST="${CONFIGURED_DIR:-$HOME/codebridge-services}"
-              echo "Repository not found on VPS. Cloning demo branch into $CLONE_DEST..."
-              git clone -b demo https://github.com/Codebridge404/codebridge-services.git "$CLONE_DEST"
-              TARGET_DIR="$CLONE_DEST"
-            fi
-
-            cd "$TARGET_DIR"
-            echo "Working directory: $(pwd)"
-
-            echo "Fetching the latest demo branch..."
-            git fetch origin demo
-            git checkout demo
-            git pull --ff-only origin demo
-
-            echo "Checking staging environment files..."
-            for file in compose auth operations; do
-              if [ ! -f "env/staging/${file}.env" ]; then
-                if [ -f "env/staging/${file}.env.example" ]; then
-                  echo "Initializing env/staging/${file}.env from template..."
-                  cp "env/staging/${file}.env.example" "env/staging/${file}.env"
-                else
-                  echo "Missing env/staging/${file}.env"
-                  echo "Create and configure it on the VPS before deploying."
-                  exit 1
-                fi
+          if [ -z "$TARGET_DIR" ]; then
+            for dir in "$CONFIGURED_DIR" "$HOME/codebridge-services" "$HOME/codebridge" "/var/www/codebridge-services" "/root/codebridge-services"; do
+              if [ -n "$dir" ] && [ -d "$dir/.git" ]; then
+                TARGET_DIR="$dir"
+                break
               fi
             done
+          fi
 
-            echo "Stopping conflicting legacy non-namespaced containers..."
-            docker stop codebridge-api-gateway codebridge-auth-service codebridge-operations-service codebridge-auth-horizon codebridge-auth-scheduler 2>/dev/null || true
-            docker rm codebridge-api-gateway codebridge-auth-service codebridge-operations-service codebridge-auth-horizon codebridge-auth-scheduler 2>/dev/null || true
+          if [ -z "$TARGET_DIR" ]; then
+            CLONE_DEST="${CONFIGURED_DIR:-$HOME/codebridge-services}"
+            echo "Repository not found on VPS. Cloning demo branch into $CLONE_DEST..."
+            git clone -b demo https://github.com/Codebridge404/codebridge-services.git "$CLONE_DEST"
+            TARGET_DIR="$CLONE_DEST"
+          fi
 
-            echo "Running staging deployment..."
-            chmod +x deploy/staging/deploy.sh deploy/staging/status.sh
-            ./deploy/staging/deploy.sh
+          cd "$TARGET_DIR"
+          echo "Working directory: $(pwd)"
 
-            echo "Checking container status..."
-            ./deploy/staging/status.sh
+          echo "Fetching latest demo branch..."
+          git fetch origin demo
+          git checkout demo
+          git pull --ff-only origin demo || git reset --hard "$TARGET_SHA"
 
-            # ------------------------------------------------------------------
-            # Kubernetes / K3s Staging Stack Rollout (if running on VPS)
-            # ------------------------------------------------------------------
-            echo "Checking for Kubernetes / K3s cluster on VPS..."
-            # The helper selects a readable kubeconfig and fails on rollout errors.
-            if command -v kubectl >/dev/null 2>&1; then
-              bash deploy/staging/update-k3s.sh
-            elif [ -d /etc/rancher/k3s ]; then
-              echo "K3s is installed but kubectl is unavailable."
-              exit 1
-            fi
+          # 2. Execute K3s service rollout script
+          chmod +x deploy/staging/update-k3s.sh
+          bash deploy/staging/update-k3s.sh "$TARGET_SERVICE" "$TARGET_SHA"
 
-            echo "Staging deployment complete."
+          echo "✔ Successfully completed K3s staging deployment for '$TARGET_SERVICE' ($TARGET_SHA)."

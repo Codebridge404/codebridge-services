@@ -5,31 +5,42 @@ on:
     branches: [ "master", "main", "demo", "front-develop", "feature/**" ]
   pull_request:
     branches: [ "master", "main", "demo" ]
+  workflow_dispatch:
 
 jobs:
-  build-and-test:
-    name: Test ${{ matrix.service }}
+  changes:
+    name: Detect Changed Microservices
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        service:
-          - auth-service
-          - operations-service
-
+    outputs:
+      auth: ${{ steps.filter.outputs.auth }}
+      operations: ${{ steps.filter.outputs.operations }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-
-      - name: Setup PHP 8.4
-        uses: shivammathur/setup-php@v2
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
         with:
-          php-version: '8.4'
+          filters: |
+            auth:
+              - "auth-service/**"
+            operations:
+              - "operations-service/**"
+
+  test-auth:
+    name: Test Auth Service
+    needs: changes
+    if: needs.changes.outputs.auth == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
           extensions: pdo, pdo_sqlite, pdo_mysql, bcmath, zip, sockets
           coverage: none
 
-      - name: Setup & Test ${{ matrix.service }}
-        working-directory: ./${{ matrix.service }}
+      - name: Test Auth Service
+        working-directory: ./auth-service
         env:
           DB_CONNECTION: sqlite
           DB_DATABASE: database/database.sqlite
@@ -37,20 +48,47 @@ jobs:
           CACHE_DRIVER: array
           SESSION_DRIVER: array
           FILESYSTEM_DISK: local
-          JWT_SECRET: testing_jwt_secret_key_minimum_32_characters_long_for_security
+          JWT_SECRET: testing_jwt_secret_key_minimum_32_characters_long
           JWT_ISSUER: codebridge-auth-service
-          JWT_ALGO: HS256
         run: |
-          if [ -f "composer.json" ]; then
-            echo "Installing dependencies for ${{ matrix.service }}..."
-            cp .env.example .env 2>/dev/null || true
-            composer install --no-interaction --prefer-dist --optimize-autoloader
-            php artisan key:generate 2>/dev/null || true
-            mkdir -p database storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
-            touch database/database.sqlite
-            chmod -R 777 storage bootstrap/cache database
-            if [ -f "../k8s/staging/secrets.example.yaml" ] && [ ! -f "../k8s/staging/secrets.yaml" ]; then
-              cp ../k8s/staging/secrets.example.yaml ../k8s/staging/secrets.yaml
-            fi
-            php artisan test --env=testing
-          fi
+          cp .env.example .env 2>/dev/null || true
+          composer install --no-interaction --prefer-dist --optimize-autoloader
+          php artisan key:generate 2>/dev/null || true
+          mkdir -p database storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+          touch database/database.sqlite
+          chmod -R 777 storage bootstrap/cache database
+          php artisan test
+
+  test-operations:
+    name: Test Operations Service
+    needs: changes
+    if: needs.changes.outputs.operations == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.4"
+          extensions: pdo, pdo_sqlite, pdo_mysql, bcmath, zip, sockets
+          coverage: none
+
+      - name: Test Operations Service
+        working-directory: ./operations-service
+        env:
+          DB_CONNECTION: sqlite
+          DB_DATABASE: database/database.sqlite
+          CACHE_STORE: array
+          CACHE_DRIVER: array
+          SESSION_DRIVER: array
+          FILESYSTEM_DISK: local
+          JWT_SECRET: testing_jwt_secret_key_minimum_32_characters_long
+          JWT_ISSUER: codebridge-operations-service
+        run: |
+          cp .env.example .env 2>/dev/null || true
+          composer install --no-interaction --prefer-dist --optimize-autoloader
+          php artisan key:generate 2>/dev/null || true
+          mkdir -p database storage/framework/cache storage/framework/sessions storage/framework/views storage/logs bootstrap/cache
+          touch database/database.sqlite
+          chmod -R 777 storage bootstrap/cache database
+          php artisan test
