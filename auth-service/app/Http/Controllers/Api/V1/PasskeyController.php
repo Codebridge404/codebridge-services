@@ -38,17 +38,28 @@ class PasskeyController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
+        $sessionId = $this->passkeyService->resolveSessionId($request, $user);
 
-        // Enforce recent reauthentication (step-up) for adding new login methods
-        if (! $this->passkeyService->hasRecentReauth($user, 'passkey_enrollment')) {
+        // Enforce recent reauthentication with token bound to this session
+        $grantToken = (string) ($request->input('grant_token') ?? $request->header('X-Grant-Token') ?? $request->header('X-Reauth-Token') ?? '');
+
+        if (empty($grantToken)) {
             return response()->json([
                 'status' => 'error',
                 'code' => 'REAUTHENTICATION_REQUIRED',
-                'message' => 'Recent reauthentication is required before registering a new passkey.',
+                'message' => 'Recent reauthentication grant token is required before registering a new passkey.',
             ], 403);
         }
 
-        $options = $this->passkeyService->generateRegistrationOptions($user);
+        if (! $this->passkeyService->consumeReauthGrantToken($user, $sessionId, $grantToken, 'passkey_enrollment')) {
+            return response()->json([
+                'status' => 'error',
+                'code' => 'REAUTHENTICATION_REQUIRED',
+                'message' => 'Invalid, expired, wrong-purpose, or already consumed reauthentication grant token.',
+            ], 403);
+        }
+
+        $options = $this->passkeyService->generateRegistrationOptions($user, $sessionId);
 
         return response()->json([
             'status' => 'success',
@@ -65,14 +76,6 @@ class PasskeyController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
-
-        if (! $this->passkeyService->hasRecentReauth($user, 'passkey_enrollment')) {
-            return response()->json([
-                'status' => 'error',
-                'code' => 'REAUTHENTICATION_REQUIRED',
-                'message' => 'Recent reauthentication is required before completing passkey registration.',
-            ], 403);
-        }
 
         $validated = $request->validate([
             'challenge_id' => 'required|string',
@@ -92,8 +95,9 @@ class PasskeyController extends Controller
             $origin = $request->header('Origin') ?? $request->root();
             $credential = $this->passkeyService->verifyRegistration($user, $validated, $origin);
 
-            // Consume reauth grant once enrollment succeeds
-            $this->passkeyService->consumeReauthGrant($user, 'passkey_enrollment');
+            // Clean up any lingering reauth state for this session
+            $sessionId = $this->passkeyService->resolveSessionId($request, $user);
+            $this->passkeyService->consumeReauthGrant($user, 'passkey_enrollment', $sessionId);
 
             return response()->json([
                 'status' => 'success',
@@ -328,13 +332,16 @@ class PasskeyController extends Controller
     {
         /** @var User $user */
         $user = $request->user();
+        $sessionId = $this->passkeyService->resolveSessionId($request, $user);
 
-        // Deletion of credentials requires recent reauthentication
-        if (! $this->passkeyService->hasRecentReauth($user, 'credential_management')) {
+        // Deletion of credentials requires recent reauthentication token bound to session
+        $grantToken = (string) ($request->input('grant_token') ?? $request->header('X-Grant-Token') ?? $request->header('X-Reauth-Token') ?? '');
+
+        if (empty($grantToken) || ! $this->passkeyService->consumeReauthGrantToken($user, $sessionId, $grantToken, 'credential_management')) {
             return response()->json([
                 'status' => 'error',
                 'code' => 'REAUTHENTICATION_REQUIRED',
-                'message' => 'Recent reauthentication is required before deleting a passkey.',
+                'message' => 'Recent reauthentication grant token is required before deleting a passkey.',
             ], 403);
         }
 
@@ -429,7 +436,8 @@ class PasskeyController extends Controller
                 ], 422);
             }
 
-            $grantToken = $this->passkeyService->createReauthGrant($user, $purpose, 600);
+            $sessionId = $this->passkeyService->resolveSessionId($request, $user);
+            $grantToken = $this->passkeyService->createReauthGrant($user, $sessionId, $purpose, 600);
 
             return response()->json([
                 'status' => 'success',
@@ -456,7 +464,8 @@ class PasskeyController extends Controller
                     ], 403);
                 }
 
-                $grantToken = $this->passkeyService->createReauthGrant($user, $purpose, 600);
+                $sessionId = $this->passkeyService->resolveSessionId($request, $user);
+                $grantToken = $this->passkeyService->createReauthGrant($user, $sessionId, $purpose, 600);
 
                 return response()->json([
                     'status' => 'success',

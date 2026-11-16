@@ -329,4 +329,36 @@ class TwoFactorHardeningTest extends TestCase
         ]);
         $res2->assertStatus(422);
     }
+
+    /**
+     * Scenario 08:
+     * Recovery code row locking ensures atomic single-use consumption.
+     */
+    public function test_scenario_08_recovery_code_atomic_consumption_with_row_locking(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'totp_hardening_08@codebridges.io',
+            'two_factor_enabled' => true,
+        ]);
+
+        $this->twoFactorService->storeRecoveryCodes($user, [
+            'ATOMIC-LOCK-1111',
+            'ATOMIC-LOCK-2222',
+        ]);
+
+        // First redemption succeeds and atomically updates encrypted database codes
+        $firstSuccess = $this->twoFactorService->verifyAndConsumeRecoveryCode($user, 'ATOMIC-LOCK-1111');
+        $this->assertTrue($firstSuccess);
+
+        // Immediate subsequent redemption of the same code fails
+        $secondAttempt = $this->twoFactorService->verifyAndConsumeRecoveryCode($user, 'ATOMIC-LOCK-1111');
+        $this->assertFalse($secondAttempt);
+
+        // Other code remains valid for one use
+        $otherCodeSuccess = $this->twoFactorService->verifyAndConsumeRecoveryCode($user, 'ATOMIC-LOCK-2222');
+        $this->assertTrue($otherCodeSuccess);
+
+        $otherCodeReuse = $this->twoFactorService->verifyAndConsumeRecoveryCode($user, 'ATOMIC-LOCK-2222');
+        $this->assertFalse($otherCodeReuse);
+    }
 }
