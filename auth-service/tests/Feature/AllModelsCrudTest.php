@@ -163,18 +163,23 @@ class AllModelsCrudTest extends TestCase
         ]);
         $this->assertDatabaseHas('tenant_user_outlets', ['id' => $tenantUserOutlet->id]);
 
-        \Illuminate\Support\Facades\DB::table('platform_modules')->insertOrIgnore([
-            'id' => 1,
-            'name' => 'POS Module',
-            'category' => 'Sales',
-            'is_active' => true,
-            'created_at' => now(),
-            'updated_at' => now(),
-        ]);
+        \Illuminate\Support\Facades\DB::table('platform_modules')->updateOrInsert(
+            ['id' => 'pos-management'],
+            [
+                'name' => 'POS Management',
+                'category' => 'Core Commerce & Operations',
+                'description' => 'Unified Cashier Terminal',
+                'icon' => 'Store',
+                'href' => '/pos/dashboard',
+                'is_active' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]
+        );
 
         $tenantModule = TenantModule::create([
             'tenant_id' => $tenant->id,
-            'module_id' => 1,
+            'module_id' => 'pos-management',
             'is_active' => true,
             'activated_by' => $user->id,
             'activated_at' => now(),
