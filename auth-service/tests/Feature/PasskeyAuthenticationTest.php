@@ -184,8 +184,12 @@ class PasskeyAuthenticationTest extends TestCase
             ->assertJsonPath('status', 'success')
             ->assertJsonPath('data.purpose', 'passkey_enrollment');
 
-        // 3. Now registration options generation succeeds
-        $res = $this->postJson('/api/v1/auth/passkeys/registration/options');
+        // 3. Now registration options generation succeeds with grant token
+        $grantToken = $reauthRes->json('data.grant_token');
+        $this->assertNotEmpty($grantToken);
+        $res = $this->postJson('/api/v1/auth/passkeys/registration/options', [
+            'grant_token' => $grantToken,
+        ]);
         $res->assertStatus(200)
             ->assertJsonStructure([
                 'status',
@@ -818,10 +822,10 @@ class PasskeyAuthenticationTest extends TestCase
             ->assertJsonPath('code', 'REAUTHENTICATION_REQUIRED');
 
         // Grant reauth
-        $this->passkeyService->createReauthGrant($user, 'credential_management');
+        $grantToken1 = $this->passkeyService->createReauthGrant($user, null, 'credential_management');
 
         // 2. User has no password and this is the only passkey -> 422
-        $this->deleteJson("/api/v1/auth/passkeys/{$passkey->id}")
+        $this->deleteJson("/api/v1/auth/passkeys/{$passkey->id}", ['grant_token' => $grantToken1])
             ->assertStatus(422)
             ->assertJsonPath('code', 'LAST_CREDENTIAL_CANNOT_BE_REMOVED');
 
@@ -829,9 +833,9 @@ class PasskeyAuthenticationTest extends TestCase
         $user->password = Hash::make('NewPassword123!');
         $user->save();
 
-        $this->passkeyService->createReauthGrant($user, 'credential_management');
+        $grantToken2 = $this->passkeyService->createReauthGrant($user, null, 'credential_management');
 
-        $delRes = $this->deleteJson("/api/v1/auth/passkeys/{$passkey->id}");
+        $delRes = $this->deleteJson("/api/v1/auth/passkeys/{$passkey->id}", ['grant_token' => $grantToken2]);
         $delRes->assertStatus(200)
             ->assertJsonPath('status', 'success');
 
@@ -903,5 +907,280 @@ class PasskeyAuthenticationTest extends TestCase
             ->assertJsonStructure(['data' => ['grant_token', 'expires_in']]);
 
         $this->assertTrue($this->passkeyService->hasRecentReauth($user, 'change_payment_details'));
+    }
+
+    public function test_session_a_reauth_grant_cannot_authorize_session_b(): void
+    {
+        $password = 'SessionBinding2026!';
+        $user = User::factory()->create([
+            'email' => 'session_binding@codebridges.io',
+            'password' => Hash::make($password),
+        ]);
+
+        Sanctum::actingAs($user, ['*']);
+
+        // Session A reauthenticates and gets grant token
+        $reauthA = $this->withHeader('X-Session-Id', 'session_alpha')
+            ->postJson('/api/v1/auth/reauthenticate/verify', [
+                'purpose' => 'passkey_enrollment',
+                'password' => $password,
+            ]);
+        $reauthA->assertStatus(200);
+        $grantTokenA = $reauthA->json('data.grant_token');
+        $this->assertNotEmpty($grantTokenA);
+
+        // Session B attempts to use Session A's grant token -> Must fail (403)
+        $resB = $this->withHeader('X-Session-Id', 'session_beta')
+            ->postJson('/api/v1/auth/passkeys/registration/options', [
+                'grant_token' => $grantTokenA,
+            ]);
+        $resB->assertStatus(403)
+            ->assertJsonPath('code', 'REAUTHENTICATION_REQUIRED');
+
+        // Session A uses its own grant token -> Succeeds (200)
+        $resA = $this->withHeader('X-Session-Id', 'session_alpha')
+            ->postJson('/api/v1/auth/passkeys/registration/options', [
+                'grant_token' => $grantTokenA,
+            ]);
+        $resA->assertStatus(200)
+            ->assertJsonPath('status', 'success');
+    }
+
+    public function test_reauth_grant_token_works_once_in_session_a_and_fails_on_reuse(): void
+    {
+        $password = 'SingleUse2026!';
+        $user = User::factory()->create([
+            'email' => 'single_use_grant@codebridges.io',
+            'password' => Hash::make($password),
+        ]);
+
+        Sanctum::actingAs($user, ['*']);
+
+        // Session A reauthenticates
+        $reauth = $this->withHeader('X-Session-Id', 'session_single')
+            ->postJson('/api/v1/auth/reauthenticate/verify', [
+                'purpose' => 'passkey_enrollment',
+                'password' => $password,
+            ]);
+        $grantToken = $reauth->json('data.grant_token');
+
+        // 1st use in Session A -> 200 OK
+        $res1 = $this->withHeader('X-Session-Id', 'session_single')
+            ->postJson('/api/v1/auth/passkeys/registration/options', [
+                'grant_token' => $grantToken,
+            ]);
+        $res1->assertStatus(200);
+
+        // 2nd use in Session A (replay) -> 403 Forbidden (atomic consumption)
+        $res2 = $this->withHeader('X-Session-Id', 'session_single')
+            ->postJson('/api/v1/auth/passkeys/registration/options', [
+                'grant_token' => $grantToken,
+            ]);
+        $res2->assertStatus(403)
+            ->assertJsonPath('code', 'REAUTHENTICATION_REQUIRED');
+    }
+
+    public function test_expired_reauth_grant_token_fails(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'expired_grant@codebridges.io',
+        ]);
+        Sanctum::actingAs($user, ['*']);
+
+        // Issue grant with 1-second TTL and expire it
+        $token = $this->passkeyService->createReauthGrant($user, 'sess_expired', 'passkey_enrollment', -10);
+
+        $res = $this->withHeader('X-Session-Id', 'sess_expired')
+            ->postJson('/api/v1/auth/passkeys/registration/options', [
+                'grant_token' => $token,
+            ]);
+        $res->assertStatus(403)
+            ->assertJsonPath('code', 'REAUTHENTICATION_REQUIRED');
+    }
+
+    public function test_wrong_purpose_reauth_grant_token_fails(): void
+    {
+        $password = 'WrongPurpose2026!';
+        $user = User::factory()->create([
+            'email' => 'wrong_purpose@codebridges.io',
+            'password' => Hash::make($password),
+        ]);
+        Sanctum::actingAs($user, ['*']);
+
+        // Reauth for payment purpose
+        $reauth = $this->withHeader('X-Session-Id', 'sess_wrong_p')
+            ->postJson('/api/v1/auth/reauthenticate/verify', [
+                'purpose' => 'change_payment_details',
+                'password' => $password,
+            ]);
+        $grantToken = $reauth->json('data.grant_token');
+
+        // Attempt to use payment grant for passkey enrollment -> 403
+        $res = $this->withHeader('X-Session-Id', 'sess_wrong_p')
+            ->postJson('/api/v1/auth/passkeys/registration/options', [
+                'grant_token' => $grantToken,
+            ]);
+        $res->assertStatus(403)
+            ->assertJsonPath('code', 'REAUTHENTICATION_REQUIRED');
+    }
+
+    public function test_ed25519_passkey_registration_and_authentication_succeeds(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'ed25519_user@codebridges.io',
+            'is_active' => true,
+        ]);
+        Sanctum::actingAs($user, ['*']);
+
+        // 1. Step-up grant
+        $grantToken = $this->passkeyService->createReauthGrant($user, 'sess_ed25519', 'passkey_enrollment', 600);
+
+        // 2. Request registration options -> assert Ed25519 (-8) advertised
+        $optionsRes = $this->withHeader('X-Session-Id', 'sess_ed25519')
+            ->postJson('/api/v1/auth/passkeys/registration/options', [
+                'grant_token' => $grantToken,
+            ]);
+        $optionsRes->assertStatus(200);
+
+        $pubKeyCredParams = $optionsRes->json('data.options.pubKeyCredParams');
+        $algs = array_column($pubKeyCredParams, 'alg');
+        $this->assertContains(-8, $algs);   // Ed25519
+        $this->assertContains(-7, $algs);   // ES256
+        $this->assertContains(-257, $algs); // RS256
+
+        $challengeId = $optionsRes->json('data.challenge_id');
+        $challenge = $optionsRes->json('data.options.challenge');
+
+        // 3. Generate Ed25519 keypair via libsodium
+        $kp = sodium_crypto_sign_keypair();
+        $pubKey = sodium_crypto_sign_publickey($kp);
+        $secKey = sodium_crypto_sign_secretkey($kp);
+
+        // COSE key for Ed25519 (OKP = 1, alg = -8, crv = 6, x = raw pubkey)
+        $coseEd25519 = MapObject::create()
+            ->add(UnsignedIntegerObject::create(1), UnsignedIntegerObject::create(1))  // kty: OKP
+            ->add(UnsignedIntegerObject::create(3), NegativeIntegerObject::create(-8)) // alg: EdDSA (-8)
+            ->add(NegativeIntegerObject::create(-1), UnsignedIntegerObject::create(6)) // crv: Ed25519 (6)
+            ->add(NegativeIntegerObject::create(-2), ByteStringObject::create($pubKey));
+
+        $credIdRaw = random_bytes(16);
+        $credIdEncoded = rtrim(strtr(base64_encode($credIdRaw), '+/', '-_'), '=');
+        $attestationObject = $this->craftAttestationObject($credIdRaw, (string) $coseEd25519, userVerified: true);
+
+        $clientDataJSON = json_encode([
+            'type' => 'webauthn.create',
+            'challenge' => $challenge,
+            'origin' => 'http://localhost',
+        ]);
+
+        // Complete registration
+        $verifyRes = $this->withHeader('X-Session-Id', 'sess_ed25519')
+            ->postJson('/api/v1/auth/passkeys/registration/verify', [
+                'challenge_id' => $challengeId,
+                'name' => 'YubiKey Ed25519 Bio',
+                'credential' => [
+                    'id' => $credIdEncoded,
+                    'response' => [
+                        'clientDataJSON' => rtrim(strtr(base64_encode($clientDataJSON), '+/', '-_'), '='),
+                        'attestationObject' => rtrim(strtr(base64_encode($attestationObject), '+/', '-_'), '='),
+                    ],
+                ],
+            ]);
+        $verifyRes->assertStatus(201)
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('data.name', 'YubiKey Ed25519 Bio');
+
+        // 4. Authenticate using this Ed25519 passkey
+        $authOptionsRes = $this->postJson('/api/v1/auth/passkeys/authentication/options', [
+            'email' => $user->email,
+        ]);
+        $authOptionsRes->assertStatus(200);
+
+        $authChallengeId = $authOptionsRes->json('data.challenge_id');
+        $authChallenge = $authOptionsRes->json('data.options.challenge');
+
+        $authClientData = json_encode([
+            'type' => 'webauthn.get',
+            'challenge' => $authChallenge,
+            'origin' => 'http://localhost',
+        ]);
+        $authData = $this->craftAssertionAuthData(counter: 1, userVerified: true);
+        $authClientHash = hash('sha256', $authClientData, true);
+
+        // Sign with Ed25519 secret key
+        $edSignature = sodium_crypto_sign_detached($authData . $authClientHash, $secKey);
+
+        $authLoginRes = $this->postJson('/api/v1/auth/passkeys/authentication/verify', [
+            'challenge_id' => $authChallengeId,
+            'credential' => [
+                'id' => $credIdEncoded,
+                'response' => [
+                    'clientDataJSON' => rtrim(strtr(base64_encode($authClientData), '+/', '-_'), '='),
+                    'authenticatorData' => rtrim(strtr(base64_encode($authData), '+/', '-_'), '='),
+                    'signature' => rtrim(strtr(base64_encode($edSignature), '+/', '-_'), '='),
+                ],
+            ],
+        ]);
+
+        $authLoginRes->assertStatus(200)
+            ->assertJsonPath('status', 'success')
+            ->assertJsonStructure([
+                'status',
+                'access_token',
+                'refresh_token',
+                'session_uuid',
+                'user',
+            ]);
+    }
+
+    public function test_unsupported_passkey_algorithm_is_rejected_during_registration(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'unsupported_alg@codebridges.io',
+        ]);
+        Sanctum::actingAs($user, ['*']);
+
+        $grantToken = $this->passkeyService->createReauthGrant($user, 'sess_unsupported', 'passkey_enrollment', 600);
+
+        $optionsRes = $this->withHeader('X-Session-Id', 'sess_unsupported')
+            ->postJson('/api/v1/auth/passkeys/registration/options', [
+                'grant_token' => $grantToken,
+            ]);
+        $challengeId = $optionsRes->json('data.challenge_id');
+        $challenge = $optionsRes->json('data.options.challenge');
+
+        // COSE key with unsupported algorithm -999
+        $coseUnsupported = MapObject::create()
+            ->add(UnsignedIntegerObject::create(1), UnsignedIntegerObject::create(2))
+            ->add(UnsignedIntegerObject::create(3), NegativeIntegerObject::create(-999))
+            ->add(NegativeIntegerObject::create(-1), UnsignedIntegerObject::create(1))
+            ->add(NegativeIntegerObject::create(-2), ByteStringObject::create(random_bytes(32)))
+            ->add(NegativeIntegerObject::create(-3), ByteStringObject::create(random_bytes(32)));
+
+        $credIdRaw = random_bytes(16);
+        $credIdEncoded = rtrim(strtr(base64_encode($credIdRaw), '+/', '-_'), '=');
+        $attestationObject = $this->craftAttestationObject($credIdRaw, (string) $coseUnsupported, userVerified: true);
+
+        $clientDataJSON = json_encode([
+            'type' => 'webauthn.create',
+            'challenge' => $challenge,
+            'origin' => 'http://localhost',
+        ]);
+
+        $res = $this->withHeader('X-Session-Id', 'sess_unsupported')
+            ->postJson('/api/v1/auth/passkeys/registration/verify', [
+                'challenge_id' => $challengeId,
+                'name' => 'Bad Alg Key',
+                'credential' => [
+                    'id' => $credIdEncoded,
+                    'response' => [
+                        'clientDataJSON' => rtrim(strtr(base64_encode($clientDataJSON), '+/', '-_'), '='),
+                        'attestationObject' => rtrim(strtr(base64_encode($attestationObject), '+/', '-_'), '='),
+                    ],
+                ],
+            ]);
+
+        $res->assertStatus(422)
+            ->assertJsonPath('code', 'INVALID_PAYLOAD');
     }
 }

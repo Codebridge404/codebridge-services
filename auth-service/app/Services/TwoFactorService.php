@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\User;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -262,23 +264,44 @@ class TwoFactorService
     }
 
     /**
-     * Verify and consume a one-time recovery code.
+     * Verify and consume a one-time recovery code using atomic database row-level locking.
      */
     public function verifyAndConsumeRecoveryCode(User $user, string $code): bool
     {
-        $cleanCode = strtoupper(trim(str_replace('-', '', $code)));
-        $codes = $this->getRecoveryCodes($user);
-
-        foreach ($codes as $index => $storedCode) {
-            $cleanStored = strtoupper(trim(str_replace('-', '', $storedCode)));
-            if (hash_equals($cleanStored, $cleanCode)) {
-                unset($codes[$index]);
-                $this->storeRecoveryCodes($user, array_values($codes));
-                return true;
+        return DB::transaction(function () use ($user, $code) {
+            // Row-level lock to prevent concurrent reuse of recovery codes
+            $lockedUser = User::where('id', $user->id)->lockForUpdate()->first();
+            if (!$lockedUser) {
+                return false;
             }
-        }
 
-        return false;
+            $rawCodes = $lockedUser->two_factor_recovery_codes;
+            if (empty($rawCodes)) {
+                return false;
+            }
+
+            try {
+                $codes = json_decode(Crypt::decryptString($rawCodes), true) ?: [];
+            } catch (\Throwable) {
+                return false;
+            }
+
+            $cleanCode = strtoupper(trim(str_replace('-', '', $code)));
+            foreach ($codes as $index => $storedCode) {
+                $cleanStored = strtoupper(trim(str_replace('-', '', $storedCode)));
+                if (hash_equals($cleanStored, $cleanCode)) {
+                    unset($codes[$index]);
+                    $lockedUser->two_factor_recovery_codes = Crypt::encryptString(json_encode(array_values($codes)));
+                    $lockedUser->save();
+
+                    // Sync updated encrypted codes to caller instance
+                    $user->two_factor_recovery_codes = $lockedUser->two_factor_recovery_codes;
+                    return true;
+                }
+            }
+
+            return false;
+        });
     }
 
     /**
@@ -303,13 +326,46 @@ class TwoFactorService
     public function validateAndConsumeChallengeToken(string $challengeToken): ?User
     {
         $cacheKey = "auth:2fa_challenge:{$challengeToken}";
-        $data = Cache::pull($cacheKey);
+        $data = $this->atomicCachePull($cacheKey);
 
         if (!$data || !isset($data['user_id'])) {
             return null;
         }
 
         return User::find($data['user_id']);
+    }
+
+    /**
+     * Atomically fetch and delete a cache key using Redis Lua script when Redis is available,
+     * falling back to Cache::pull.
+     */
+    protected function atomicCachePull(string $cacheKey): mixed
+    {
+        try {
+            $store = Cache::getStore();
+            if ($store instanceof \Illuminate\Cache\RedisStore) {
+                $script = <<<'LUA'
+local val = redis.call('get', KEYS[1])
+if val then
+    redis.call('del', KEYS[1])
+end
+return val
+LUA;
+                $prefix = $store->getPrefix();
+                $fullKey = $prefix . $cacheKey;
+                $raw = $store->connection()->eval($script, 1, $fullKey);
+
+                if ($raw === null || $raw === false) {
+                    return null;
+                }
+
+                return is_numeric($raw) ? $raw : @unserialize($raw);
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Atomic Redis cache pull failed on '{$cacheKey}': " . $e->getMessage());
+        }
+
+        return Cache::pull($cacheKey);
     }
 
     /**

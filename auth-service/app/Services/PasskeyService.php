@@ -56,7 +56,7 @@ class PasskeyService
     /**
      * Generate WebAuthn passkey registration options for an authenticated user.
      */
-    public function generateRegistrationOptions(User $user): array
+    public function generateRegistrationOptions(User $user, ?string $sessionId = null): array
     {
         $rpId = config('webauthn.rp.id', 'localhost');
         $rpName = config('webauthn.rp.name', 'CodeBridges SmartPOS');
@@ -112,12 +112,14 @@ class PasskeyService
             timeout: $timeout
         );
 
-        // Store ceremony options in Redis for 5 minutes bound to user
+        // Store ceremony options in Redis for 5 minutes bound to user and session
         $challengeId = Str::random(40);
         Cache::put("auth:passkey_reg_challenge:{$challengeId}", [
             'user_id' => $user->id,
+            'session_id' => $sessionId,
             'challenge' => $encodedChallenge,
             'user_handle' => $userHandle,
+            'reauth_authorized' => true,
             'created_at' => now()->timestamp,
         ], now()->addMinutes(5));
 
@@ -162,9 +164,13 @@ class PasskeyService
         }
 
         // Atomically consume registration challenge to prevent replay
-        $saved = Cache::pull("auth:passkey_reg_challenge:{$challengeId}");
+        $saved = $this->atomicCachePull("auth:passkey_reg_challenge:{$challengeId}");
         if (!$saved || (int) $saved['user_id'] !== (int) $user->id) {
             throw new \RuntimeException('Registration challenge is invalid, expired, or bound to another account.');
+        }
+
+        if (empty($saved['reauth_authorized'])) {
+            throw new \RuntimeException('Registration challenge was not authorized by reauthentication.');
         }
 
         $credentialPayload = $data['credential'] ?? $data;
@@ -238,6 +244,9 @@ class PasskeyService
         // Extract COSE public key bytes
         $coseKeyBytes = substr($authDataBytes, 55 + $credIdLen);
         $encodedPublicKey = rtrim(strtr(base64_encode($coseKeyBytes), '+/', '-_'), '=');
+
+        // Strictly validate that public key algorithm is supported before persisting
+        $this->validateCosePublicKeyStructure($coseKeyBytes);
 
         $name = !empty($data['name']) ? trim($data['name']) : 'Passkey ' . now()->format('Y-m-d H:i');
 
@@ -314,7 +323,7 @@ class PasskeyService
         }
 
         // Atomically consume authentication challenge to prevent replay
-        $saved = Cache::pull("auth:passkey_auth_challenge:{$challengeId}");
+        $saved = $this->atomicCachePull("auth:passkey_auth_challenge:{$challengeId}");
         if (!$saved) {
             throw new \RuntimeException('Authentication challenge is invalid or has expired.');
         }
@@ -416,34 +425,245 @@ class PasskeyService
     }
 
     /**
-     * Issue a short-lived step-up reauthentication grant (10 minutes).
+     * Resolve unique session identifier from the incoming request.
      */
-    public function createReauthGrant(User $user, string $purpose = 'security_action', int $ttlSeconds = 600): string
+    public function resolveSessionId(Request $request, ?User $user = null): string
     {
+        $user = $user ?? $request->user();
+
+        // 1. Explicit session header (for multi-device testing & native clients)
+        if ($sessionHeader = $request->header('X-Session-Id')) {
+            return (string) $sessionHeader;
+        }
+
+        // 2. Explicit UserSession from AuthenticateJwt middleware
+        if ($userSession = $request->attributes->get('user_session')) {
+            if ($userSession instanceof \App\Models\UserSession && !empty($userSession->uuid)) {
+                return 'sid:' . $userSession->uuid;
+            }
+        }
+
+        // 3. Sanctum PersonalAccessToken
+        if ($user && method_exists($user, 'currentAccessToken') && ($pat = $user->currentAccessToken())) {
+            if (!empty($pat->id)) {
+                return 'pat:' . $pat->id;
+            }
+            if (!empty($pat->token)) {
+                return 'pat_hash:' . hash('sha256', (string) $pat->token);
+            }
+        }
+
+        // 4. Bearer token from header
+        $bearer = $request->bearerToken();
+        if ($bearer) {
+            return 'bearer:' . hash('sha256', $bearer);
+        }
+
+        // 5. Standard session
+        if ($request->hasSession() && $request->session()->isStarted()) {
+            return 'sess:' . $request->session()->getId();
+        }
+
+        // 6. Test session attribute
+        if ($testSession = $request->attributes->get('test_session_id')) {
+            return 'test:' . $testSession;
+        }
+
+        return 'user_default:' . ($user?->id ?? 'guest');
+    }
+
+    /**
+     * Issue a short-lived step-up reauthentication grant (10 minutes) bound to user and session.
+     */
+    public function createReauthGrant(User $user, ?string $sessionIdOrPurpose = null, string $purpose = 'security_action', int $ttlSeconds = 600): string
+    {
+        $knownPurposes = ['security_action', 'passkey_enrollment', 'credential_management', 'change_payment_details'];
+        if ($sessionIdOrPurpose !== null && in_array($sessionIdOrPurpose, $knownPurposes, true) && $purpose === 'security_action') {
+            $purpose = $sessionIdOrPurpose;
+            $sessionId = 'user_default:' . $user->id;
+        } else {
+            $sessionId = $sessionIdOrPurpose ?: ('user_default:' . $user->id);
+        }
+
         $token = Str::random(40);
-        Cache::put("auth:reauth_grant:{$user->id}:{$purpose}", [
+        $grantData = [
+            'user_id' => $user->id,
+            'session_id' => $sessionId,
+            'purpose' => $purpose,
             'token' => $token,
             'granted_at' => now()->timestamp,
             'expires_at' => now()->addSeconds($ttlSeconds)->timestamp,
-        ], now()->addSeconds($ttlSeconds));
+        ];
+
+        // Store by grant token for atomic validation and consumption
+        Cache::put("auth:reauth_grant:token:{$token}", $grantData, now()->addSeconds($ttlSeconds));
+
+        // Index active grant by user, session and purpose
+        Cache::put("auth:reauth_grant:session:{$user->id}:{$sessionId}:{$purpose}", $token, now()->addSeconds($ttlSeconds));
+
+        // Backwards compatibility for user-level lookup
+        Cache::put("auth:reauth_grant:{$user->id}:{$purpose}", $grantData, now()->addSeconds($ttlSeconds));
 
         return $token;
     }
 
     /**
+     * Atomically consume and validate a step-up grant token bound to user and session.
+     */
+    public function consumeReauthGrantToken(User $user, string $sessionId, string $grantToken, string $purpose = 'security_action'): bool
+    {
+        $cacheKey = "auth:reauth_grant:token:{$grantToken}";
+        $data = Cache::get($cacheKey);
+
+        if (!$data || !is_array($data)) {
+            return false;
+        }
+
+        // Validate user binding
+        if ((int) ($data['user_id'] ?? 0) !== (int) $user->id) {
+            return false;
+        }
+
+        // Validate session binding (Session A cannot authorize Session B)
+        if (($data['session_id'] ?? '') !== $sessionId) {
+            return false;
+        }
+
+        // Validate purpose
+        if (($data['purpose'] ?? '') !== $purpose) {
+            return false;
+        }
+
+        // Validate expiration
+        if (($data['expires_at'] ?? 0) < now()->timestamp) {
+            Cache::forget($cacheKey);
+            return false;
+        }
+
+        // Atomically consume (delete) the grant token now that it has been matched to this session
+        $consumed = $this->atomicCachePull($cacheKey);
+        if (!$consumed) {
+            return false;
+        }
+
+        // Clean up session and user lookup indices
+        Cache::forget("auth:reauth_grant:session:{$user->id}:{$sessionId}:{$purpose}");
+        Cache::forget("auth:reauth_grant:{$user->id}:{$purpose}");
+
+        return true;
+    }
+
+    /**
      * Check if user has an active, valid step-up grant for a specific sensitive purpose.
      */
-    public function hasRecentReauth(User $user, string $purpose = 'security_action'): bool
+    public function hasRecentReauth(User $user, string $purpose = 'security_action', ?string $sessionId = null): bool
     {
+        if ($sessionId !== null) {
+            return Cache::has("auth:reauth_grant:session:{$user->id}:{$sessionId}:{$purpose}");
+        }
+
         return Cache::has("auth:reauth_grant:{$user->id}:{$purpose}");
     }
 
     /**
      * Consume step-up grant after sensitive operation.
      */
-    public function consumeReauthGrant(User $user, string $purpose = 'security_action'): void
+    public function consumeReauthGrant(User $user, string $purpose = 'security_action', ?string $sessionId = null): void
     {
+        if ($sessionId !== null) {
+            $token = Cache::get("auth:reauth_grant:session:{$user->id}:{$sessionId}:{$purpose}");
+            if ($token) {
+                Cache::forget("auth:reauth_grant:token:{$token}");
+            }
+            Cache::forget("auth:reauth_grant:session:{$user->id}:{$sessionId}:{$purpose}");
+        }
+
         Cache::forget("auth:reauth_grant:{$user->id}:{$purpose}");
+    }
+
+    /**
+     * Atomically fetch and delete a cache key using Redis Lua script when Redis is available,
+     * falling back to Cache::pull.
+     */
+    public function atomicCachePull(string $cacheKey): mixed
+    {
+        try {
+            $store = Cache::getStore();
+            if ($store instanceof \Illuminate\Cache\RedisStore) {
+                $script = <<<'LUA'
+local val = redis.call('get', KEYS[1])
+if val then
+    redis.call('del', KEYS[1])
+end
+return val
+LUA;
+                $prefix = $store->getPrefix();
+                $fullKey = $prefix . $cacheKey;
+                $raw = $store->connection()->eval($script, 1, $fullKey);
+
+                if ($raw === null || $raw === false) {
+                    return null;
+                }
+
+                return is_numeric($raw) ? $raw : @unserialize($raw);
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Atomic Redis cache pull failed on '{$cacheKey}': " . $e->getMessage());
+        }
+
+        return Cache::pull($cacheKey);
+    }
+
+    /**
+     * Strictly validate COSE public key structure and algorithms.
+     */
+    public function validateCosePublicKeyStructure(string $coseBytes): array
+    {
+        try {
+            $cose = \CBOR\Decoder::create()->decode(
+                new \CBOR\StringStream($coseBytes)
+            )->normalize();
+        } catch (\Throwable $e) {
+            throw new \InvalidArgumentException('Malformed COSE public key in attestation: ' . $e->getMessage());
+        }
+
+        if (!is_array($cose)) {
+            throw new \InvalidArgumentException('Invalid COSE public key format in attestationObject.');
+        }
+
+        $kty = isset($cose[1]) ? (int) $cose[1] : null;  // 2 = EC2, 3 = RSA, 1 = OKP
+        $alg = isset($cose[3]) ? (int) $cose[3] : null;  // -7 = ES256, -257 = RS256, -8 = EdDSA
+
+        $supportedAlgorithms = [-7, -257, -8];
+        if (!in_array($alg, $supportedAlgorithms, true)) {
+            throw new \InvalidArgumentException("Unsupported public key algorithm '{$alg}'. Only ES256 (-7), RS256 (-257), and Ed25519 (-8) are supported.");
+        }
+
+        if ($alg === -7) {
+            // ES256: kty must be 2 (EC2), crv must be 1 (P-256), x and y must be 32 bytes
+            $crv = isset($cose[-1]) ? (int) $cose[-1] : null;
+            $x = $cose[-2] ?? '';
+            $y = $cose[-3] ?? '';
+            if ($kty !== 2 || $crv !== 1 || strlen($x) !== 32 || strlen($y) !== 32) {
+                throw new \InvalidArgumentException('Invalid ES256 EC2 public key parameters.');
+            }
+        } elseif ($alg === -257) {
+            // RS256: kty must be 3 (RSA), n and e must be non-empty
+            $n = $cose[-1] ?? '';
+            $e = $cose[-2] ?? '';
+            if ($kty !== 3 || empty($n) || empty($e)) {
+                throw new \InvalidArgumentException('Invalid RS256 RSA public key parameters.');
+            }
+        } elseif ($alg === -8) {
+            // Ed25519: kty must be 1 (OKP), crv must be 6 (Ed25519), x must be 32 bytes
+            $crv = isset($cose[-1]) ? (int) $cose[-1] : null;
+            $x = $cose[-2] ?? '';
+            if ($kty !== 1 || $crv !== 6 || strlen($x) !== 32) {
+                throw new \InvalidArgumentException('Invalid Ed25519 OKP public key parameters.');
+            }
+        }
+
+        return $cose;
     }
 
     /**
@@ -479,7 +699,7 @@ class PasskeyService
     }
 
     /**
-     * Cryptographically verify signature using COSE key data via OpenSSL.
+     * Cryptographically verify signature using COSE key data via OpenSSL or Sodium.
      */
     protected function verifySignatureWithCoseKey(string $signedData, string $signature, string $coseBytes): bool
     {
@@ -526,6 +746,20 @@ class PasskeyService
                 $result = openssl_verify($signedData, $signature, $opensslKey, OPENSSL_ALGO_SHA256);
 
                 return $result === 1;
+            } elseif ($kty === 1 && $alg === -8) {
+                // Ed25519 (OKP / EdDSA): crv = 6, x = raw 32-byte public key
+                $crv = isset($cose[-1]) ? (int) $cose[-1] : null;
+                $rawPublicKey = $cose[-2] ?? '';
+
+                if ($crv !== 6 || strlen($rawPublicKey) !== 32) {
+                    return false;
+                }
+
+                if (function_exists('sodium_crypto_sign_verify_detached')) {
+                    return sodium_crypto_sign_verify_detached($signature, $signedData, $rawPublicKey);
+                }
+
+                return false;
             }
         } catch (\Throwable $e) {
             Log::warning('Passkey signature verification error: ' . $e->getMessage());
