@@ -124,6 +124,9 @@ jobs:
     steps:
       - name: Deploy Service via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          TARGET_SERVICE: ${{ needs.detect-and-validate.outputs.service }}
+          TARGET_SHA: ${{ needs.detect-and-validate.outputs.commit_sha }}
         with:
           host: ${{ secrets.STAGING_VPS_HOST }}
           username: ${{ secrets.STAGING_VPS_USER }}
@@ -132,52 +135,49 @@ jobs:
           command_timeout: 30m
           timeout: 60s
           envs: TARGET_SERVICE,TARGET_SHA
-        env:
-          TARGET_SERVICE: ${{ needs.detect-and-validate.outputs.service }}
-          TARGET_SHA: ${{ needs.detect-and-validate.outputs.commit_sha }}
-        script: |
-          set -euo pipefail
+          script: |
+            set -euo pipefail
 
-          echo "=========================================================================="
-          echo "Starting K3s Staging Deployment"
-          echo "  Selected Service: $TARGET_SERVICE"
-          echo "  Commit Revision : $TARGET_SHA"
-          echo "=========================================================================="
+            echo "=========================================================================="
+            echo "Starting K3s Staging Deployment"
+            echo "  Selected Service: $TARGET_SERVICE"
+            echo "  Commit Revision : $TARGET_SHA"
+            echo "=========================================================================="
 
-          # 1. Resolve repository directory on VPS
-          TARGET_DIR=""
-          CONFIGURED_DIR="${{ secrets.STAGING_DEPLOY_PATH }}"
-          if [ -n "$CONFIGURED_DIR" ] && [ -d "$CONFIGURED_DIR/.git" ]; then
-            TARGET_DIR="$CONFIGURED_DIR"
-            echo "Using configured STAGING_DEPLOY_PATH: $TARGET_DIR"
-          fi
+            # 1. Resolve repository directory on VPS
+            TARGET_DIR=""
+            CONFIGURED_DIR="${{ secrets.STAGING_DEPLOY_PATH }}"
+            if [ -n "$CONFIGURED_DIR" ] && [ -d "$CONFIGURED_DIR/.git" ]; then
+              TARGET_DIR="$CONFIGURED_DIR"
+              echo "Using configured STAGING_DEPLOY_PATH: $TARGET_DIR"
+            fi
 
-          if [ -z "$TARGET_DIR" ]; then
-            for dir in "$CONFIGURED_DIR" "$HOME/codebridge-services" "$HOME/codebridge" "/var/www/codebridge-services" "/root/codebridge-services"; do
-              if [ -n "$dir" ] && [ -d "$dir/.git" ]; then
-                TARGET_DIR="$dir"
-                break
-              fi
-            done
-          fi
+            if [ -z "$TARGET_DIR" ]; then
+              for dir in "$CONFIGURED_DIR" "$HOME/codebridge-services" "$HOME/codebridge" "/var/www/codebridge-services" "/root/codebridge-services"; do
+                if [ -n "$dir" ] && [ -d "$dir/.git" ]; then
+                  TARGET_DIR="$dir"
+                  break
+                fi
+              done
+            fi
 
-          if [ -z "$TARGET_DIR" ]; then
-            CLONE_DEST="${CONFIGURED_DIR:-$HOME/codebridge-services}"
-            echo "Repository not found on VPS. Cloning demo branch into $CLONE_DEST..."
-            git clone -b demo https://github.com/Codebridge404/codebridge-services.git "$CLONE_DEST"
-            TARGET_DIR="$CLONE_DEST"
-          fi
+            if [ -z "$TARGET_DIR" ]; then
+              CLONE_DEST="${CONFIGURED_DIR:-$HOME/codebridge-services}"
+              echo "Repository not found on VPS. Cloning demo branch into $CLONE_DEST..."
+              git clone -b demo https://github.com/Codebridge404/codebridge-services.git "$CLONE_DEST"
+              TARGET_DIR="$CLONE_DEST"
+            fi
 
-          cd "$TARGET_DIR"
-          echo "Working directory: $(pwd)"
+            cd "$TARGET_DIR"
+            echo "Working directory: $(pwd)"
 
-          echo "Fetching latest demo branch..."
-          git fetch origin demo
-          git checkout demo
-          git pull --ff-only origin demo || git reset --hard "$TARGET_SHA"
+            echo "Fetching latest demo branch..."
+            git fetch origin demo
+            git checkout demo
+            git pull --ff-only origin demo || git reset --hard "$TARGET_SHA"
 
-          # 2. Execute K3s service rollout script
-          chmod +x deploy/staging/update-k3s.sh
-          bash deploy/staging/update-k3s.sh "$TARGET_SERVICE" "$TARGET_SHA"
+            # 2. Execute K3s service rollout script
+            chmod +x deploy/staging/update-k3s.sh
+            bash deploy/staging/update-k3s.sh "$TARGET_SERVICE" "$TARGET_SHA"
 
-          echo "✔ Successfully completed K3s staging deployment for '$TARGET_SERVICE' ($TARGET_SHA)."
+            echo "✔ Successfully completed K3s staging deployment for '$TARGET_SERVICE' ($TARGET_SHA)."
