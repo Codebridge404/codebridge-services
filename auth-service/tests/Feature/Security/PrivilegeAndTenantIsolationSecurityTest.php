@@ -2,11 +2,11 @@
 
 namespace Tests\Feature\Security;
 
-use App\Models\Customer;
-use App\Models\Outlet;
-use App\Models\Role;
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\Crm\Customer;
+use App\Models\Organization\Outlet;
+use App\Models\System\Role;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use App\Services\JwtService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;

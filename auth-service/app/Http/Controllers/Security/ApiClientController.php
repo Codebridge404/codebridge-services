@@ -8,7 +8,7 @@ use App\Http\Requests\ApiClient\UpdateApiClientRequest;
 use App\Http\Resources\ApiClient\ApiClientResource;
 use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
-use App\Models\ApiClient;
+use App\Models\Security\ApiClient;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 

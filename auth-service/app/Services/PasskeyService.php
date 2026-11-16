@@ -2,8 +2,8 @@
 
 namespace App\Services;
 
-use App\Models\PasskeyCredential;
-use App\Models\User;
+use App\Models\Auth\PasskeyCredential;
+use App\Models\Auth\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -438,7 +438,7 @@ class PasskeyService
 
         // 2. Explicit UserSession from AuthenticateJwt middleware
         if ($userSession = $request->attributes->get('user_session')) {
-            if ($userSession instanceof \App\Models\UserSession && !empty($userSession->uuid)) {
+            if ($userSession instanceof \App\Models\Auth\UserSession && !empty($userSession->uuid)) {
                 return 'sid:' . $userSession->uuid;
             }
         }

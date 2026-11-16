@@ -17,7 +17,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0064
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/DepartmentController.php
- * @related-model App\Models\Department, App\Models\Employee
+ * @related-model App\Models\Organization\Department, App\Models\Organization\Employee
  * @entry-point DepartmentController::index(), store(), update(), destroy()
  * @routes
  *  - GET    /api/v1/departments

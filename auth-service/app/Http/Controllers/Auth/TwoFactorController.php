@@ -16,7 +16,7 @@ use App\Http\Requests\Auth\TwoFactorSetupRequest;
 use App\Http\Resources\User\UserResource;
 use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
-use App\Models\User;
+use App\Models\Auth\User;
 use App\Services\JwtService;
 use App\Services\TwoFactorService;
 use App\Support\SchemaGuard;
@@ -280,13 +280,13 @@ class TwoFactorController extends Controller
         if (! $client) {
             $clientKey = $request->header('X-Client-Key') ?? $request->header('X-App-Key') ?? $request->input('client_key');
             if ($clientKey) {
-                $client = \App\Models\ApiClient::where('client_key', $clientKey)->active()->first();
+                $client = \App\Models\Security\ApiClient::where('client_key', $clientKey)->active()->first();
             }
             if (! $client) {
-                $client = \App\Models\ApiClient::where('client_key', 'client_web_admin_cb2026')->first() ?? \App\Models\ApiClient::first();
+                $client = \App\Models\Security\ApiClient::where('client_key', 'client_web_admin_cb2026')->first() ?? \App\Models\Security\ApiClient::first();
             }
             if (! $client) {
-                $client = \App\Models\ApiClient::create([
+                $client = \App\Models\Security\ApiClient::create([
                     'uuid' => (string) \Illuminate\Support\Str::uuid(),
                     'name' => 'Default Platform Client',
                     'client_key' => 'client_web_admin_cb2026',
@@ -305,7 +305,7 @@ class TwoFactorController extends Controller
             : [];
 
         // Create Enterprise UserSession
-        $userSession = \App\Models\UserSession::create([
+        $userSession = \App\Models\Auth\UserSession::create([
             'user_id' => $user->id,
             'api_client_id' => $client->id,
             'tenant_id' => $user->tenant_id,
@@ -318,7 +318,7 @@ class TwoFactorController extends Controller
         ]);
 
         // Issue root rotating refresh token
-        $rootPair = \App\Models\RefreshToken::issueRoot($userSession);
+        $rootPair = \App\Models\Auth\RefreshToken::issueRoot($userSession);
         $refreshToken = $rootPair['credential'];
 
         // Mint access JWT with sid = user_sessions.uuid and MFA AMR assurance

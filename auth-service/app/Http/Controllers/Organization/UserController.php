@@ -17,9 +17,9 @@ use App\Http\Requests\User\StoreUserRequest;
 use App\Http\Requests\User\UpdateUserRequest;
 use App\Http\Requests\User\VerifyPinRequest;
 use App\Http\Resources\User\UserResource;
-use App\Models\Outlet;
-use App\Models\User;
-use App\Models\UserPosPin;
+use App\Models\Organization\Outlet;
+use App\Models\Auth\User;
+use App\Models\Auth\UserPosPin;
 use App\Services\JwtService;
 use App\Services\PinService;
 use App\Services\TenantAccess;
@@ -39,7 +39,7 @@ use Illuminate\Support\Str;
  *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/UserController.php
  *
- * @related-model App\Models\User, App\Models\UserRole, App\Models\Outlet
+ * @related-model App\Models\Auth\User, App\Models\System\UserRole, App\Models\Organization\Outlet
  *
  * @entry-point GET /api/v1/users, POST /api/v1/users, PUT /api/v1/users/{id}
  *

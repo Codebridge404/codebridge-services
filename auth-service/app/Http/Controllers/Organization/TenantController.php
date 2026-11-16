@@ -15,7 +15,7 @@ use App\Http\Requests\Tenant\UpdateTenantModulesRequest;
 use App\Http\Requests\Tenant\UpdateTenantProfileRequest;
 use App\Http\Requests\Tenant\UpdateTenantRequest;
 use App\Http\Resources\Tenant\TenantResource;
-use App\Models\Tenant;
+use App\Models\Organization\Tenant;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -29,7 +29,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0003
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/TenantController.php
- * @related-model App\Models\Tenant, App\Models\TenantSubscription, App\Models\Outlet
+ * @related-model App\Models\Organization\Tenant, App\Models\Organization\TenantSubscription, App\Models\Organization\Outlet
  * @entry-point POST /api/v1/tenants/register, GET /api/v1/tenants/my, GET /api/v1/tenants/{id}/settings
  * @date-time 2026-10-23T15:40:00+07:00
  *
@@ -241,7 +241,7 @@ class TenantController extends Controller
                 DB::table('users')->where('id', $authUser->id)->update($legacyUpdates);
             }
 
-            $userModel = \App\Models\User::findOrFail($authUser->id);
+            $userModel = \App\Models\Auth\User::findOrFail($authUser->id);
             $userModel->pendingTenantId = $id;
             $userModel->pendingOutletUuid = $outletUuid;
             $updatedUser = (new \App\Http\Resources\User\UserResource($userModel))->toArray($request);

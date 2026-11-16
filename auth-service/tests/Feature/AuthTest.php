@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
@@ -267,7 +267,7 @@ class AuthTest extends TestCase
      */
     public function test_quick_switch_authenticates_cashier_within_tenant(): void
     {
-        $tenant = \App\Models\Tenant::create([
+        $tenant = \App\Models\Organization\Tenant::create([
             'name' => 'Demo Cafe',
             'slug' => 'demo-cafe',
             'is_active' => true,
@@ -278,7 +278,7 @@ class AuthTest extends TestCase
             'is_active' => true,
         ]);
 
-        \App\Models\UserPosPin::create([
+        \App\Models\Auth\UserPosPin::create([
             'tenant_id' => $tenant->id,
             'user_id' => $cashier->id,
             'pin_hash' => Hash::make('5678'),

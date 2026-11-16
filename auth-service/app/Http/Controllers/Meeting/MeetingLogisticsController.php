@@ -18,7 +18,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0069
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingLogisticsController.php
- * @related-model DB table meeting_logistics, App\Models\Outlet
+ * @related-model DB table meeting_logistics, App\Models\Organization\Outlet
  * @entry-point MeetingLogisticsController::index(), reserve(), release()
  * @routes
  *  - GET  /api/v1/meeting-logistics

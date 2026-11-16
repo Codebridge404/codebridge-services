@@ -4,8 +4,8 @@ namespace Tests\Feature\Performance;
 
 use App\Http\Controllers\Meeting\MeetingTelegramController;
 use App\Jobs\SendMeetingTelegramAlertJob;
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use App\Notifications\VerifyEmailNotification;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Testing\RefreshDatabase;

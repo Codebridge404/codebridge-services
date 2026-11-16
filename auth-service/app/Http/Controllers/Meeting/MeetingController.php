@@ -618,7 +618,7 @@ class MeetingController extends Controller
     }
 
     /**
-     * Meeting Attachments CRUD.
+     * Meeting Attachments CRUD with Duplicate File Prevention.
      */
     public function attachments($id)
     {
@@ -629,27 +629,88 @@ class MeetingController extends Controller
     public function storeAttachment(StoreAttachmentRequest $request, $id)
     {
         $validated = $request->validated();
-
         $user = $request->user();
+
         $meeting = DB::table('meetings')->where('id', $id)->first();
         if (!$meeting) {
             return response()->json(['status' => 'error', 'message' => 'Meeting not found.'], 404);
         }
 
+        // Determine file name, size, type, and path
+        $uploadedFile = $request->file('file');
+        if ($uploadedFile) {
+            $fileName = $uploadedFile->getClientOriginalName();
+            $fileSize = $uploadedFile->getSize();
+            $fileType = $uploadedFile->getClientMimeType() ?: ($validated['file_type'] ?? 'document');
+            $filePath = $uploadedFile->store("meetings/{$id}/attachments", 'public');
+        } else {
+            $fileName = $validated['file_name'];
+            $fileSize = (int) ($validated['file_size'] ?? 0);
+            $fileType = $validated['file_type'] ?? 'document';
+            $filePath = $validated['file_path'] ?? ($validated['file_url'] ?? "attachments/{$fileName}");
+        }
+
+        // --- DUPLICATE FILE PREVENTION CHECK ---
+        // 1. Check for exact file name match in this meeting
+        $existingByName = DB::table('meeting_attachments')
+            ->where('meeting_id', $id)
+            ->whereRaw('LOWER(file_name) = ?', [strtolower($fileName)])
+            ->first();
+
+        if ($existingByName) {
+            return response()->json([
+                'status' => 'error',
+                'code' => 'DUPLICATE_FILE_UPLOAD',
+                'message' => "Duplicate attachment rejected: A file named '{$fileName}' already exists for this meeting.",
+                'data' => [
+                    'duplicate_id' => $existingByName->id,
+                    'file_name' => $existingByName->file_name,
+                    'file_size' => $existingByName->file_size,
+                    'created_at' => $existingByName->created_at,
+                ],
+            ], 409);
+        }
+
+        // 2. Check for identical path / size match if path is provided
+        if (!empty($filePath)) {
+            $existingByPath = DB::table('meeting_attachments')
+                ->where('meeting_id', $id)
+                ->where('file_path', $filePath)
+                ->first();
+
+            if ($existingByPath) {
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'DUPLICATE_FILE_UPLOAD',
+                    'message' => "Duplicate attachment rejected: This file has already been uploaded for this meeting.",
+                    'data' => [
+                        'duplicate_id' => $existingByPath->id,
+                        'file_path' => $existingByPath->file_path,
+                        'created_at' => $existingByPath->created_at,
+                    ],
+                ], 409);
+            }
+        }
+
+        $attUuid = (string) \Illuminate\Support\Str::uuid();
         $attId = DB::table('meeting_attachments')->insertGetId([
+            'uuid' => $attUuid,
             'meeting_id' => $id,
             'tenant_id' => $meeting->tenant_id,
-            'file_name' => $validated['file_name'],
-            'file_url' => $validated['file_url'] ?? null,
-            'file_type' => $validated['file_type'] ?? 'document',
-            'file_size' => $validated['file_size'] ?? 0,
-            'uploaded_by' => $user?->id,
+            'file_name' => $fileName,
+            'file_path' => $filePath,
+            'file_type' => $fileType,
+            'file_size' => $fileSize,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
 
         $item = DB::table('meeting_attachments')->where('id', $attId)->first();
-        return response()->json(['status' => 'success', 'message' => 'Attachment uploaded.', 'data' => $item], 201);
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Attachment uploaded successfully.',
+            'data' => $item,
+        ], 201);
     }
 
     public function destroyAttachment($meetingId, $attachmentId)

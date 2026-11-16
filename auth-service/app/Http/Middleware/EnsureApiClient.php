@@ -36,7 +36,7 @@ class EnsureApiClient
         if (!is_string($key) || $key === '' || strlen($key) > 100) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'app_key_missing',
                         ruleCode: 'SEC_APP_KEY_REQUIRED',
                         summary: 'API request rejected: missing or invalid X-App-Key header format',
@@ -67,7 +67,7 @@ class EnsureApiClient
         if (!$client || !hash_equals((string) $client->client_key, $hashedKey)) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'app_key_invalid',
                         ruleCode: 'SEC_APP_KEY_INVALID',
                         summary: 'API request rejected: invalid or disabled application client key',

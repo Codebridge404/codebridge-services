@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Security;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\ApiKey\StoreApiKeyRequest;
 use App\Http\Resources\ApiKey\ApiKeyResource;
-use App\Models\ApiKey;
+use App\Models\Security\ApiKey;
 use App\Services\UserAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -17,7 +17,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0006
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/ApiKeyController.php
- * @related-model App\Models\ApiKey
+ * @related-model App\Models\Security\ApiKey
  * @entry-point GET /api/v1/api-keys, POST /api/v1/api-keys, DELETE /api/v1/api-keys/{id}
  * @date-time 2026-10-23T15:40:00+07:00
  *

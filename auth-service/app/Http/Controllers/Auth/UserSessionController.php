@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\UserSession\UserSessionResource;
-use App\Models\UserSession;
+use App\Models\Auth\UserSession;
 use App\Services\UserAuthorizationService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;

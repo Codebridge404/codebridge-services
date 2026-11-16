@@ -14,7 +14,7 @@ use Symfony\Component\HttpFoundation\Response;
  * @ticket BD-0086
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Middleware/EnsureRole.php
- * @related-model App\Models\User, App\Models\Role
+ * @related-model App\Models\Auth\User, App\Models\System\Role
  * @entry-point EnsureRole::handle()
  * @routes
  *  - Middleware: role:role_name
@@ -42,7 +42,7 @@ class EnsureRole
         if (!$user) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'unauthenticated',
                         ruleCode: 'SEC_UNAUTHENTICATED',
                         summary: 'Role verification failed: user is unauthenticated',
@@ -117,7 +117,7 @@ class EnsureRole
         if (empty(array_intersect($effectiveRoles, $roles))) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'role_access_denied',
                         ruleCode: 'SEC_ROLE_DENIED',
                         summary: "Forbidden: user role [{$primaryRole}] lacks required roles [" . implode(', ', $roles) . "]",

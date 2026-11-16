@@ -17,7 +17,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0062
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/CustomerController.php
- * @related-model DB table customers, App\Models\Customer, App\Models\StoreCreditInvoice
+ * @related-model DB table customers, App\Models\Crm\Customer, App\Models\Crm\StoreCreditInvoice
  * @entry-point CustomerController::index(), store(), show(), update(), destroy()
  * @routes
  *  - GET    /api/v1/customers

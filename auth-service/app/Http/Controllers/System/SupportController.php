@@ -16,7 +16,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0078
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/SupportController.php
- * @related-model DB table support_tickets, App\Models\User
+ * @related-model DB table support_tickets, App\Models\Auth\User
  * @entry-point SupportController::index(), store(), reply(), close()
  * @routes
  *  - GET  /api/v1/support/tickets

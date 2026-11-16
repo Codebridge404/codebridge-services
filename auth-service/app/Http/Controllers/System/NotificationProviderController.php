@@ -7,7 +7,7 @@ use App\Http\Requests\NotificationProvider\StoreNotificationProviderRequest;
 use App\Http\Requests\NotificationProvider\TestNotificationProviderRequest;
 use App\Http\Requests\NotificationProvider\UpdateNotificationProviderRequest;
 use App\Http\Resources\NotificationProvider\NotificationProviderResource;
-use App\Models\NotificationProvider;
+use App\Models\Security\NotificationProvider;
 use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
 use Illuminate\Http\JsonResponse;

@@ -2,12 +2,12 @@
 
 namespace Tests\Feature;
 
-use App\Models\ApiClient;
-use App\Models\RefreshToken;
-use App\Models\Tenant;
-use App\Models\TenantUser;
-use App\Models\User;
-use App\Models\UserSession;
+use App\Models\Security\ApiClient;
+use App\Models\Auth\RefreshToken;
+use App\Models\Organization\Tenant;
+use App\Models\Organization\TenantUser;
+use App\Models\Auth\User;
+use App\Models\Auth\UserSession;
 use App\Services\JwtService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;

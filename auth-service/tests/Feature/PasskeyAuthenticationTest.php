@@ -2,9 +2,9 @@
 
 namespace Tests\Feature;
 
-use App\Models\ApiClient;
-use App\Models\PasskeyCredential;
-use App\Models\User;
+use App\Models\Security\ApiClient;
+use App\Models\Auth\PasskeyCredential;
+use App\Models\Auth\User;
 use App\Services\JwtService;
 use App\Services\PasskeyService;
 use CBOR\ByteStringObject;

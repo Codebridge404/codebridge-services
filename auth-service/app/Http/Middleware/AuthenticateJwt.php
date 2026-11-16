@@ -2,7 +2,7 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use App\Services\JwtService;
 use Closure;
 use Illuminate\Http\Request;
@@ -116,7 +116,7 @@ class AuthenticateJwt
                     $session = $this->jwtService->sessionForPayload($payload);
                     if (!$session) return response()->json(['status' => 'error', 'code' => 'TOKEN_REVOKED', 'message' => 'Session has been revoked.'], 401);
 
-                    if ($session instanceof \App\Models\UserSession) {
+                    if ($session instanceof \App\Models\Auth\UserSession) {
                         $request->attributes->set('user_session', $session);
 
                         $inactivityDays = $user->session_inactivity_days ?: 180;
@@ -190,7 +190,7 @@ class AuthenticateJwt
             } else {
                 try {
                     if (\App\Support\SchemaGuard::hasTable('security_events')) {
-                        \App\Models\SecurityEvent::record(
+                        \App\Models\Security\SecurityEvent::record(
                             eventType: 'jwt_invalid_signature',
                             ruleCode: 'SEC_JWT_INVALID_SIGNATURE',
                             summary: 'JWT verification failed: invalid signature, expired, or malformed claims',

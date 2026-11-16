@@ -2,7 +2,7 @@
 
 namespace Tests\Feature\Security;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;

@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Security;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\SecurityEvent\SecurityEventResource;
-use App\Models\SecurityEvent;
+use App\Models\Security\SecurityEvent;
 use App\Services\UserAuthorizationService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;

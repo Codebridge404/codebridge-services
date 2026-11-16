@@ -22,10 +22,13 @@ class StoreAttachmentRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'file_name' => ['required', 'string', 'max:255'],
-            'file_url' => ['nullable', 'string'],
+            'file' => ['nullable', 'file', 'max:25600'], // 25MB max binary upload
+            'file_name' => ['required_without:file', 'nullable', 'string', 'max:255'],
+            'file_path' => ['nullable', 'string', 'max:1024'],
+            'file_url' => ['nullable', 'string', 'max:1024'],
             'file_type' => ['nullable', 'string', 'max:100'],
-            'file_size' => ['nullable', 'integer'],
+            'file_size' => ['nullable', 'integer', 'min:0'],
+            'file_hash' => ['nullable', 'string', 'max:64'],
         ];
     }
 }

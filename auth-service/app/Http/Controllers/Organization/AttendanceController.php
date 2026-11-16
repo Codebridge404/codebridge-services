@@ -15,7 +15,7 @@ use Illuminate\Support\Facades\DB;
  * @ticket BD-0060
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/AttendanceController.php
- * @related-model App\Models\Employee, DB table attendances
+ * @related-model App\Models\Organization\Employee, DB table attendances
  * @entry-point AttendanceController::index(), clockIn(), clockOut(), summary()
  * @routes
  *  - GET  /api/v1/attendances

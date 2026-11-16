@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use Exception;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
@@ -316,12 +316,12 @@ class JwtService
 
         // Rotating Opaque Refresh Token (rt_<token_id>_<secret>) support
         if (str_starts_with($token, 'rt_')) {
-            $parsed = \App\Models\RefreshToken::parseCredential($token);
+            $parsed = \App\Models\Auth\RefreshToken::parseCredential($token);
             if (!$parsed) {
                 return null;
             }
 
-            $refreshToken = \App\Models\RefreshToken::where('token_id', $parsed['token_id'])->first();
+            $refreshToken = \App\Models\Auth\RefreshToken::where('token_id', $parsed['token_id'])->first();
             if (!$refreshToken || !$refreshToken->isValid()) {
                 return null;
             }
@@ -410,7 +410,7 @@ class JwtService
         // 1. Resolve enterprise UserSession if sid is a UUID
         if (\Illuminate\Support\Str::isUuid($sid)) {
             try {
-                $userSession = \App\Models\UserSession::where('uuid', $sid)->first();
+                $userSession = \App\Models\Auth\UserSession::where('uuid', $sid)->first();
                 if (!$userSession || !$userSession->isActive()) {
                     return null;
                 }

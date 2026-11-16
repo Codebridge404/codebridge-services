@@ -5,7 +5,7 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\User\InviteUserRequest;
 use App\Http\Resources\UserInvitation\UserInvitationResource;
-use App\Models\UserInvitation;
+use App\Models\Auth\UserInvitation;
 use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;

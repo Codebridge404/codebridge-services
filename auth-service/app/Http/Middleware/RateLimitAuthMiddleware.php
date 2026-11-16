@@ -55,7 +55,7 @@ class RateLimitAuthMiddleware
 
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'auth_rate_limit_exceeded',
                         ruleCode: 'SEC_AUTH_RATE_LIMIT',
                         summary: 'Brute-force lockout triggered on authentication endpoint',

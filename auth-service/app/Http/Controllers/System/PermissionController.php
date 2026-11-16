@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
  * @ticket BD-0075
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/PermissionController.php
- * @related-model App\Models\Role, DB table permissions, DB table role_permissions
+ * @related-model App\Models\System\Role, DB table permissions, DB table role_permissions
  * @entry-point PermissionController::index(), syncPermissions(), check()
  * @routes
  *  - GET  /api/v1/permissions

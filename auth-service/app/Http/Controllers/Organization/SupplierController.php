@@ -17,7 +17,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0077
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/SupplierController.php
- * @related-model DB table suppliers, App\Models\Tenant
+ * @related-model DB table suppliers, App\Models\Organization\Tenant
  * @entry-point SupplierController::index(), store(), show(), update(), destroy()
  * @routes
  *  - GET    /api/v1/suppliers

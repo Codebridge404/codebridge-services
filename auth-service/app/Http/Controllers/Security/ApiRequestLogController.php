@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Security;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\ApiRequestLog\ApiRequestLogResource;
-use App\Models\ApiRequestLog;
+use App\Models\Security\ApiRequestLog;
 use App\Services\UserAuthorizationService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;

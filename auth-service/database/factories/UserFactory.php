@@ -2,7 +2,7 @@
 
 namespace Database\Factories;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -12,6 +12,13 @@ use Illuminate\Support\Str;
  */
 class UserFactory extends Factory
 {
+    /**
+     * The name of the factory's corresponding model.
+     *
+     * @var class-string<\App\Models\Auth\User>
+     */
+    protected $model = User::class;
+
     /**
      * The current password being used by the factory.
      */
@@ -39,7 +46,7 @@ class UserFactory extends Factory
      */
     public function inWorkspace(): static
     {
-        return $this->state(fn () => ['tenant_id' => \App\Models\Tenant::create([
+        return $this->state(fn () => ['tenant_id' => \App\Models\Organization\Tenant::create([
             'name' => fake()->company(), 'slug' => (string) Str::uuid(), 'status' => 'active',
         ])->id]);
     }

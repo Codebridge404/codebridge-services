@@ -2,7 +2,7 @@
 
 namespace Database\Seeders;
 
-use App\Models\ApiClient;
+use App\Models\Security\ApiClient;
 use Illuminate\Database\Seeder;
 
 class ApiClientSeeder extends Seeder

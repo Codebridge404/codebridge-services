@@ -2,9 +2,9 @@
 
 namespace Tests\Unit;
 
-use App\Models\SecurityEvent;
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\Security\SecurityEvent;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Tests\TestCase;

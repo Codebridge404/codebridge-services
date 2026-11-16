@@ -2,11 +2,11 @@
 
 namespace Tests\Feature\Security;
 
-use App\Models\AuditLog;
-use App\Models\NotificationProvider;
-use App\Models\SecurityEvent;
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\Security\AuditLog;
+use App\Models\Security\NotificationProvider;
+use App\Models\Security\SecurityEvent;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use App\Services\IpThreatDefenseService;
 use App\Services\JwtService;
 use Illuminate\Foundation\Testing\RefreshDatabase;

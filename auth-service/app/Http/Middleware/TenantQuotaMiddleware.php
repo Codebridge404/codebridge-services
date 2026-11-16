@@ -15,7 +15,7 @@ use Symfony\Component\HttpFoundation\Response;
  * @ticket BD-0039
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Middleware/TenantQuotaMiddleware.php
- * @related-model App\Models\TenantSubscription, App\Models\UserRole
+ * @related-model App\Models\Organization\TenantSubscription, App\Models\System\UserRole
  * @date-time 2026-10-23T15:35:00+07:00
  *
  * Enforces seat quotas for staff, outlets, and registers per subscription tier.

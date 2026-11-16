@@ -3,7 +3,7 @@
 namespace Tests\Unit;
 
 use App\Http\Middleware\ApiClientMiddleware;
-use App\Models\ApiClient;
+use App\Models\Security\ApiClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;

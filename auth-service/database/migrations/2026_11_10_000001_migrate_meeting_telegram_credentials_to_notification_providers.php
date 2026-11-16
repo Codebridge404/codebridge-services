@@ -1,6 +1,6 @@
 <?php
 
-use App\Models\NotificationProvider;
+use App\Models\Security\NotificationProvider;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;

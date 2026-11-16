@@ -2,8 +2,8 @@
 
 namespace Tests\Feature;
 
-use App\Models\User;
-use App\Models\UserInvitation;
+use App\Models\Auth\User;
+use App\Models\Auth\UserInvitation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;

@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
  * @ticket BD-0067
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingActionItemController.php
- * @related-model DB table meeting_action_items, App\Models\User
+ * @related-model DB table meeting_action_items, App\Models\Auth\User
  * @entry-point MeetingActionItemController::index(), store(), update(), destroy()
  * @routes
  *  - GET    /api/v1/meetings/{meeting_id}/action-items

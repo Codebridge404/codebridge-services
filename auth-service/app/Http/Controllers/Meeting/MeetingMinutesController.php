@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
  * @ticket BD-0070
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingMinutesController.php
- * @related-model DB table meeting_minutes, App\Models\User
+ * @related-model DB table meeting_minutes, App\Models\Auth\User
  * @entry-point MeetingMinutesController::show(), store(), update(), publish()
  * @routes
  *  - GET  /api/v1/meetings/{meeting_id}/minutes

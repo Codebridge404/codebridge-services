@@ -2,8 +2,8 @@
 
 namespace App\Policies;
 
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use App\Services\UserAuthorizationService;
 
 class TenantPolicy

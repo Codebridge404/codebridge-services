@@ -2,8 +2,8 @@
 
 namespace App\Policies;
 
-use App\Models\Role;
-use App\Models\User;
+use App\Models\System\Role;
+use App\Models\Auth\User;
 use App\Services\UserAuthorizationService;
 
 class RolePolicy

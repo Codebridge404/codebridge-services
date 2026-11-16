@@ -2,8 +2,8 @@
 
 namespace App\Http\Resources\ApiRequestLog;
 
-use App\Models\ApiRequestLog;
-use App\Models\SecurityEvent;
+use App\Models\Security\ApiRequestLog;
+use App\Models\Security\SecurityEvent;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

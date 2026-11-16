@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use App\Support\SchemaGuard;
 use Illuminate\Support\Facades\DB;
 

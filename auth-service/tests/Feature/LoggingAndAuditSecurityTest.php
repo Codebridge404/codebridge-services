@@ -2,10 +2,10 @@
 
 namespace Tests\Feature;
 
-use App\Models\ApiRequestLog;
-use App\Models\AuditLog;
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\Security\ApiRequestLog;
+use App\Models\Security\AuditLog;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;

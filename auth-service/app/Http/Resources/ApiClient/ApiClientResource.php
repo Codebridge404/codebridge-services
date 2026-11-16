@@ -2,7 +2,7 @@
 
 namespace App\Http\Resources\ApiClient;
 
-use App\Models\ApiClient;
+use App\Models\Security\ApiClient;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

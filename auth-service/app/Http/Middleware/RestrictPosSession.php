@@ -26,7 +26,7 @@ class RestrictPosSession
             if (!$isAllowed) {
                 try {
                     if (SchemaGuard::hasTable('security_events')) {
-                        \App\Models\SecurityEvent::record(
+                        \App\Models\Security\SecurityEvent::record(
                             eventType: 'pos_scope_violation',
                             ruleCode: 'SEC_POS_SCOPE_VIOLATION',
                             summary: 'POS session attempted to access restricted administrative endpoint',

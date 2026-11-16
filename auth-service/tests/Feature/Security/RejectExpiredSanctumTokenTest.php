@@ -2,8 +2,8 @@
 
 namespace Tests\Feature\Security;
 
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;

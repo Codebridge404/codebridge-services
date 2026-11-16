@@ -2,7 +2,7 @@
 
 namespace App\Services;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
@@ -12,7 +12,7 @@ use Exception;
  * @ticket BD-0088
  * @component auth-service
  * @file codebridge-services/auth-service/app/Services/CheckoutService.php
- * @related-model App\Models\StoreCreditInvoice, DB table customers
+ * @related-model App\Models\Crm\StoreCreditInvoice, DB table customers
  * @entry-point CheckoutService::applyStoreCredit(), releaseHold()
  * @routes
  *  - Service Layer: App\Services\CheckoutService

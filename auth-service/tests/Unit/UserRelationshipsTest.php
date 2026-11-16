@@ -2,18 +2,18 @@
 
 namespace Tests\Unit;
 
-use App\Models\ApiKey;
-use App\Models\AuditLog;
-use App\Models\Department;
-use App\Models\Employee;
-use App\Models\Meeting;
-use App\Models\Outlet;
-use App\Models\Permission;
-use App\Models\Role;
-use App\Models\Tenant;
-use App\Models\TenantSubscription;
-use App\Models\User;
-use App\Models\UserInvitation;
+use App\Models\Security\ApiKey;
+use App\Models\Security\AuditLog;
+use App\Models\Organization\Department;
+use App\Models\Organization\Employee;
+use App\Models\Meeting\Meeting;
+use App\Models\Organization\Outlet;
+use App\Models\System\Permission;
+use App\Models\System\Role;
+use App\Models\Organization\Tenant;
+use App\Models\Organization\TenantSubscription;
+use App\Models\Auth\User;
+use App\Models\Auth\UserInvitation;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;

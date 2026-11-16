@@ -2,8 +2,8 @@
 
 namespace Tests\Feature\Security;
 
-use App\Models\ApiRequestLog;
-use App\Models\User;
+use App\Models\Security\ApiRequestLog;
+use App\Models\Auth\User;
 use App\Services\ImageService;
 use App\Support\LogRedactor;
 use Illuminate\Foundation\Testing\RefreshDatabase;

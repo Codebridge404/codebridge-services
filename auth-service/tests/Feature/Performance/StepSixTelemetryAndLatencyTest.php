@@ -2,7 +2,7 @@
 
 namespace Tests\Feature\Performance;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use App\Support\TelemetryEmitter;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;

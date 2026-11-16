@@ -2,8 +2,8 @@
 
 namespace App\Policies;
 
-use App\Models\SecurityEvent;
-use App\Models\User;
+use App\Models\Security\SecurityEvent;
+use App\Models\Auth\User;
 use App\Services\UserAuthorizationService;
 
 class SecurityEventPolicy

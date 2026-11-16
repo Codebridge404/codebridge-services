@@ -2,9 +2,9 @@
 
 namespace App\Services;
 
-use App\Models\NotificationProvider;
-use App\Models\SecurityEvent;
-use App\Models\User;
+use App\Models\Security\NotificationProvider;
+use App\Models\Security\SecurityEvent;
+use App\Models\Auth\User;
 use App\Support\LogRedactor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;

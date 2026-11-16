@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Role\StoreRoleRequest;
 use App\Http\Requests\Role\UpdateRoleRequest;
 use App\Http\Resources\Role\RoleResource;
-use App\Models\Role;
+use App\Models\System\Role;
 use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
@@ -18,7 +18,7 @@ use Illuminate\Support\Facades\DB;
  * @ticket BD-0005
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/RoleController.php
- * @related-model App\Models\Role, App\Models\Permission, App\Models\UserRole
+ * @related-model App\Models\System\Role, App\Models\System\Permission, App\Models\System\UserRole
  * @entry-point GET /api/v1/roles, POST /api/v1/roles, PUT /api/v1/roles/{id}
  * @date-time 2026-10-23T15:40:00+07:00
  *

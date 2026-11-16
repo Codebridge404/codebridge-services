@@ -2,10 +2,10 @@
 
 namespace Tests\Feature;
 
-use App\Models\Customer;
-use App\Models\DigitalVoucher;
-use App\Models\StoreCreditInvoice;
-use App\Models\User;
+use App\Models\Crm\Customer;
+use App\Models\Crm\DigitalVoucher;
+use App\Models\Crm\StoreCreditInvoice;
+use App\Models\Auth\User;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;

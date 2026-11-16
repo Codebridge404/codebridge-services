@@ -19,15 +19,15 @@ use App\Http\Requests\Auth\UpdatePasswordRequest;
 use App\Http\Requests\Auth\UpdateProfileRequest;
 use App\Http\Requests\Auth\UploadProfileImageRequest;
 use App\Http\Resources\User\UserResource;
-use App\Models\ApiClient;
-use App\Models\Outlet;
-use App\Models\RefreshToken;
-use App\Models\Tenant;
-use App\Models\TenantUser;
-use App\Models\TenantUserOutlet;
-use App\Models\User;
-use App\Models\UserPosPin;
-use App\Models\UserSession;
+use App\Models\Security\ApiClient;
+use App\Models\Organization\Outlet;
+use App\Models\Auth\RefreshToken;
+use App\Models\Organization\Tenant;
+use App\Models\Organization\TenantUser;
+use App\Models\Organization\TenantUserOutlet;
+use App\Models\Auth\User;
+use App\Models\Auth\UserPosPin;
+use App\Models\Auth\UserSession;
 use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
 use App\Services\DeviceDetectorService;
@@ -50,7 +50,7 @@ use Illuminate\Validation\ValidationException;
  * @ticket BD-0001
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/AuthController.php
- * @related-model App\Models\User, App\Models\TenantUser, App\Models\UserPosPin
+ * @related-model App\Models\Auth\User, App\Models\Organization\TenantUser, App\Models\Auth\UserPosPin
  *
  * Process Capabilities:
  * 1. Sanitizes login input against null-byte injection and multi-identifier login (email or phone).
@@ -1764,7 +1764,7 @@ class AuthController extends Controller
         $recordDenied = function (string $reason, int $statusCode, ?int $tenantId = null) use ($request, $user): void {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'tenant_access_denied',
                         ruleCode: 'SEC_TENANT_ACCESS_DENIED',
                         summary: "Authorization context denied: {$reason}",

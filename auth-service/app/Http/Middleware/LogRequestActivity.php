@@ -2,8 +2,8 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\ApiRequestLog;
-use App\Models\AuditLog;
+use App\Models\Security\ApiRequestLog;
+use App\Models\Security\AuditLog;
 use App\Support\LogRedactor;
 use App\Support\SchemaGuard;
 use App\Support\TelemetryEmitter;
@@ -128,14 +128,14 @@ class LogRequestActivity
         // Fallback: Check route parameters only for explicit user/email verification routes
         if (!$userId && str_contains($request->path(), 'email/verify') && $request->route('id') && is_numeric($request->route('id'))) {
             $candidateId = (int) $request->route('id');
-            if (\App\Models\User::where('id', $candidateId)->exists()) {
+            if (\App\Models\Auth\User::where('id', $candidateId)->exists()) {
                 $userId = $candidateId;
             }
         }
 
         // Verify that userId exists in users table before logging to prevent foreign key violations
         if ($userId && !$user) {
-            $user = \App\Models\User::find($userId);
+            $user = \App\Models\Auth\User::find($userId);
             if (!$user) {
                 $userId = null;
             } elseif (!$tenantId) {
@@ -364,7 +364,7 @@ class LogRequestActivity
                     default => "Access error encountered (HTTP {$statusCode})",
                 };
 
-            \App\Models\SecurityEvent::record(
+            \App\Models\Security\SecurityEvent::record(
                 eventType: $eventType,
                 ruleCode: $ruleCode,
                 summary: substr((string) $summary, 0, 255),

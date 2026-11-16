@@ -2,8 +2,8 @@
 
 namespace App\Policies;
 
-use App\Models\Outlet;
-use App\Models\User;
+use App\Models\Organization\Outlet;
+use App\Models\Auth\User;
 use App\Services\UserAuthorizationService;
 
 class OutletPolicy

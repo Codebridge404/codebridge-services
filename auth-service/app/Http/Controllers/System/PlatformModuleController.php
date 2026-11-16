@@ -18,7 +18,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0076
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/PlatformModuleController.php
- * @related-model DB table platform_modules, App\Models\Tenant
+ * @related-model DB table platform_modules, App\Models\Organization\Tenant
  * @entry-point PlatformModuleController::index(), updateModuleStatus()
  * @routes
  *  - GET /api/v1/platform-modules

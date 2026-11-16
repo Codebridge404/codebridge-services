@@ -2,7 +2,7 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\ApiClient;
+use App\Models\Security\ApiClient;
 use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
@@ -31,7 +31,7 @@ class ApiClientMiddleware
             if ($mode === 'required') {
                 try {
                     if (SchemaGuard::hasTable('security_events')) {
-                        \App\Models\SecurityEvent::record(
+                        \App\Models\Security\SecurityEvent::record(
                             eventType: 'app_key_missing',
                             ruleCode: 'SEC_CLIENT_KEY_MISSING',
                             summary: 'Missing API Client Key in required mode',
@@ -73,7 +73,7 @@ class ApiClientMiddleware
         if (!$client) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'app_key_invalid',
                         ruleCode: 'SEC_INVALID_CLIENT_KEY',
                         summary: 'Invalid API client key',
@@ -97,7 +97,7 @@ class ApiClientMiddleware
         if (!$client->is_active) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'app_key_disabled',
                         ruleCode: 'SEC_CLIENT_INACTIVE',
                         summary: 'Deactivated API client attempted access',

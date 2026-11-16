@@ -10,7 +10,7 @@ use App\Exceptions\TelegramRetryableException;
 use App\Http\Requests\Meeting\UpdateTelegramConfigRequest;
 use App\Http\Requests\Meeting\UpdateTelegramTemplateRequest;
 use App\Jobs\SendMeetingTelegramAlertJob;
-use App\Models\NotificationProvider;
+use App\Models\Security\NotificationProvider;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
@@ -23,7 +23,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0074
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingTelegramController.php
- * @related-model DB table telegram_integrations, App\Models\User
+ * @related-model DB table telegram_integrations, App\Models\Auth\User
  * @entry-point MeetingTelegramController::webhook(), linkAccount(), sendTestAlert()
  * @routes
  *  - POST /api/v1/meetings/telegram/webhook

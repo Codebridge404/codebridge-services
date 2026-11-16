@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
  * @ticket BD-0061
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/AuditLogController.php
- * @related-model DB table audit_logs, App\Models\User
+ * @related-model DB table audit_logs, App\Models\Auth\User
  * @entry-point AuditLogController::index(), show(), export()
  * @routes
  *  - GET  /api/v1/audit-logs
@@ -65,7 +65,7 @@ class AuditLogController extends Controller
      */
     public static function log($userId, string $userName, string $action, string $module = 'system', ?string $ipAddress = null, $payload = null, ?int $tenantId = null)
     {
-        return \App\Models\AuditLog::record(
+        return \App\Models\Security\AuditLog::record(
             action: $action,
             module: $module,
             userId: $userId,

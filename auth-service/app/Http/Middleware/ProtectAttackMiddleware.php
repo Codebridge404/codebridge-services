@@ -2,7 +2,7 @@
 
 namespace App\Http\Middleware;
 
-use App\Models\AuditLog;
+use App\Models\Security\AuditLog;
 use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
@@ -246,7 +246,7 @@ class ProtectAttackMiddleware
             $safeUri = substr(\App\Support\LogRedactor::sanitizePathWithMaskedQuery($request), 0, 200);
 
             if (SchemaGuard::hasTable('security_events')) {
-                \App\Models\SecurityEvent::record(
+                \App\Models\Security\SecurityEvent::record(
                     eventType: 'attack_' . $threatType,
                     ruleCode: 'SEC_ATTACK_' . strtoupper($threatType),
                     summary: $details,

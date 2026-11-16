@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\DB;
  * @ticket BD-0080
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/TenantModuleController.php
- * @related-model DB table tenant_modules, App\Models\Tenant
+ * @related-model DB table tenant_modules, App\Models\Organization\Tenant
  * @entry-point TenantModuleController::index(), updateModule()
  * @routes
  *  - GET /api/v1/tenants/{tenant_id}/modules

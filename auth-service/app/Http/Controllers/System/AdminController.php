@@ -10,9 +10,9 @@ namespace App\Http\Controllers\System;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\User\UserResource;
-use App\Models\Role;
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\System\Role;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;

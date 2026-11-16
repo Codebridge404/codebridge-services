@@ -2,7 +2,7 @@
 
 namespace App\Http\Resources\RefreshToken;
 
-use App\Models\RefreshToken;
+use App\Models\Auth\RefreshToken;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

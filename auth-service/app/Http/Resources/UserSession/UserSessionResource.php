@@ -2,7 +2,7 @@
 
 namespace App\Http\Resources\UserSession;
 
-use App\Models\UserSession;
+use App\Models\Auth\UserSession;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

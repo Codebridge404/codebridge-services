@@ -57,7 +57,7 @@ class EnsureWorkspace
     {
         try {
             if (SchemaGuard::hasTable('security_events')) {
-                \App\Models\SecurityEvent::record(
+                \App\Models\Security\SecurityEvent::record(
                     eventType: 'tenant_access_denied',
                     ruleCode: 'SEC_TENANT_ACCESS_DENIED',
                     summary: "Tenant access denied: {$reason}",

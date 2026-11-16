@@ -2,7 +2,7 @@
 
 namespace App\Http\Resources\SecurityEvent;
 
-use App\Models\SecurityEvent;
+use App\Models\Security\SecurityEvent;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 

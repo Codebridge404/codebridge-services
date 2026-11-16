@@ -16,12 +16,12 @@ abstract class TestCase extends BaseTestCase
                 $plainKey = 'client_test_suite_key';
                 $hashedKey = hash('sha256', $plainKey);
 
-                $client = \App\Models\ApiClient::where('client_key', $hashedKey)
+                $client = \App\Models\Security\ApiClient::where('client_key', $hashedKey)
                     ->orWhere('client_key', $plainKey)
                     ->first();
 
                 if (!$client) {
-                    $client = \App\Models\ApiClient::create([
+                    $client = \App\Models\Security\ApiClient::create([
                         'name' => 'Test Suite Client',
                         'client_key' => $hashedKey,
                         'client_type' => 'server',

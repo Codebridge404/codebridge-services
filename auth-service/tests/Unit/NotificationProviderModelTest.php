@@ -3,9 +3,9 @@
 namespace Tests\Unit;
 
 use App\Exceptions\CredentialEncryptionException;
-use App\Models\NotificationProvider;
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\Security\NotificationProvider;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;

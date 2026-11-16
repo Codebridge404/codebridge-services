@@ -30,11 +30,11 @@ class AppServiceProvider extends ServiceProvider
         }
 
         // Register Core Domain Model Policies
-        Gate::policy(\App\Models\User::class, \App\Policies\UserPolicy::class);
-        Gate::policy(\App\Models\Tenant::class, \App\Policies\TenantPolicy::class);
-        Gate::policy(\App\Models\Outlet::class, \App\Policies\OutletPolicy::class);
-        Gate::policy(\App\Models\Role::class, \App\Policies\RolePolicy::class);
-        Gate::policy(\App\Models\SecurityEvent::class, \App\Policies\SecurityEventPolicy::class);
+        Gate::policy(\App\Models\Auth\User::class, \App\Policies\UserPolicy::class);
+        Gate::policy(\App\Models\Organization\Tenant::class, \App\Policies\TenantPolicy::class);
+        Gate::policy(\App\Models\Organization\Outlet::class, \App\Policies\OutletPolicy::class);
+        Gate::policy(\App\Models\System\Role::class, \App\Policies\RolePolicy::class);
+        Gate::policy(\App\Models\Security\SecurityEvent::class, \App\Policies\SecurityEventPolicy::class);
 
         if (!$this->app->bound('_telemetry_db_listener_registered')) {
             $this->app->instance('_telemetry_db_listener_registered', true);

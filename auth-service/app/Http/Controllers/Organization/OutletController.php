@@ -8,7 +8,7 @@ use App\Http\Requests\Outlet\UpdateBusinessProfileRequest;
 use App\Http\Requests\Outlet\UpdateOutletRequest;
 use App\Http\Requests\Outlet\UpdateTerminalSettingsRequest;
 use App\Http\Resources\Outlet\OutletResource;
-use App\Models\Outlet;
+use App\Models\Organization\Outlet;
 use App\Services\PosBusinessProfileService;
 use App\Support\SchemaGuard;
 use App\Support\TenantSettingsCache;
@@ -22,7 +22,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0004, BD-0019
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/OutletController.php
- * @related-model App\Models\Outlet, App\Models\User, App\Services\PosBusinessProfileService
+ * @related-model App\Models\Organization\Outlet, App\Models\Auth\User, App\Services\PosBusinessProfileService
  * @entry-point GET /api/v1/outlets, POST /api/v1/outlets, PUT /api/v1/outlets/{id}, PATCH /api/v1/outlets/{id}/terminal-settings, PATCH /api/v1/outlets/{id}/business-profile
  * @date-time 2026-10-25T09:45:00+07:00
  *

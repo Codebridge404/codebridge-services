@@ -2,7 +2,7 @@
 
 namespace Database\Seeders;
 
-use App\Models\NotificationProvider;
+use App\Models\Security\NotificationProvider;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
 

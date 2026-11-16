@@ -4,7 +4,7 @@ namespace App\Http\Controllers\Security;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\TelegramAlert\TelegramAlertResource;
-use App\Models\NotificationProvider;
+use App\Models\Security\NotificationProvider;
 use App\Services\UserAuthorizationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;

@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\DB;
  * @ticket BD-0071
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/MeetingNotificationController.php
- * @related-model DB table meeting_notifications, App\Models\User
+ * @related-model DB table meeting_notifications, App\Models\Auth\User
  * @entry-point MeetingNotificationController::index(), markRead(), sendReminder()
  * @routes
  *  - GET  /api/v1/meeting-notifications

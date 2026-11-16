@@ -2,7 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\User;
+use App\Models\Auth\User;
 use App\Services\JwtService;
 use App\Services\PinService;
 use Firebase\JWT\JWT;

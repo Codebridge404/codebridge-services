@@ -14,7 +14,7 @@ use Symfony\Component\HttpFoundation\Response;
  * @ticket BD-0083
  * @component auth-service
  * @file codebridge-services/auth-service/app/Http/Middleware/ApiKeyMiddleware.php
- * @related-model App\Models\ApiKey, DB table api_keys
+ * @related-model App\Models\Security\ApiKey, DB table api_keys
  * @entry-point ApiKeyMiddleware::handle()
  * @routes
  *  - Middleware: api_key
@@ -42,7 +42,7 @@ class ApiKeyMiddleware
         if (empty($rawKey)) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'api_key_missing',
                         ruleCode: 'SEC_API_KEY_MISSING',
                         summary: 'Missing Merchant API Key header',
@@ -77,7 +77,7 @@ class ApiKeyMiddleware
         if (!$apiKey) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\SecurityEvent::record(
+                    \App\Models\Security\SecurityEvent::record(
                         eventType: 'api_key_invalid',
                         ruleCode: 'SEC_API_KEY_INVALID',
                         summary: 'Invalid, revoked, or expired Merchant API Key',
@@ -104,7 +104,7 @@ class ApiKeyMiddleware
             if (!in_array('*', $permissions) && !in_array($permissionRequired, $permissions)) {
                 try {
                     if (SchemaGuard::hasTable('security_events')) {
-                        \App\Models\SecurityEvent::record(
+                        \App\Models\Security\SecurityEvent::record(
                             eventType: 'api_key_forbidden',
                             ruleCode: 'SEC_API_KEY_FORBIDDEN',
                             summary: "Merchant API Key lacks required '{$permissionRequired}' permission",

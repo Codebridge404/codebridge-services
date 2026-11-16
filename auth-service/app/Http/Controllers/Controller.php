@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Responses\ApiResponse;
-use App\Models\AuditLog;
+use App\Models\Security\AuditLog;
 use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
 
 abstract class Controller

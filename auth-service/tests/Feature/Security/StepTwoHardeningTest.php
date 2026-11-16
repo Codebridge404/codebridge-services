@@ -2,9 +2,9 @@
 
 namespace Tests\Feature\Security;
 
-use App\Models\ApiClient;
-use App\Models\User;
-use App\Models\UserSession;
+use App\Models\Security\ApiClient;
+use App\Models\Auth\User;
+use App\Models\Auth\UserSession;
 use App\Support\SchemaGuard;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;

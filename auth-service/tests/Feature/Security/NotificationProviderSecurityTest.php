@@ -2,11 +2,11 @@
 
 namespace Tests\Feature\Security;
 
-use App\Models\ApiRequestLog;
-use App\Models\AuditLog;
-use App\Models\NotificationProvider;
-use App\Models\Tenant;
-use App\Models\User;
+use App\Models\Security\ApiRequestLog;
+use App\Models\Security\AuditLog;
+use App\Models\Security\NotificationProvider;
+use App\Models\Organization\Tenant;
+use App\Models\Auth\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
