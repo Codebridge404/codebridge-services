@@ -117,10 +117,12 @@ jobs:
             cd "${TARGET_DIR}"
             echo "Working directory: $(pwd)"
 
-            # Ensure clean tracked working tree before checkout
+            git config core.filemode false || true
+
+            # Safely stash tracked modifications to preserve changes (untracked secrets are preserved)
             if ! git diff-index --quiet HEAD --; then
-              echo "ERROR: Tracked files have uncommitted changes on VPS. Aborting." >&2
-              exit 1
+              echo "Notice: Stashing tracked modifications on VPS..."
+              git stash push -m "ci-deploy-stash-$(date +%s)" || true
             fi
 
             echo "Fetching latest demo branch on VPS..."

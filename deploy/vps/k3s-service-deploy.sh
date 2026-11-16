@@ -93,11 +93,14 @@ fi
 # ------------------------------------------------------------------------------
 # 3. SAFE REPOSITORY CHECKOUT (No destructive reset/clean)
 # ------------------------------------------------------------------------------
-echo "Verifying clean working tree for tracked files..."
+git config core.filemode false || true
+
+echo "Checking tracked working tree on VPS..."
 if ! git diff-index --quiet HEAD --; then
-    echo "ERROR: Modified tracked files detected in ${ROOT_DIR}. Deployment aborted to prevent data loss." >&2
+    echo "Notice: Local modifications to tracked files detected on VPS:"
     git status --short
-    exit 1
+    echo "Safely stashing tracked modifications (untracked .env and secrets are preserved)..."
+    git stash push -m "k3s-deploy-stash-$(date +%s)" || true
 fi
 
 echo "Fetching commit ${COMMIT_SHA} from origin..."
