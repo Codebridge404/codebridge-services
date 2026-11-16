@@ -1,7 +1,7 @@
 <?php
 
-use App\Http\Controllers\Api\V1\AttendanceController;
-use App\Http\Controllers\Api\V1\CrmController;
+use App\Http\Controllers\Organization\AttendanceController;
+use App\Http\Controllers\Crm\CrmController;
 use Illuminate\Support\Facades\Route;
 
 /*

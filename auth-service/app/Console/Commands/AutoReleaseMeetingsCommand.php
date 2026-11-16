@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Http\Controllers\Api\V1\MeetingController;
+use App\Http\Controllers\Meeting\MeetingController;
 use Illuminate\Console\Command;
 
 /**

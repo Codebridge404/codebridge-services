@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\V1\ApiRequestLogController;
+use App\Http\Controllers\Security\ApiRequestLogController;
 use Illuminate\Support\Facades\Route;
 
 /*

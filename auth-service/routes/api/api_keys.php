@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\V1\ApiKeyController;
+use App\Http\Controllers\Security\ApiKeyController;
 use Illuminate\Support\Facades\Route;
 
 /*

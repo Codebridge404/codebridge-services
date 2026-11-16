@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\V1\PermissionController;
+use App\Http\Controllers\System\PermissionController;
 use Illuminate\Support\Facades\Route;
 
 /*

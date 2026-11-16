@@ -6,9 +6,9 @@
  * Task: 2FA Recovery Codes & Email OTP UI (BD-0133)
  */
 
-use App\Http\Controllers\Api\V1\AuthController;
-use App\Http\Controllers\Api\V1\PasskeyController;
-use App\Http\Controllers\Api\V1\TwoFactorController;
+use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\Auth\PasskeyController;
+use App\Http\Controllers\Auth\TwoFactorController;
 use Illuminate\Support\Facades\Route;
 
 /*

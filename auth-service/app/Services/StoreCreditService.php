@@ -17,7 +17,7 @@ use Illuminate\Support\Str;
  * @ticket BD-0036
  * @component auth-service
  * @file codebridge-services/auth-service/app/Services/StoreCreditService.php
- * @related-controller App\Http\Controllers\Api\V1\StoreCreditInvoiceController
+ * @related-controller App\Http\Controllers\Crm\StoreCreditInvoiceController
  * @related-command App\Console\Commands\ExpireStoreCreditCommand
  * @date-time 2026-10-23T15:35:00+07:00
  *

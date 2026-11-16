@@ -2,7 +2,7 @@
 
 namespace Tests\Feature\Performance;
 
-use App\Http\Controllers\Api\V1\MeetingTelegramController;
+use App\Http\Controllers\Meeting\MeetingTelegramController;
 use App\Jobs\SendMeetingTelegramAlertJob;
 use App\Models\Tenant;
 use App\Models\User;

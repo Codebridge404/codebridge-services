@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\V1\SecurityEventController;
+use App\Http\Controllers\Security\SecurityEventController;
 use Illuminate\Support\Facades\Route;
 
 /*

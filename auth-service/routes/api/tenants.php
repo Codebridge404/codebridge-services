@@ -1,7 +1,7 @@
 <?php
 
-use App\Http\Controllers\Api\V1\TenantController;
-use App\Http\Controllers\Api\V1\TenantModuleController;
+use App\Http\Controllers\Organization\TenantController;
+use App\Http\Controllers\Organization\TenantModuleController;
 use Illuminate\Support\Facades\Route;
 
 /*

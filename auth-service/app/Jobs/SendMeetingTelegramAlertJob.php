@@ -5,7 +5,7 @@ namespace App\Jobs;
 use App\Exceptions\CredentialEncryptionException;
 use App\Exceptions\TelegramPermanentException;
 use App\Exceptions\TelegramRetryableException;
-use App\Http\Controllers\Api\V1\MeetingTelegramController;
+use App\Http\Controllers\Meeting\MeetingTelegramController;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;

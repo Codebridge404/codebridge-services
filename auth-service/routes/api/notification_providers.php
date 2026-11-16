@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\V1\NotificationProviderController;
+use App\Http\Controllers\System\NotificationProviderController;
 use Illuminate\Support\Facades\Route;
 
 /*

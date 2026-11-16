@@ -57,6 +57,7 @@ class DatabaseSeeder extends Seeder
         // 2. Seed Workspaces, Memberships, Subscriptions, Outlets & POS Cashier PINs
         $this->call([
             TenantSeeder::class,
+            MeetingSeeder::class,
         ]);
     }
 }

@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\V1\RefreshTokenController;
+use App\Http\Controllers\Auth\RefreshTokenController;
 use Illuminate\Support\Facades\Route;
 
 /*

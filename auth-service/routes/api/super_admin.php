@@ -1,9 +1,9 @@
 <?php
 
-use App\Http\Controllers\Api\V1\PlatformModuleController;
-use App\Http\Controllers\Api\V1\SupportController;
-use App\Http\Controllers\Api\V1\TelemetryController;
-use App\Http\Controllers\Api\V1\TenantController;
+use App\Http\Controllers\System\PlatformModuleController;
+use App\Http\Controllers\System\SupportController;
+use App\Http\Controllers\System\TelemetryController;
+use App\Http\Controllers\Organization\TenantController;
 use Illuminate\Support\Facades\Route;
 
 /*

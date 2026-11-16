@@ -1,9 +1,9 @@
 <?php
 
-use App\Http\Controllers\Api\V1\MeetingController;
-use App\Http\Controllers\Api\V1\MeetingIssueController;
-use App\Http\Controllers\Api\V1\PlatformModuleController;
-use App\Http\Controllers\Api\V1\TenantController;
+use App\Http\Controllers\Meeting\MeetingController;
+use App\Http\Controllers\Meeting\MeetingIssueController;
+use App\Http\Controllers\System\PlatformModuleController;
+use App\Http\Controllers\Organization\TenantController;
 use App\Http\Controllers\HealthController;
 use Illuminate\Support\Facades\Route;
 

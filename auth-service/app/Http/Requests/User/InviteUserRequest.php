@@ -3,7 +3,7 @@
 namespace App\Http\Requests\User;
 
 use Illuminate\Foundation\Http\FormRequest;
-use App\Http\Controllers\Api\V1\UserController;
+use App\Http\Controllers\Organization\UserController;
 use Illuminate\Validation\Rule;
 
 class InviteUserRequest extends FormRequest

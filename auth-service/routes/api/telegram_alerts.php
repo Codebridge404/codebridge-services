@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\V1\TelegramAlertController;
+use App\Http\Controllers\Security\TelegramAlertController;
 use Illuminate\Support\Facades\Route;
 
 /*

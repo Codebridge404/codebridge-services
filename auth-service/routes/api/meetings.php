@@ -1,14 +1,14 @@
 <?php
 
-use App\Http\Controllers\Api\V1\MeetingActionItemController;
-use App\Http\Controllers\Api\V1\MeetingController;
-use App\Http\Controllers\Api\V1\MeetingIssueController;
-use App\Http\Controllers\Api\V1\MeetingLogisticsController;
-use App\Http\Controllers\Api\V1\MeetingMinutesController;
-use App\Http\Controllers\Api\V1\MeetingNotificationController;
-use App\Http\Controllers\Api\V1\MeetingRoomController;
-use App\Http\Controllers\Api\V1\MeetingSettingController;
-use App\Http\Controllers\Api\V1\MeetingTelegramController;
+use App\Http\Controllers\Meeting\MeetingActionItemController;
+use App\Http\Controllers\Meeting\MeetingController;
+use App\Http\Controllers\Meeting\MeetingIssueController;
+use App\Http\Controllers\Meeting\MeetingLogisticsController;
+use App\Http\Controllers\Meeting\MeetingMinutesController;
+use App\Http\Controllers\Meeting\MeetingNotificationController;
+use App\Http\Controllers\Meeting\MeetingRoomController;
+use App\Http\Controllers\Meeting\MeetingSettingController;
+use App\Http\Controllers\Meeting\MeetingTelegramController;
 use Illuminate\Support\Facades\Route;
 
 /*

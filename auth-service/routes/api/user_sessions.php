@@ -1,6 +1,6 @@
 <?php
 
-use App\Http\Controllers\Api\V1\UserSessionController;
+use App\Http\Controllers\Auth\UserSessionController;
 use Illuminate\Support\Facades\Route;
 
 /*

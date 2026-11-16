@@ -5,7 +5,7 @@ namespace Tests\Feature\Security;
 use App\Exceptions\CredentialEncryptionException;
 use App\Exceptions\TelegramPermanentException;
 use App\Exceptions\TelegramRetryableException;
-use App\Http\Controllers\Api\V1\MeetingTelegramController;
+use App\Http\Controllers\Meeting\MeetingTelegramController;
 use App\Jobs\SendMeetingTelegramAlertJob;
 use App\Models\NotificationProvider;
 use App\Models\Tenant;

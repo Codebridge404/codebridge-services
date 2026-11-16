@@ -1,14 +1,14 @@
 <?php
 
-use App\Http\Controllers\Api\V1\AuditLogController;
-use App\Http\Controllers\Api\V1\CustomerController;
-use App\Http\Controllers\Api\V1\CustomerLoyaltyController;
-use App\Http\Controllers\Api\V1\DepartmentController;
-use App\Http\Controllers\Api\V1\EmployeeController;
-use App\Http\Controllers\Api\V1\GiftCardController;
-use App\Http\Controllers\Api\V1\OutletController;
-use App\Http\Controllers\Api\V1\StoreCreditInvoiceController;
-use App\Http\Controllers\Api\V1\SupplierController;
+use App\Http\Controllers\Security\AuditLogController;
+use App\Http\Controllers\Crm\CustomerController;
+use App\Http\Controllers\Crm\CustomerLoyaltyController;
+use App\Http\Controllers\Organization\DepartmentController;
+use App\Http\Controllers\Organization\EmployeeController;
+use App\Http\Controllers\Crm\GiftCardController;
+use App\Http\Controllers\Organization\OutletController;
+use App\Http\Controllers\Crm\StoreCreditInvoiceController;
+use App\Http\Controllers\Organization\SupplierController;
 use Illuminate\Support\Facades\Route;
 
 /*
