@@ -13,8 +13,11 @@ use Illuminate\Support\Facades\Log;
  * [BD-0042] Automated Inactive & Expired Sessions Periodic Cleanup.
  *
  * @ticket BD-0042
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Console/Commands/CleanupInactiveSessions.php
+ *
  * @command-trigger php artisan sessions:cleanup-inactive {--dry-run}
  *
  * Sweeps personal_access_tokens and revokes sessions that have exceeded their
@@ -36,7 +39,7 @@ class CleanupInactiveSessions extends Command
     public function handle(JwtService $jwtService): int
     {
         $dryRun = $this->option('dry-run');
-        $this->info("⏳ Scanning for inactive & expired device sessions" . ($dryRun ? " (DRY RUN)" : "") . "...");
+        $this->info('⏳ Scanning for inactive & expired device sessions'.($dryRun ? ' (DRY RUN)' : '').'...');
 
         $now = Carbon::now();
         $totalExpired = 0;
@@ -50,7 +53,7 @@ class CleanupInactiveSessions extends Command
         $expiredCount = $explicitExpiredQuery->count();
         $totalExpired += $expiredCount;
 
-        if (!$dryRun && $expiredCount > 0) {
+        if (! $dryRun && $expiredCount > 0) {
             $explicitExpiredQuery->delete();
         }
 
@@ -58,7 +61,7 @@ class CleanupInactiveSessions extends Command
         // Join users to evaluate individual session_inactivity_days preferences
         $tokens = DB::table('personal_access_tokens')
             ->join('users', 'personal_access_tokens.tokenable_id', '=', 'users.id')
-            ->where('personal_access_tokens.tokenable_type', User::class)
+            ->whereIn('personal_access_tokens.tokenable_type', [User::class, 'App\Models\User', 'user'])
             ->select([
                 'personal_access_tokens.id',
                 'personal_access_tokens.tokenable_id as user_id',
@@ -82,7 +85,7 @@ class CleanupInactiveSessions extends Command
 
         $totalInactive = count($idsToPurge);
 
-        if (!$dryRun && !empty($idsToPurge)) {
+        if (! $dryRun && ! empty($idsToPurge)) {
             // Chunk deletions to prevent lock contention
             foreach (array_chunk($idsToPurge, 200) as $chunk) {
                 DB::table('personal_access_tokens')->whereIn('id', $chunk)->delete();
@@ -97,8 +100,8 @@ class CleanupInactiveSessions extends Command
             ->toArray();
 
         $totalPurgedTokens = 0;
-        if (!empty($expiredSessionIds)) {
-            if (!$dryRun) {
+        if (! empty($expiredSessionIds)) {
+            if (! $dryRun) {
                 // Delete descendant leaf tokens layer-by-layer
                 do {
                     $parentIds = DB::table('refresh_tokens')
@@ -112,7 +115,7 @@ class CleanupInactiveSessions extends Command
                         ->whereIn('session_id', $expiredSessionIds)
                         ->whereNotNull('parent_token_id');
 
-                    if (!empty($parentIds)) {
+                    if (! empty($parentIds)) {
                         $leafQuery->whereNotIn('id', $parentIds);
                     }
 
@@ -139,14 +142,14 @@ class CleanupInactiveSessions extends Command
 
         $grandTotal = $totalExpired + $totalInactive;
 
-        $this->info("✅ Inactivity session cleanup completed!");
+        $this->info('✅ Inactivity session cleanup completed!');
         $this->table(
             ['Metric', 'Count'],
             [
                 ['Hard-Expired Sessions (session_expires_at)', $totalExpired],
                 ['Inactive Sessions Past Policy (session_inactivity_days)', $totalInactive],
                 ['Expired Refresh Token Lineages Purged', $totalPurgedTokens],
-                ['Total Sessions ' . ($dryRun ? 'Identified' : 'Purged'), $grandTotal],
+                ['Total Sessions '.($dryRun ? 'Identified' : 'Purged'), $grandTotal],
                 ['Executed At', $now->toIso8601String()],
             ]
         );

@@ -3,19 +3,28 @@
 namespace App\Http\Middleware;
 
 use App\Models\Auth\User;
+use App\Models\Auth\UserSession;
+use App\Models\Security\SecurityEvent;
 use App\Services\JwtService;
+use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
+use Laravel\Sanctum\PersonalAccessToken;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
  * [BD-0040] Stateless JWT Authentication Middleware.
  *
  * @ticket BD-0040
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Middleware/AuthenticateJwt.php
+ *
  * @related-service App\Services\JwtService
+ *
  * @date-time 2026-10-23T15:35:00+07:00
  *
  * Validates HMAC-SHA256 signed Bearer tokens statelessly across all microservice requests.
@@ -41,14 +50,16 @@ class AuthenticateJwt
             $token = trim(substr($token, 7));
         }
 
-        if ($request->is('api/v1/auth/refresh')) return $next($request);
+        if ($request->is('api/v1/auth/refresh')) {
+            return $next($request);
+        }
 
         if ($token && substr_count($token, '.') === 2) {
             $payload = $this->jwtService->verify($token);
 
-            if ($payload && !empty($payload['sub'])) {
+            if ($payload && ! empty($payload['sub'])) {
                 // [P1] Strictly require explicit token_use=access on standard API endpoints
-                if (($payload['token_use'] ?? null) !== 'access' && !$request->is('api/v1/auth/refresh')) {
+                if (($payload['token_use'] ?? null) !== 'access' && ! $request->is('api/v1/auth/refresh')) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'INVALID_TOKEN_TYPE',
@@ -57,7 +68,7 @@ class AuthenticateJwt
                 }
 
                 // Check if token has been explicitly revoked
-                if (!empty($payload['jti']) && $this->jwtService->isRevoked($payload['jti'])) {
+                if (! empty($payload['jti']) && $this->jwtService->isRevoked($payload['jti'])) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'TOKEN_REVOKED',
@@ -66,7 +77,7 @@ class AuthenticateJwt
                 }
 
                 // Check if specific session UUID has been revoked
-                if (!empty($payload['sid']) && $this->jwtService->isSessionUuidRevoked((string) $payload['sid'])) {
+                if (! empty($payload['sid']) && $this->jwtService->isSessionUuidRevoked((string) $payload['sid'])) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'TOKEN_REVOKED',
@@ -76,7 +87,7 @@ class AuthenticateJwt
 
                 // Check if user session has been revoked globally
                 $iat = $payload['iat'] ?? 0;
-                if (!empty($payload['sub']) && $this->jwtService->isUserSessionRevoked($payload['sub'], (int) $iat, $payload['session_version'] ?? null)) {
+                if (! empty($payload['sub']) && $this->jwtService->isUserSessionRevoked($payload['sub'], (int) $iat, $payload['session_version'] ?? null)) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'TOKEN_REVOKED',
@@ -87,7 +98,7 @@ class AuthenticateJwt
                 $user = User::find($payload['sub']);
 
                 // [P1] Reject missing users in the authoritative auth service
-                if (!$user) {
+                if (! $user) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'USER_NOT_FOUND',
@@ -96,7 +107,7 @@ class AuthenticateJwt
                 }
 
                 // Verify that the user account is active and not locked out
-                if (!$user->is_active) {
+                if (! $user->is_active) {
                     return response()->json([
                         'status' => 'error',
                         'code' => 'ACCOUNT_DEACTIVATED',
@@ -112,25 +123,28 @@ class AuthenticateJwt
                     ], 401);
                 }
 
-                if (!empty($payload['sid'])) {
+                if (! empty($payload['sid'])) {
                     $session = $this->jwtService->sessionForPayload($payload);
-                    if (!$session) return response()->json(['status' => 'error', 'code' => 'TOKEN_REVOKED', 'message' => 'Session has been revoked.'], 401);
+                    if (! $session) {
+                        return response()->json(['status' => 'error', 'code' => 'TOKEN_REVOKED', 'message' => 'Session has been revoked.'], 401);
+                    }
 
-                    if ($session instanceof \App\Models\Auth\UserSession) {
+                    if ($session instanceof UserSession) {
                         $request->attributes->set('user_session', $session);
 
                         $inactivityDays = $user->session_inactivity_days ?: 180;
-                        $pat = \Laravel\Sanctum\PersonalAccessToken::where('tokenable_id', $user->id)
-                            ->where('tokenable_type', get_class($user))
+                        $pat = PersonalAccessToken::where('tokenable_id', $user->id)
+                            ->whereIn('tokenable_type', [get_class($user), 'App\Models\User', 'user'])
                             ->where('name', $session->device_name)
                             ->latest('id')
                             ->first();
 
                         if ($pat) {
-                            $lastActive = $pat->last_used_at ? \Illuminate\Support\Carbon::parse($pat->last_used_at) : ($pat->created_at ? \Illuminate\Support\Carbon::parse($pat->created_at) : null);
+                            $lastActive = $pat->last_used_at ? Carbon::parse($pat->last_used_at) : ($pat->created_at ? Carbon::parse($pat->created_at) : null);
                             if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
                                 $session->revoke('inactivity_timeout');
                                 $pat->delete();
+
                                 return response()->json([
                                     'status' => 'error',
                                     'code' => 'SESSION_EXPIRED',
@@ -143,6 +157,7 @@ class AuthenticateJwt
                             $lastActive = $session->last_seen_at ?? $session->created_at;
                             if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
                                 $session->revoke('inactivity_timeout');
+
                                 return response()->json([
                                     'status' => 'error',
                                     'code' => 'SESSION_EXPIRED',
@@ -155,9 +170,10 @@ class AuthenticateJwt
                     } else {
                         // Enforce account inactivity timeout policy on PersonalAccessToken
                         $inactivityDays = $user->session_inactivity_days ?: 180;
-                        $lastActive = $session->last_used_at ? \Illuminate\Support\Carbon::parse($session->last_used_at) : ($session->created_at ? \Illuminate\Support\Carbon::parse($session->created_at) : null);
+                        $lastActive = $session->last_used_at ? Carbon::parse($session->last_used_at) : ($session->created_at ? Carbon::parse($session->created_at) : null);
                         if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
                             $session->delete();
+
                             return response()->json([
                                 'status' => 'error',
                                 'code' => 'SESSION_EXPIRED',
@@ -166,14 +182,14 @@ class AuthenticateJwt
                         }
 
                         // Throttle updating last_used_at to at most once every 60 seconds
-                        if (!$session->last_used_at || \Illuminate\Support\Carbon::parse($session->last_used_at)->diffInSeconds(now()) >= 60) {
+                        if (! $session->last_used_at || Carbon::parse($session->last_used_at)->diffInSeconds(now()) >= 60) {
                             $session->forceFill(['last_used_at' => now()])->save();
                         }
 
                         $user->withAccessToken($session);
                     }
                 }
-                $request->attributes->set('is_pos_session', !empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos');
+                $request->attributes->set('is_pos_session', ! empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos');
                 $request->attributes->set('jwt_claims', $payload);
                 if (array_key_exists('tenant_id', $payload) && $payload['tenant_id'] !== null && $payload['tenant_id'] !== '') {
                     if (is_numeric($payload['tenant_id'])) {
@@ -189,8 +205,8 @@ class AuthenticateJwt
                 $request->setUserResolver(fn () => $user);
             } else {
                 try {
-                    if (\App\Support\SchemaGuard::hasTable('security_events')) {
-                        \App\Models\Security\SecurityEvent::record(
+                    if (SchemaGuard::hasTable('security_events')) {
+                        SecurityEvent::record(
                             eventType: 'jwt_invalid_signature',
                             ruleCode: 'SEC_JWT_INVALID_SIGNATURE',
                             summary: 'JWT verification failed: invalid signature, expired, or malformed claims',
@@ -206,9 +222,10 @@ class AuthenticateJwt
                 }
             }
         } elseif ($token && substr_count($token, '.') !== 2) {
-            $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+            $accessToken = PersonalAccessToken::findToken($token);
             if (! $accessToken) {
                 Auth::forgetGuards();
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'TOKEN_INVALID',
@@ -219,6 +236,7 @@ class AuthenticateJwt
             // [P1] Enforce explicit token expiration on Sanctum PersonalAccessToken
             if ($accessToken->expires_at && $accessToken->expires_at->isPast()) {
                 Auth::forgetGuards();
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'TOKEN_EXPIRED',
@@ -230,6 +248,7 @@ class AuthenticateJwt
             $expiration = config('sanctum.expiration');
             if ($expiration && $accessToken->created_at && $accessToken->created_at->lte(now()->subMinutes((int) $expiration))) {
                 Auth::forgetGuards();
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'TOKEN_EXPIRED',
@@ -238,9 +257,10 @@ class AuthenticateJwt
             }
 
             // [P1] Enforce custom hard session expiration on Sanctum PersonalAccessToken
-            if (! empty($accessToken->session_expires_at) && \Illuminate\Support\Carbon::parse($accessToken->session_expires_at)->isPast()) {
+            if (! empty($accessToken->session_expires_at) && Carbon::parse($accessToken->session_expires_at)->isPast()) {
                 $accessToken->delete();
                 Auth::forgetGuards();
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'SESSION_EXPIRED',
@@ -251,6 +271,7 @@ class AuthenticateJwt
             $user = $accessToken->tokenable;
             if (! $user) {
                 Auth::forgetGuards();
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'USER_NOT_FOUND',
@@ -261,12 +282,13 @@ class AuthenticateJwt
             // [P1] Enforce account session inactivity timeout policy
             $inactivityDays = $user->session_inactivity_days ?: 180;
             $lastActive = $accessToken->last_used_at
-                ? \Illuminate\Support\Carbon::parse($accessToken->last_used_at)
-                : ($accessToken->created_at ? \Illuminate\Support\Carbon::parse($accessToken->created_at) : null);
+                ? Carbon::parse($accessToken->last_used_at)
+                : ($accessToken->created_at ? Carbon::parse($accessToken->created_at) : null);
 
             if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
                 $accessToken->delete();
                 Auth::forgetGuards();
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'SESSION_EXPIRED',
@@ -276,6 +298,7 @@ class AuthenticateJwt
 
             if (! $user->is_active) {
                 Auth::forgetGuards();
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'ACCOUNT_DEACTIVATED',
@@ -285,6 +308,7 @@ class AuthenticateJwt
 
             if ($user->isLockedOut()) {
                 Auth::forgetGuards();
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'ACCOUNT_LOCKED_OUT',
@@ -293,7 +317,7 @@ class AuthenticateJwt
             }
 
             // Throttle updating last_used_at to at most once every 60 seconds
-            if (! $accessToken->last_used_at || \Illuminate\Support\Carbon::parse($accessToken->last_used_at)->diffInSeconds(now()) >= 60) {
+            if (! $accessToken->last_used_at || Carbon::parse($accessToken->last_used_at)->diffInSeconds(now()) >= 60) {
                 $accessToken->forceFill(['last_used_at' => now()])->save();
             }
 

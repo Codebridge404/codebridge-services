@@ -2,19 +2,28 @@
 
 namespace App\Services;
 
+use App\Models\Auth\RefreshToken;
 use App\Models\Auth\User;
+use App\Models\Auth\UserSession;
+use Carbon\Carbon;
 use Exception;
 use Firebase\JWT\JWT;
 use Firebase\JWT\Key;
+use Illuminate\Contracts\Cache\Repository;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use Laravel\Sanctum\PersonalAccessToken;
 
 /**
  * [BD-0041] High-Performance Stateless JWT Token Issuer & Verifier.
  *
  * @ticket BD-0041
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Services/JwtService.php
+ *
  * @date-time 2026-10-23T15:35:00+07:00
  *
  * Issues and verifies HMAC-SHA256 JWT tokens containing user claims and roles.
@@ -22,10 +31,15 @@ use Illuminate\Support\Str;
 class JwtService
 {
     protected string $secret;
+
     protected string $algo;
+
     protected int $ttl;
+
     protected int $refreshTtl;
+
     protected string $issuer;
+
     protected string $audience;
 
     public function __construct()
@@ -91,8 +105,9 @@ class JwtService
         try {
             $decoded = JWT::decode($token, new Key($this->secret, $this->algo));
 
-            if (empty($decoded->iss) || !is_string($decoded->iss) || $decoded->iss !== $this->issuer) {
+            if (empty($decoded->iss) || ! is_string($decoded->iss) || $decoded->iss !== $this->issuer) {
                 Log::warning('Auth JWT decode rejected: missing or untrusted issuer.');
+
                 return null;
             }
 
@@ -101,14 +116,16 @@ class JwtService
                 ? $aud === $this->audience
                 : (is_array($aud) && in_array($this->audience, $aud, true));
 
-            if (!$audienceMatches) {
+            if (! $audienceMatches) {
                 Log::warning('Auth JWT decode rejected: missing or mismatched audience.');
+
                 return null;
             }
 
             return $decoded;
         } catch (Exception $e) {
-            Log::debug("JWT decode failed: " . $e->getMessage());
+            Log::debug('JWT decode failed: '.$e->getMessage());
+
             return null;
         }
     }
@@ -119,20 +136,21 @@ class JwtService
     public function verify(string $token): ?array
     {
         $decoded = $this->decode($token);
+
         return $decoded ? (array) $decoded : null;
     }
 
     /**
      * Resolve the cross-service shared Redis revocation store when enabled.
      */
-    protected function sharedRevocationCache(): ?\Illuminate\Contracts\Cache\Repository
+    protected function sharedRevocationCache(): ?Repository
     {
-        if (!config('cache.stores.revocation.enabled', false) && config('cache.default') !== 'redis') {
+        if (! config('cache.stores.revocation.enabled', false) && config('cache.default') !== 'redis') {
             return null;
         }
 
         try {
-            return \Illuminate\Support\Facades\Cache::store('revocation');
+            return Cache::store('revocation');
         } catch (\Throwable) {
             return null;
         }
@@ -140,16 +158,18 @@ class JwtService
 
     protected function getSessionVersion(int|string $userId): int
     {
-        $local = (int) \Illuminate\Support\Facades\Cache::get('session_version:' . $userId, 0);
+        $local = (int) Cache::get('session_version:'.$userId, 0);
         $shared = $this->sharedRevocationCache();
         if ($shared) {
             try {
-                $remote = (int) $shared->get('session_version:' . $userId, 0);
+                $remote = (int) $shared->get('session_version:'.$userId, 0);
+
                 return max($local, $remote);
             } catch (\Throwable) {
                 // ignore Redis fallback error
             }
         }
+
         return $local;
     }
 
@@ -159,7 +179,7 @@ class JwtService
     public function revokeToken(string $jti, ?int $ttl = null): void
     {
         $seconds = $ttl ?? $this->getTtlSeconds();
-        \Illuminate\Support\Facades\Cache::put("revoked_jwt:{$jti}", true, $seconds);
+        Cache::put("revoked_jwt:{$jti}", true, $seconds);
         if ($shared = $this->sharedRevocationCache()) {
             try {
                 $shared->put("revoked_jwt:{$jti}", true, $seconds);
@@ -174,7 +194,7 @@ class JwtService
      */
     public function isRevoked(string $jti): bool
     {
-        if ((bool) \Illuminate\Support\Facades\Cache::get("revoked_jwt:{$jti}", false)) {
+        if ((bool) Cache::get("revoked_jwt:{$jti}", false)) {
             return true;
         }
 
@@ -199,7 +219,7 @@ class JwtService
         }
 
         $seconds = $ttl ?? ($this->getTtlSeconds() + 60);
-        \Illuminate\Support\Facades\Cache::put("revoked_sid:{$sid}", true, $seconds);
+        Cache::put("revoked_sid:{$sid}", true, $seconds);
         if ($shared = $this->sharedRevocationCache()) {
             try {
                 $shared->put("revoked_sid:{$sid}", true, $seconds);
@@ -218,7 +238,7 @@ class JwtService
             return false;
         }
 
-        if ((bool) \Illuminate\Support\Facades\Cache::get("revoked_sid:{$sid}", false)) {
+        if ((bool) Cache::get("revoked_sid:{$sid}", false)) {
             return true;
         }
 
@@ -243,8 +263,8 @@ class JwtService
         $nextVersion = $version + 1;
         $now = time();
 
-        \Illuminate\Support\Facades\Cache::put("session_version:{$userId}", $nextVersion, $seconds);
-        \Illuminate\Support\Facades\Cache::put("revoked_user_sessions:{$userId}", $now, $seconds);
+        Cache::put("session_version:{$userId}", $nextVersion, $seconds);
+        Cache::put("revoked_user_sessions:{$userId}", $now, $seconds);
 
         if ($shared = $this->sharedRevocationCache()) {
             try {
@@ -265,7 +285,7 @@ class JwtService
             return $version !== $this->getSessionVersion($userId);
         }
 
-        $revokedAt = \Illuminate\Support\Facades\Cache::get("revoked_user_sessions:{$userId}");
+        $revokedAt = Cache::get("revoked_user_sessions:{$userId}");
         if ($revokedAt !== null && $tokenIssuedAt <= (int) $revokedAt) {
             return true;
         }
@@ -316,23 +336,23 @@ class JwtService
 
         // Rotating Opaque Refresh Token (rt_<token_id>_<secret>) support
         if (str_starts_with($token, 'rt_')) {
-            $parsed = \App\Models\Auth\RefreshToken::parseCredential($token);
-            if (!$parsed) {
+            $parsed = RefreshToken::parseCredential($token);
+            if (! $parsed) {
                 return null;
             }
 
-            $refreshToken = \App\Models\Auth\RefreshToken::where('token_id', $parsed['token_id'])->first();
-            if (!$refreshToken || !$refreshToken->isValid()) {
+            $refreshToken = RefreshToken::where('token_id', $parsed['token_id'])->first();
+            if (! $refreshToken || ! $refreshToken->isValid()) {
                 return null;
             }
 
             $incomingHash = hash('sha256', $token);
-            if (!hash_equals($refreshToken->token_hash, $incomingHash)) {
+            if (! hash_equals($refreshToken->token_hash, $incomingHash)) {
                 return null;
             }
 
             $session = $refreshToken->session;
-            if (!$session || !$session->isActive()) {
+            if (! $session || ! $session->isActive()) {
                 return null;
             }
 
@@ -350,22 +370,25 @@ class JwtService
         }
 
         $payload = $this->verify($token);
-        if (!$payload) {
+        if (! $payload) {
             return null;
         }
 
-        if (!empty($payload['sid'])) {
+        if (! empty($payload['sid'])) {
             $session = $this->sessionForPayload($payload);
-            if (!$session) return null;
+            if (! $session) {
+                return null;
+            }
 
             // Enforce account inactivity timeout on token refresh
-            if (!empty($payload['sub'])) {
+            if (! empty($payload['sub'])) {
                 $user = User::find($payload['sub']);
                 if ($user) {
                     $inactivityDays = $user->session_inactivity_days ?: 180;
                     $lastActive = $session->last_used_at ? \Illuminate\Support\Carbon::parse($session->last_used_at) : ($session->created_at ? \Illuminate\Support\Carbon::parse($session->created_at) : null);
                     if ($lastActive && $lastActive->copy()->addDays($inactivityDays)->isPast()) {
                         $session->delete();
+
                         return null;
                     }
                     $session->forceFill(['last_used_at' => now()])->save();
@@ -397,57 +420,62 @@ class JwtService
         try {
             $token->forceFill(['session_expires_at' => now()->addSeconds($this->getRefreshTtlSeconds())])->save();
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('bindSession: failed to update session_expires_at: ' . $e->getMessage());
+            Log::warning('bindSession: failed to update session_expires_at: '.$e->getMessage());
         }
     }
 
     public function sessionForPayload(array $payload)
     {
-        if (empty($payload['sid'])) return null;
+        if (empty($payload['sid'])) {
+            return null;
+        }
 
         $sid = (string) $payload['sid'];
 
         // 1. Resolve enterprise UserSession if sid is a UUID
-        if (\Illuminate\Support\Str::isUuid($sid)) {
+        if (Str::isUuid($sid)) {
             try {
-                $userSession = \App\Models\Auth\UserSession::where('uuid', $sid)->first();
-                if (!$userSession || !$userSession->isActive()) {
+                $userSession = UserSession::where('uuid', $sid)->first();
+                if (! $userSession || ! $userSession->isActive()) {
                     return null;
                 }
-                if (!empty($payload['sub']) && (string) $userSession->user_id !== (string) $payload['sub']) {
+                if (! empty($payload['sub']) && (string) $userSession->user_id !== (string) $payload['sub']) {
                     return null;
                 }
+
                 return $userSession;
             } catch (\Throwable $e) {
-                Log::warning('sessionForPayload UserSession lookup error: ' . $e->getMessage());
+                Log::warning('sessionForPayload UserSession lookup error: '.$e->getMessage());
+
                 return null;
             }
         }
 
-        // 2. Legacy fallback: resolve Sanctum PersonalAccessToken
+        // 2. Legacy fallback: resolve Sanctum PersonalAccessToken (supporting both new and legacy tokenable_type)
         try {
-            $session = \Laravel\Sanctum\PersonalAccessToken::where('id', $sid)
+            $session = PersonalAccessToken::where('id', $sid)
                 ->where('tokenable_id', $payload['sub'])
-                ->where('tokenable_type', User::class)
+                ->whereIn('tokenable_type', [User::class, 'App\Models\User', 'user'])
                 ->first();
 
-            if (!$session) {
+            if (! $session) {
                 return null;
             }
 
             // Check custom session expiration if column is present on model
-            if (!empty($session->session_expires_at) && \Carbon\Carbon::parse($session->session_expires_at)->isPast()) {
+            if (! empty($session->session_expires_at) && Carbon::parse($session->session_expires_at)->isPast()) {
                 return null;
             }
 
             // Check standard Sanctum token expiration if present
-            if (!empty($session->expires_at) && \Carbon\Carbon::parse($session->expires_at)->isPast()) {
+            if (! empty($session->expires_at) && Carbon::parse($session->expires_at)->isPast()) {
                 return null;
             }
 
             return $session;
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('sessionForPayload lookup error: ' . $e->getMessage());
+            Log::warning('sessionForPayload lookup error: '.$e->getMessage());
+
             return null;
         }
     }
@@ -468,4 +496,3 @@ class JwtService
         return $this->refreshTtl * 60;
     }
 }
-

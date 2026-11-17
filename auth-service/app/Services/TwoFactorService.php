@@ -3,6 +3,11 @@
 namespace App\Services;
 
 use App\Models\Auth\User;
+use BaconQrCode\Renderer\Image\SvgImageBackEnd;
+use BaconQrCode\Renderer\ImageRenderer;
+use BaconQrCode\Renderer\RendererStyle\RendererStyle;
+use BaconQrCode\Writer;
+use Illuminate\Cache\RedisStore;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
@@ -69,11 +74,11 @@ class TwoFactorService
      */
     public function getQrCodeSvg(string $setupUri, int $size = 200): string
     {
-        $renderer = new \BaconQrCode\Renderer\ImageRenderer(
-            new \BaconQrCode\Renderer\RendererStyle\RendererStyle($size),
-            new \BaconQrCode\Renderer\Image\SvgImageBackEnd()
+        $renderer = new ImageRenderer(
+            new RendererStyle($size),
+            new SvgImageBackEnd
         );
-        $writer = new \BaconQrCode\Writer($renderer);
+        $writer = new Writer($renderer);
 
         return $writer->writeString($setupUri);
     }
@@ -85,7 +90,7 @@ class TwoFactorService
     {
         $svg = $this->getQrCodeSvg($setupUri, $size);
 
-        return 'data:image/svg+xml;base64,' . base64_encode($svg);
+        return 'data:image/svg+xml;base64,'.base64_encode($svg);
     }
 
     /**
@@ -126,7 +131,7 @@ class TwoFactorService
     public function verifyCode(string $secret, string $code, int $window = 1, ?User $user = null): bool
     {
         $cleanCode = preg_replace('/\s+/', '', $code);
-        if (strlen($cleanCode) !== self::CODE_DIGITS || !ctype_digit($cleanCode)) {
+        if (strlen($cleanCode) !== self::CODE_DIGITS || ! ctype_digit($cleanCode)) {
             return false;
         }
 
@@ -146,6 +151,7 @@ class TwoFactorService
                         return false;
                     }
                 }
+
                 return true;
             }
         }
@@ -202,7 +208,7 @@ class TwoFactorService
     public function storePendingSecret(User $user, string $secret): void
     {
         $encrypted = Crypt::encryptString($secret);
-        \Illuminate\Support\Facades\Cache::put("2fa_pending_secret:{$user->id}", $encrypted, now()->addMinutes(15));
+        Cache::put("2fa_pending_secret:{$user->id}", $encrypted, now()->addMinutes(15));
     }
 
     /**
@@ -210,8 +216,8 @@ class TwoFactorService
      */
     public function getPendingSecret(User $user): ?string
     {
-        $encrypted = \Illuminate\Support\Facades\Cache::get("2fa_pending_secret:{$user->id}");
-        if (!$encrypted) {
+        $encrypted = Cache::get("2fa_pending_secret:{$user->id}");
+        if (! $encrypted) {
             return null;
         }
 
@@ -227,7 +233,7 @@ class TwoFactorService
      */
     public function clearPendingSecret(User $user): void
     {
-        \Illuminate\Support\Facades\Cache::forget("2fa_pending_secret:{$user->id}");
+        Cache::forget("2fa_pending_secret:{$user->id}");
     }
 
     /**
@@ -242,12 +248,14 @@ class TwoFactorService
         try {
             $decrypted = Crypt::decryptString($user->two_factor_recovery_codes);
             $decoded = json_decode($decrypted, true);
+
             return is_array($decoded) ? $decoded : [];
         } catch (\Throwable) {
             if (is_array($user->two_factor_recovery_codes)) {
                 return $user->two_factor_recovery_codes;
             }
             $decoded = json_decode((string) $user->two_factor_recovery_codes, true);
+
             return is_array($decoded) ? $decoded : [];
         }
     }
@@ -271,7 +279,7 @@ class TwoFactorService
         return DB::transaction(function () use ($user, $code) {
             // Row-level lock to prevent concurrent reuse of recovery codes
             $lockedUser = User::where('id', $user->id)->lockForUpdate()->first();
-            if (!$lockedUser) {
+            if (! $lockedUser) {
                 return false;
             }
 
@@ -296,6 +304,7 @@ class TwoFactorService
 
                     // Sync updated encrypted codes to caller instance
                     $user->two_factor_recovery_codes = $lockedUser->two_factor_recovery_codes;
+
                     return true;
                 }
             }
@@ -328,7 +337,7 @@ class TwoFactorService
         $cacheKey = "auth:2fa_challenge:{$challengeToken}";
         $data = $this->atomicCachePull($cacheKey);
 
-        if (!$data || !isset($data['user_id'])) {
+        if (! $data || ! isset($data['user_id'])) {
             return null;
         }
 
@@ -336,14 +345,15 @@ class TwoFactorService
     }
 
     /**
-     * Atomically fetch and delete a cache key using Redis Lua script when Redis is available,
-     * falling back to Cache::pull.
+     * Atomically fetch and delete a cache key using Redis Lua script when Redis is available.
+     * Fails closed when Redis execution fails, and uses atomic locking for non-Redis test stores.
+     * Raw authentication keys/tokens are never emitted to logs.
      */
-    protected function atomicCachePull(string $cacheKey): mixed
+    public function atomicCachePull(string $cacheKey): mixed
     {
-        try {
-            $store = Cache::getStore();
-            if ($store instanceof \Illuminate\Cache\RedisStore) {
+        $store = Cache::getStore();
+        if ($store instanceof RedisStore) {
+            try {
                 $script = <<<'LUA'
 local val = redis.call('get', KEYS[1])
 if val then
@@ -352,7 +362,7 @@ end
 return val
 LUA;
                 $prefix = $store->getPrefix();
-                $fullKey = $prefix . $cacheKey;
+                $fullKey = $prefix.$cacheKey;
                 $raw = $store->connection()->eval($script, 1, $fullKey);
 
                 if ($raw === null || $raw === false) {
@@ -360,12 +370,33 @@ LUA;
                 }
 
                 return is_numeric($raw) ? $raw : @unserialize($raw);
+            } catch (\Throwable $e) {
+                // Fail-closed on Redis scripting failure to preserve single-use guarantees.
+                // Log only a safe identifier hash and error class; never log raw tokens or keys.
+                Log::warning('Atomic Redis cache pull failed', [
+                    'key_hash' => substr(hash('sha256', $cacheKey), 0, 16),
+                    'error_class' => get_class($e),
+                ]);
+
+                return null;
             }
-        } catch (\Throwable $e) {
-            Log::warning("Atomic Redis cache pull failed on '{$cacheKey}': " . $e->getMessage());
         }
 
-        return Cache::pull($cacheKey);
+        // Non-Redis fallback (e.g., local tests): use an atomic lock to guard pull
+        try {
+            $lockKey = 'atomic_pull_lock:'.md5($cacheKey);
+
+            return Cache::lock($lockKey, 5)->block(2, function () use ($cacheKey) {
+                return Cache::pull($cacheKey);
+            });
+        } catch (\Throwable $e) {
+            Log::warning('Atomic locked cache pull failed', [
+                'key_hash' => substr(hash('sha256', $cacheKey), 0, 16),
+                'error_class' => get_class($e),
+            ]);
+
+            return null;
+        }
     }
 
     /**
@@ -376,7 +407,7 @@ LUA;
         $cacheKey = "auth:2fa_challenge:{$challengeToken}";
         $data = Cache::get($cacheKey);
 
-        if (!$data || !isset($data['user_id'])) {
+        if (! $data || ! isset($data['user_id'])) {
             return null;
         }
 
@@ -424,4 +455,3 @@ LUA;
         return $binary;
     }
 }
-

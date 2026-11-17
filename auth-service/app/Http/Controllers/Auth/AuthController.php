@@ -19,22 +19,28 @@ use App\Http\Requests\Auth\UpdatePasswordRequest;
 use App\Http\Requests\Auth\UpdateProfileRequest;
 use App\Http\Requests\Auth\UploadProfileImageRequest;
 use App\Http\Resources\User\UserResource;
-use App\Models\Security\ApiClient;
-use App\Models\Organization\Outlet;
+use App\Http\Responses\HttpStatus;
+use App\Http\Responses\ResponseCode;
 use App\Models\Auth\RefreshToken;
-use App\Models\Organization\Tenant;
-use App\Models\Organization\TenantUser;
-use App\Models\Organization\TenantUserOutlet;
 use App\Models\Auth\User;
 use App\Models\Auth\UserPosPin;
 use App\Models\Auth\UserSession;
-use App\Http\Responses\HttpStatus;
-use App\Http\Responses\ResponseCode;
+use App\Models\Organization\Outlet;
+use App\Models\Organization\Tenant;
+use App\Models\Organization\TenantUser;
+use App\Models\Organization\TenantUserOutlet;
+use App\Models\Security\ApiClient;
+use App\Models\Security\SecurityEvent;
+use App\Notifications\VerifyEmailNotification;
 use App\Services\DeviceDetectorService;
+use App\Services\ImageService;
 use App\Services\JwtService;
+use App\Services\PinService;
+use App\Services\TwoFactorService;
 use App\Support\SchemaGuard;
 use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -42,14 +48,19 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
+use Laravel\Sanctum\PersonalAccessToken;
 
 /**
  * [BD-0001] Central Authentication, Multi-Tenant Session & Security Controller.
  *
  * @ticket BD-0001
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/AuthController.php
+ *
  * @related-model App\Models\Auth\User, App\Models\Organization\TenantUser, App\Models\Auth\UserPosPin
  *
  * Process Capabilities:
@@ -86,14 +97,14 @@ class AuthController extends Controller
         $phone = $rawPhone ? trim((string) $rawPhone) : null;
         $login = $rawLogin ? trim((string) $rawLogin) : null;
 
-        if (!$email && !$phone && !$login) {
+        if (! $email && ! $phone && ! $login) {
             throw ValidationException::withMessages([
                 'email' => ['Please provide an email address or phone number to sign in.'],
             ]);
         }
 
         // Global IP Rate Limiting (30 requests/minute per IP)
-        $ipKey = 'auth:login:ip:' . hash('sha256', (string) $request->ip());
+        $ipKey = 'auth:login:ip:'.hash('sha256', (string) $request->ip());
         $ipAttempts = RateLimiter::increment($ipKey, 60);
         if ($ipAttempts > 30) {
             return $this->tooManyAttemptsResponse(
@@ -108,9 +119,9 @@ class AuthController extends Controller
         if ($email && $phone) {
             $query->where(function ($q) use ($email, $phone) {
                 $q->where('email', $email)
-                  ->orWhere('phone', $phone)
-                  ->orWhere('email', $phone)
-                  ->orWhere('phone', $email);
+                    ->orWhere('phone', $phone)
+                    ->orWhere('email', $phone)
+                    ->orWhere('phone', $email);
             });
         } elseif ($email) {
             $query->where(function ($q) use ($email) {
@@ -129,7 +140,7 @@ class AuthController extends Controller
         $user = $query->first();
 
         // Block deactivated accounts
-        if ($user && isset($user->is_active) && !(bool) $user->is_active) {
+        if ($user && isset($user->is_active) && ! (bool) $user->is_active) {
             throw ValidationException::withMessages([
                 'email' => ['This account is inactive. Please contact your administrator.'],
             ]);
@@ -138,16 +149,17 @@ class AuthController extends Controller
         // Determine lockout tracking subject (user ID or hashed identifier)
         $primaryIdentifier = $email ?? $phone ?? $login;
         $subject = $user ? (string) $user->id
-            : 'unknown:' . hash('sha256', mb_strtolower($primaryIdentifier));
+            : 'unknown:'.hash('sha256', mb_strtolower($primaryIdentifier));
 
-        $failedKey = 'auth:failed_attempts:' . $subject;
-        $lockedKey = 'auth:login_lockout:' . $subject;
-        $expiresKey = 'auth:login_lockout_expire:' . $subject;
+        $failedKey = 'auth:failed_attempts:'.$subject;
+        $lockedKey = 'auth:login_lockout:'.$subject;
+        $expiresKey = 'auth:login_lockout_expire:'.$subject;
 
         // Check if account is locked out
         if (Cache::get($lockedKey, false) || ($user && $user->isLockedOut())) {
             $lockoutExpire = (int) Cache::get($expiresKey, now()->addMinutes(15)->timestamp);
             $remainingSeconds = max(1, $lockoutExpire - now()->timestamp);
+
             return $this->tooManyAttemptsResponse(
                 seconds: $remainingSeconds,
                 code: 'ACCOUNT_LOCKED_OUT',
@@ -155,7 +167,7 @@ class AuthController extends Controller
         }
 
         // Verify password
-        if (!$user || !Hash::check($request->password, $user->password)) {
+        if (! $user || ! Hash::check($request->password, $user->password)) {
             $attempts = (int) Cache::increment($failedKey);
             Cache::put($failedKey, $attempts, now()->addMinutes(30));
 
@@ -185,8 +197,8 @@ class AuthController extends Controller
 
         // MFA verification check
         if ((bool) ($user->two_factor_enabled ?? false)) {
-            /** @var \App\Services\TwoFactorService $twoFactorService */
-            $twoFactorService = app(\App\Services\TwoFactorService::class);
+            /** @var TwoFactorService $twoFactorService */
+            $twoFactorService = app(TwoFactorService::class);
             $challengeToken = $twoFactorService->createChallengeToken($user);
 
             return $this->forbiddenResponse(
@@ -209,15 +221,15 @@ class AuthController extends Controller
 
         // Resolve ApiClient (prioritize middleware-injected client)
         $client = $request->attributes->get('api_client');
-        if (!$client) {
+        if (! $client) {
             $clientKey = $request->header('X-Client-Key') ?? $request->header('X-App-Key') ?? $request->input('client_key');
             if ($clientKey) {
                 $client = ApiClient::where('client_key', $clientKey)->active()->first();
             }
-            if (!$client) {
+            if (! $client) {
                 $client = ApiClient::where('client_key', 'client_web_admin_cb2026')->first() ?? ApiClient::first();
             }
-            if (!$client) {
+            if (! $client) {
                 $client = ApiClient::create([
                     'name' => 'Default Platform Client',
                     'client_key' => 'client_web_admin_cb2026',
@@ -295,7 +307,7 @@ class AuthController extends Controller
         if (SchemaGuard::hasColumn('personal_access_tokens', 'platform')) {
             $tokenMetadata['platform'] = $platform;
         }
-        if (SchemaGuard::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'location') && ! empty($location)) {
             $tokenMetadata['location'] = $location;
         }
 
@@ -313,7 +325,8 @@ class AuthController extends Controller
                         'device_name' => $deviceName,
                         'last_used_at' => now(),
                     ]);
-            } catch (\Throwable $ignored) {}
+            } catch (\Throwable $ignored) {
+            }
         }
 
         // Resolve workspace branding
@@ -372,7 +385,7 @@ class AuthController extends Controller
 
         // Derive tenant context server-side or validate explicit parameter
         $tenantId = $request->user()?->tenant_id ?? ($request->filled('tenant_id') ? (int) $request->tenant_id : null);
-        if (!$tenantId) {
+        if (! $tenantId) {
             return $this->errorResponse(
                 'Tenant context is required for fast cashier PIN switch.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -381,7 +394,7 @@ class AuthController extends Controller
         }
 
         // Strict rate limiting on fast PIN verification
-        $ipThrottleKey = 'auth:quick_switch:ip:' . hash('sha256', (string) ($request->ip() . '|' . $tenantId));
+        $ipThrottleKey = 'auth:quick_switch:ip:'.hash('sha256', (string) ($request->ip().'|'.$tenantId));
         if (RateLimiter::tooManyAttempts($ipThrottleKey, 10)) {
             return $this->tooManyAttemptsResponse(RateLimiter::availableIn($ipThrottleKey), 'TOO_MANY_ATTEMPTS');
         }
@@ -409,7 +422,7 @@ class AuthController extends Controller
             if ($isBcrypt) {
                 $matches = Hash::check($pin, $posPin->pin_hash);
             } else {
-                $matches = \App\Services\PinService::matches($pin, $posPin->pin_hash);
+                $matches = PinService::matches($pin, $posPin->pin_hash);
                 if ($matches) {
                     // Transparently upgrade legacy hash to bcrypt
                     $posPin->update(['pin_hash' => Hash::make($pin)]);
@@ -431,8 +444,9 @@ class AuthController extends Controller
             );
         }
 
-        if (!$matchedPin) {
+        if (! $matchedPin) {
             RateLimiter::hit($ipThrottleKey, 600);
+
             return $this->errorResponse(
                 'Invalid staff PIN code. Please check and try again.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -445,7 +459,7 @@ class AuthController extends Controller
 
         $user = $matchedPin->user;
 
-        if (!$user || !(bool) $user->is_active) {
+        if (! $user || ! (bool) $user->is_active) {
             return $this->errorResponse(
                 'Cashier account is deactivated or inactive.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -453,9 +467,10 @@ class AuthController extends Controller
             );
         }
 
-        if ($user->isLockedOut() || Cache::get('auth:login_lockout:' . $user->id, false)) {
-            $lockoutExpire = (int) Cache::get('auth:login_lockout_expire:' . $user->id, now()->addMinutes(15)->timestamp);
+        if ($user->isLockedOut() || Cache::get('auth:login_lockout:'.$user->id, false)) {
+            $lockoutExpire = (int) Cache::get('auth:login_lockout_expire:'.$user->id, now()->addMinutes(15)->timestamp);
             $remaining = max(1, $lockoutExpire - now()->timestamp);
+
             return $this->tooManyAttemptsResponse(
                 seconds: $remaining,
                 code: 'ACCOUNT_LOCKED_OUT',
@@ -467,7 +482,7 @@ class AuthController extends Controller
         /** @var DeviceDetectorService $detector */
         $detector = app(DeviceDetectorService::class);
         $deviceId = $request->header('X-Device-Id') ?? $request->input('device_id') ?? $request->input('device_uuid');
-        $deviceName = $request->device_name ?? ($deviceId ? "Trusted POS Terminal ({$deviceId})" : 'POS Register Terminal (' . $detector->parseDeviceName($request->userAgent()) . ')');
+        $deviceName = $request->device_name ?? ($deviceId ? "Trusted POS Terminal ({$deviceId})" : 'POS Register Terminal ('.$detector->parseDeviceName($request->userAgent()).')');
         $browser = $detector->parseBrowser($request->userAgent());
         $platform = $detector->parsePlatform($request->userAgent());
         $location = $detector->parseLocation($request);
@@ -490,7 +505,7 @@ class AuthController extends Controller
         if (SchemaGuard::hasColumn('personal_access_tokens', 'platform')) {
             $posTokenMetadata['platform'] = $platform;
         }
-        if (SchemaGuard::hasColumn('personal_access_tokens', 'location') && !empty($location)) {
+        if (SchemaGuard::hasColumn('personal_access_tokens', 'location') && ! empty($location)) {
             $posTokenMetadata['location'] = $location;
         }
 
@@ -508,7 +523,8 @@ class AuthController extends Controller
                         'device_name' => $deviceName,
                         'last_used_at' => now(),
                     ]);
-            } catch (\Throwable $ignored) {}
+            } catch (\Throwable $ignored) {
+            }
         }
 
         if ($user->tenant_id) {
@@ -575,7 +591,7 @@ class AuthController extends Controller
     {
         $refreshToken = $request->input('refresh_token') ?? $request->bearerToken();
 
-        if (!$refreshToken) {
+        if (! $refreshToken) {
             return $this->errorResponse(
                 'Refresh token is required.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -603,14 +619,14 @@ class AuthController extends Controller
             $session = $rotated['session'];
             $user = $session->user;
 
-            if (!$user) {
+            if (! $user) {
                 return $this->notFoundResponse(
                     'User associated with this token was not found.',
                     ResponseCode::USER_NOT_FOUND
                 );
             }
 
-            if (isset($user->is_active) && !(bool) $user->is_active) {
+            if (isset($user->is_active) && ! (bool) $user->is_active) {
                 return $this->forbiddenResponse(
                     'User account is deactivated.',
                     ResponseCode::ACCOUNT_INACTIVE
@@ -618,8 +634,9 @@ class AuthController extends Controller
             }
 
             if ($user->isLockedOut()) {
-                $lockoutExpire = (int) Cache::get('auth:login_lockout_expire:' . $user->id, now()->addMinutes(15)->timestamp);
+                $lockoutExpire = (int) Cache::get('auth:login_lockout_expire:'.$user->id, now()->addMinutes(15)->timestamp);
                 $remaining = max(1, $lockoutExpire - now()->timestamp);
+
                 return $this->errorResponse(
                     "Account is temporarily locked out. Please try again in {$remaining} seconds.",
                     HttpStatus::LOCKED,
@@ -663,7 +680,7 @@ class AuthController extends Controller
         $jwtService = app(JwtService::class);
         $payload = $jwtService->verifyRefreshToken($refreshToken);
 
-        if (!$payload) {
+        if (! $payload) {
             return $this->unauthorizedResponse(
                 'Invalid, expired, or revoked refresh token.',
                 ResponseCode::INVALID_REFRESH_TOKEN
@@ -673,14 +690,14 @@ class AuthController extends Controller
         $userId = $payload['sub'] ?? null;
         $user = $userId ? User::find($userId) : null;
 
-        if (!$user) {
+        if (! $user) {
             return $this->notFoundResponse(
                 'User associated with this token was not found.',
                 ResponseCode::USER_NOT_FOUND
             );
         }
 
-        if (isset($user->is_active) && !(bool) $user->is_active) {
+        if (isset($user->is_active) && ! (bool) $user->is_active) {
             return $this->forbiddenResponse(
                 'User account is deactivated.',
                 ResponseCode::ACCOUNT_INACTIVE
@@ -688,8 +705,9 @@ class AuthController extends Controller
         }
 
         if ($user->isLockedOut()) {
-            $lockoutExpire = (int) Cache::get('auth:login_lockout_expire:' . $user->id, now()->addMinutes(15)->timestamp);
+            $lockoutExpire = (int) Cache::get('auth:login_lockout_expire:'.$user->id, now()->addMinutes(15)->timestamp);
             $remaining = max(1, $lockoutExpire - now()->timestamp);
+
             return $this->errorResponse(
                 "Account is temporarily locked out. Please try again in {$remaining} seconds.",
                 HttpStatus::LOCKED,
@@ -701,7 +719,7 @@ class AuthController extends Controller
         if (isset($payload['jti'])) {
             $remainingSeconds = max(1, ($payload['exp'] ?? time()) - time());
             $consumed = Cache::add("consumed_refresh:{$payload['jti']}", true, $remainingSeconds);
-            if (!$consumed) {
+            if (! $consumed) {
                 return $this->unauthorizedResponse(
                     'Refresh token has already been consumed or invalidated.',
                     ResponseCode::INVALID_REFRESH_TOKEN
@@ -721,7 +739,7 @@ class AuthController extends Controller
         }
 
         $claims = array_intersect_key($payload, array_flip(['sid', 'scope', 'is_pos_session', 'trusted_device_id']));
-        if (!empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos') {
+        if (! empty($payload['is_pos_session']) || ($payload['scope'] ?? null) === 'pos') {
             $claims['permissions'] = ['pos:access', 'pos:sales', 'pos:orders', 'pos:cashier'];
         }
         $newAccessToken = $jwtService->generateTokenForUser($user, $claims);
@@ -755,7 +773,7 @@ class AuthController extends Controller
 
         $tokens = DB::table('personal_access_tokens')
             ->where('tokenable_id', $user->id)
-            ->where('tokenable_type', get_class($user))
+            ->whereIn('tokenable_type', [get_class($user), 'App\Models\User', 'user'])
             ->orderBy('last_used_at', 'desc')
             ->get()
             ->map(function ($token) use ($currentTokenId, $detector) {
@@ -774,14 +792,14 @@ class AuthController extends Controller
                     'user_agent' => $token->user_agent,
                     'is_current' => (string) $token->id === (string) $currentTokenId,
                     'last_used_at' => $token->last_used_at
-                        ? \Illuminate\Support\Carbon::parse($token->last_used_at)->toIso8601String()
-                        : ($token->created_at ? \Illuminate\Support\Carbon::parse($token->created_at)->toIso8601String() : null),
+                        ? Carbon::parse($token->last_used_at)->toIso8601String()
+                        : ($token->created_at ? Carbon::parse($token->created_at)->toIso8601String() : null),
                     'created_at' => $token->created_at
-                        ? \Illuminate\Support\Carbon::parse($token->created_at)->toIso8601String()
+                        ? Carbon::parse($token->created_at)->toIso8601String()
                         : null,
                 ];
 
-                if (!empty($location)) {
+                if (! empty($location)) {
                     $data['location'] = $location;
                 }
 
@@ -805,6 +823,7 @@ class AuthController extends Controller
     public function getSessionSettings(Request $request)
     {
         $user = $request->user();
+
         return $this->successResponse(
             data: [
                 'session_inactivity_days' => (int) ($user->session_inactivity_days ?: 180),
@@ -877,21 +896,26 @@ class AuthController extends Controller
 
         if ($userSession) {
             $userSession->revoke('remote_revocation');
-            $user->tokens()->where('name', 'jwt_session_' . $userSession->uuid)->delete();
+            $user->tokens()->where('name', 'jwt_session_'.$userSession->uuid)->delete();
             $deleted = true;
         }
 
         // 2. Revoke Sanctum token if numeric ID
         if (is_numeric($id)) {
-            $session = $user->tokens()->where('id', (int) $id)->first();
-            $tokenDeleted = $user->tokens()->where('id', (int) $id)->delete();
+            $session = PersonalAccessToken::where('id', (int) $id)
+                ->where('tokenable_id', $user->id)
+                ->whereIn('tokenable_type', [get_class($user), 'App\Models\User', 'user'])
+                ->first();
+            $tokenDeleted = $session ? $session->delete() : false;
             if ($tokenDeleted) {
                 $deleted = true;
-                if (!$session?->session_expires_at) app(JwtService::class)->revokeAllUserTokens($user->id);
+                if (! $session?->session_expires_at) {
+                    app(JwtService::class)->revokeAllUserTokens($user->id);
+                }
             }
         }
 
-        if (!$deleted) {
+        if (! $deleted) {
             return $this->notFoundResponse('Session not found or already terminated.');
         }
 
@@ -917,7 +941,7 @@ class AuthController extends Controller
         }
 
         $sessionQuery = UserSession::where('user_id', $user->id)->whereNull('revoked_at');
-        if ($currentSid && !$request->boolean('include_current')) {
+        if ($currentSid && ! $request->boolean('include_current')) {
             $sessionQuery->where('uuid', '!=', $currentSid);
         }
         foreach ($sessionQuery->get() as $s) {
@@ -926,7 +950,7 @@ class AuthController extends Controller
 
         $query = $user->tokens();
 
-        if ($currentTokenId && !$request->boolean('include_current')) {
+        if ($currentTokenId && ! $request->boolean('include_current')) {
             $query->where('id', '!=', $currentTokenId);
         }
 
@@ -935,7 +959,9 @@ class AuthController extends Controller
         // Globally invalidate all existing stateless JWT tokens for this user
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
-        if (!$currentTokenId || $request->boolean('include_current')) $jwtService->revokeAllUserTokens($user->id);
+        if (! $currentTokenId || $request->boolean('include_current')) {
+            $jwtService->revokeAllUserTokens($user->id);
+        }
 
         return $this->successResponse(
             message: "Successfully terminated {$revokedCount} active session(s).",
@@ -964,7 +990,7 @@ class AuthController extends Controller
             $token = trim(substr($token, 7));
         }
 
-        if (!$token) {
+        if (! $token) {
             return $this->errorResponse(
                 'Missing invitation token.',
                 HttpStatus::UNPROCESSABLE_ENTITY
@@ -978,7 +1004,7 @@ class AuthController extends Controller
             ->where('expires_at', '>', now())
             ->first();
 
-        if (!$invitation) {
+        if (! $invitation) {
             return $this->notFoundResponse(
                 'Invalid, expired, or already accepted invitation link.'
             );
@@ -986,11 +1012,11 @@ class AuthController extends Controller
 
         // Validate that role belongs to the invited tenant
         $role = null;
-        if (!empty($invitation->role_id)) {
+        if (! empty($invitation->role_id)) {
             $role = DB::table('roles')->where('id', $invitation->role_id)->first();
         }
 
-        if (!$role) {
+        if (! $role) {
             return $this->errorResponse(
                 'Role configured for this invitation was not found.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -1008,9 +1034,9 @@ class AuthController extends Controller
 
         // Validate that outlet belongs to the invited tenant
         $outlet = null;
-        if (!empty($invitation->outlet_uuid)) {
+        if (! empty($invitation->outlet_uuid)) {
             $outlet = DB::table('outlets')->where('uuid', $invitation->outlet_uuid)->first();
-        } elseif (!empty($invitation->outlet_id)) {
+        } elseif (! empty($invitation->outlet_id)) {
             $outlet = DB::table('outlets')->where('id', $invitation->outlet_id)->first();
         }
 
@@ -1059,7 +1085,7 @@ class AuthController extends Controller
                 ->lockForUpdate()
                 ->first();
 
-            if (!$invitation) {
+            if (! $invitation) {
                 return $this->errorResponse(
                     'Invalid or expired invitation link.',
                     HttpStatus::UNPROCESSABLE_ENTITY
@@ -1067,7 +1093,7 @@ class AuthController extends Controller
             }
 
             // Validate matching email if explicitly provided
-            if (!empty($validated['email']) && strtolower(trim($invitation->email)) !== strtolower(trim($validated['email']))) {
+            if (! empty($validated['email']) && strtolower(trim($invitation->email)) !== strtolower(trim($validated['email']))) {
                 return $this->errorResponse(
                     'The provided email address does not match this invitation.',
                     HttpStatus::UNPROCESSABLE_ENTITY,
@@ -1079,7 +1105,7 @@ class AuthController extends Controller
             $existingUser = DB::table('users')->where('email', $invitation->email)->first();
             if ($existingUser) {
                 // Preserve account suspension
-                if (isset($existingUser->is_active) && !(bool) $existingUser->is_active) {
+                if (isset($existingUser->is_active) && ! (bool) $existingUser->is_active) {
                     return $this->forbiddenResponse(
                         'This account has been suspended. Please contact your organization administrator.',
                         ResponseCode::ACCOUNT_SUSPENDED
@@ -1088,8 +1114,8 @@ class AuthController extends Controller
 
                 // If not authenticated, require password verification
                 $authenticatedUser = $request->user();
-                if (!$authenticatedUser || $authenticatedUser->id !== $existingUser->id) {
-                    if (!Hash::check($validated['password'], $existingUser->password)) {
+                if (! $authenticatedUser || $authenticatedUser->id !== $existingUser->id) {
+                    if (! Hash::check($validated['password'], $existingUser->password)) {
                         return $this->errorResponse(
                             'Existing account password verification failed.',
                             HttpStatus::UNPROCESSABLE_ENTITY,
@@ -1102,14 +1128,14 @@ class AuthController extends Controller
                     'name' => $validated['name'] ?? $existingUser->name,
                     'updated_at' => now(),
                 ];
-                if (!empty($validated['phone'])) {
+                if (! empty($validated['phone'])) {
                     $userUpdates['phone'] = $validated['phone'];
                 }
                 DB::table('users')->where('id', $existingUser->id)->update($userUpdates);
                 $user = User::find($existingUser->id);
             } else {
                 $user = User::create([
-                    'uuid' => (string) \Illuminate\Support\Str::uuid(),
+                    'uuid' => (string) Str::uuid(),
                     'name' => $validated['name'],
                     'email' => $invitation->email,
                     'phone' => $validated['phone'] ?? null,
@@ -1120,11 +1146,11 @@ class AuthController extends Controller
 
             // Resolve role within tenant or global scope; reject if not found
             $role = null;
-            if (!empty($invitation->role_id)) {
+            if (! empty($invitation->role_id)) {
                 $role = DB::table('roles')->where('id', $invitation->role_id)->first();
             }
 
-            if (!$role) {
+            if (! $role) {
                 return $this->errorResponse(
                     'Configured role for this invitation was not found.',
                     HttpStatus::UNPROCESSABLE_ENTITY,
@@ -1158,7 +1184,7 @@ class AuthController extends Controller
 
             // Enforce: Outlet must belong to the invited tenant
             $outletUuid = $invitation->outlet_uuid ?? null;
-            if (!$outletUuid && !empty($invitation->outlet_id)) {
+            if (! $outletUuid && ! empty($invitation->outlet_id)) {
                 $outletUuid = DB::table('outlets')->where('id', $invitation->outlet_id)->value('uuid');
             }
 
@@ -1180,7 +1206,7 @@ class AuthController extends Controller
                 }
             }
 
-            if (!empty($validated['pin_code'])) {
+            if (! empty($validated['pin_code'])) {
                 UserPosPin::updateOrCreate(
                     ['tenant_id' => $invitation->tenant_id, 'user_id' => $user->id],
                     [
@@ -1211,7 +1237,7 @@ class AuthController extends Controller
 
             // Bind accepted workspace context before issuing JWTs and building UserResource
             $user->pendingTenantId = (int) $invitation->tenant_id;
-            if (!empty($outletUuid)) {
+            if (! empty($outletUuid)) {
                 $user->pendingOutletUuid = $outletUuid;
             }
 
@@ -1226,11 +1252,11 @@ class AuthController extends Controller
             $refreshToken = $jwtService->generateRefreshTokenForUser($user, ['sid' => (string) $tokenResult->accessToken->id]);
 
             Auth::setUser($user);
-        $request->setUserResolver(fn () => $user);
-        $request->attributes->set('auth_user_id', $user->id);
-        $request->attributes->set('auth_tenant_id', $user->tenant_id);
+            $request->setUserResolver(fn () => $user);
+            $request->attributes->set('auth_user_id', $user->id);
+            $request->attributes->set('auth_tenant_id', $user->tenant_id);
 
-        $this->recordAuditLog(
+            $this->recordAuditLog(
                 action: 'auth.invite_accepted',
                 module: 'auth',
                 entityType: 'user_invitation',
@@ -1264,7 +1290,7 @@ class AuthController extends Controller
     public function toggle2fa(Request $request)
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse();
         }
 
@@ -1284,7 +1310,7 @@ class AuthController extends Controller
         }
 
         // Reauthentication check when disabling 2FA
-        if ($user->password && (!isset($request->password) || !Hash::check($request->password, $user->password))) {
+        if ($user->password && (! isset($request->password) || ! Hash::check($request->password, $user->password))) {
             return $this->errorResponse(
                 'Current password is required to disable Two-Factor Authentication.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -1316,19 +1342,19 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
-        if (!$user && $request->filled('email')) {
+        if (! $user && $request->filled('email')) {
             $user = User::where('email', trim($request->email))->first();
         }
 
         // Rate limit verification email dispatch to prevent spam (5 requests per 5 minutes per IP)
-        $ipThrottleKey = 'auth:send_verification:ip:' . hash('sha256', (string) $request->ip());
+        $ipThrottleKey = 'auth:send_verification:ip:'.hash('sha256', (string) $request->ip());
         if (RateLimiter::tooManyAttempts($ipThrottleKey, 5)) {
             return $this->tooManyAttemptsResponse(RateLimiter::availableIn($ipThrottleKey), 'TOO_MANY_ATTEMPTS');
         }
         RateLimiter::hit($ipThrottleKey, 300);
 
         // Anti-Account Enumeration: Return generic success response when unauthenticated and email is not found
-        if (!$user) {
+        if (! $user) {
             return $this->successResponse(
                 message: 'If an account matches this email address, a verification email has been dispatched. Please check your inbox.',
                 headers: ['Cache-Control' => 'no-store'],
@@ -1370,12 +1396,12 @@ class AuthController extends Controller
     {
         $user = $request->user();
 
-        if (!$user && $request->filled('email')) {
+        if (! $user && $request->filled('email')) {
             $user = User::where('email', trim($request->email))->first();
         }
 
-        if (!$user) {
-            if (!$request->filled('email')) {
+        if (! $user) {
+            if (! $request->filled('email')) {
                 return $this->errorResponse(
                     'Email address is required in the request body when unauthenticated.',
                     HttpStatus::UNPROCESSABLE_ENTITY,
@@ -1397,7 +1423,7 @@ class AuthController extends Controller
         }
 
         // Rate limit link creation by IP / target email (10 attempts / 10 minutes)
-        $rateLimitKey = 'auth:create_verify_link:' . hash('sha256', (string) ($request->ip() . '|' . $user->email));
+        $rateLimitKey = 'auth:create_verify_link:'.hash('sha256', (string) ($request->ip().'|'.$user->email));
         if (RateLimiter::tooManyAttempts($rateLimitKey, 10)) {
             return $this->tooManyAttemptsResponse(RateLimiter::availableIn($rateLimitKey), 'TOO_MANY_ATTEMPTS');
         }
@@ -1414,10 +1440,10 @@ class AuthController extends Controller
         $mailSent = false;
         if ($request->boolean('send_mail', true)) {
             try {
-                $user->notify(new \App\Notifications\VerifyEmailNotification($verificationUrl, $code));
+                $user->notify(new VerifyEmailNotification($verificationUrl, $code));
                 $mailSent = true;
             } catch (\Throwable $e) {
-                Log::warning('Email delivery failed: ' . $e->getMessage());
+                Log::warning('Email delivery failed: '.$e->getMessage());
             }
         }
 
@@ -1471,7 +1497,7 @@ class AuthController extends Controller
     public function verifyEmail(Request $request, $id, $hash)
     {
         // Enforce Laravel signed route verification while allowing optional redirect_url parameter
-        if (!URL::hasValidSignature($request, true, ['redirect_url'])) {
+        if (! URL::hasValidSignature($request, true, ['redirect_url'])) {
             return $this->forbiddenResponse(
                 'The email verification link is invalid, expired, or tampered.',
                 ResponseCode::INVALID_VERIFICATION_HASH
@@ -1480,11 +1506,11 @@ class AuthController extends Controller
 
         $user = User::find($id);
 
-        if (!$user) {
+        if (! $user) {
             return $this->notFoundResponse('User not found.');
         }
 
-        if (!hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
+        if (! hash_equals((string) $hash, sha1($user->getEmailForVerification()))) {
             return $this->forbiddenResponse(
                 'The email verification link is invalid or corrupted.',
                 ResponseCode::INVALID_VERIFICATION_HASH
@@ -1494,7 +1520,8 @@ class AuthController extends Controller
         if ($user->hasVerifiedEmail()) {
             if ($request->filled('redirect_url')) {
                 $safeRedirect = $this->getSafeRedirectUrl($request->query('redirect_url'));
-                return redirect($safeRedirect . (str_contains($safeRedirect, '?') ? '&' : '?') . 'verified=1');
+
+                return redirect($safeRedirect.(str_contains($safeRedirect, '?') ? '&' : '?').'verified=1');
             }
 
             return $this->successResponse(
@@ -1527,11 +1554,12 @@ class AuthController extends Controller
 
         if ($request->filled('redirect_url')) {
             $safeRedirect = $this->getSafeRedirectUrl($request->query('redirect_url'));
-            return redirect($safeRedirect . (str_contains($safeRedirect, '?') ? '&' : '?') . 'verified=1');
+
+            return redirect($safeRedirect.(str_contains($safeRedirect, '?') ? '&' : '?').'verified=1');
         }
 
         return $this->successResponse(
-       
+
             message: 'Email address verified successfully.',
             extra: [
                 'email_verified_at' => $user->email_verified_at,
@@ -1557,14 +1585,15 @@ class AuthController extends Controller
         $normalizedEmail = strtolower(trim($request->email));
 
         // Rate limit verification attempts (5 attempts per 15 minutes)
-        $codeAttemptKey = 'auth:verify_code:' . hash('sha256', (string) ($request->ip() . '|' . $normalizedEmail));
+        $codeAttemptKey = 'auth:verify_code:'.hash('sha256', (string) ($request->ip().'|'.$normalizedEmail));
         if (RateLimiter::tooManyAttempts($codeAttemptKey, 5)) {
             return $this->tooManyAttemptsResponse(RateLimiter::availableIn($codeAttemptKey), 'TOO_MANY_ATTEMPTS');
         }
 
         $user = User::where('email', $normalizedEmail)->first();
-        if (!$user) {
+        if (! $user) {
             RateLimiter::hit($codeAttemptKey, 900);
+
             return $this->notFoundResponse('User not found.');
         }
 
@@ -1580,8 +1609,9 @@ class AuthController extends Controller
         }
 
         $cachedCode = Cache::get("auth:email_verify_code:{$user->id}");
-        if (!$cachedCode || !hash_equals((string) $cachedCode, trim($request->code))) {
+        if (! $cachedCode || ! hash_equals((string) $cachedCode, trim($request->code))) {
             RateLimiter::hit($codeAttemptKey, 900);
+
             return $this->errorResponse(
                 'The verification code is invalid or has expired.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -1631,7 +1661,7 @@ class AuthController extends Controller
     {
         $email = $request->input('email') ?? $request->user()?->email;
 
-        if (!$email) {
+        if (! $email) {
             return $this->errorResponse(
                 'Email address is required.',
                 HttpStatus::UNPROCESSABLE_ENTITY
@@ -1639,7 +1669,7 @@ class AuthController extends Controller
         }
 
         $user = User::where('email', trim($email))->first();
-        if (!$user) {
+        if (! $user) {
             return $this->notFoundResponse('User account not found.');
         }
 
@@ -1664,7 +1694,7 @@ class AuthController extends Controller
         $email = $rawEmail ? strtolower(trim((string) $rawEmail)) : null;
         $phone = $rawPhone ? trim((string) $rawPhone) : null;
 
-        if (!$email && !$phone) {
+        if (! $email && ! $phone) {
             return $this->errorResponse(
                 'Please provide either an email address or a phone number.',
                 HttpStatus::UNPROCESSABLE_ENTITY
@@ -1687,13 +1717,13 @@ class AuthController extends Controller
             );
         }
 
-        if (!$email && $phone) {
+        if (! $email && $phone) {
             $cleanedPhone = preg_replace('/[^0-9]/', '', $phone);
-            $email = $cleanedPhone . '@phone.codebridges.com';
+            $email = $cleanedPhone.'@phone.codebridges.com';
         }
 
         $user = User::create([
-            'uuid' => (string) \Illuminate\Support\Str::uuid(),
+            'uuid' => (string) Str::uuid(),
             'name' => $request->name,
             'email' => $email,
             'password' => Hash::make($request->password),
@@ -1702,11 +1732,11 @@ class AuthController extends Controller
             'is_active' => true,
         ]);
 
-        if (filter_var($email, FILTER_VALIDATE_EMAIL) && !str_ends_with($email, '@phone.codebridges.com')) {
+        if (filter_var($email, FILTER_VALIDATE_EMAIL) && ! str_ends_with($email, '@phone.codebridges.com')) {
             try {
                 $user->sendEmailVerificationNotification();
             } catch (\Throwable $e) {
-                Log::warning('Email verification dispatch failed: ' . $e->getMessage());
+                Log::warning('Email verification dispatch failed: '.$e->getMessage());
             }
         }
 
@@ -1757,14 +1787,14 @@ class AuthController extends Controller
     public function authorizeContext(Request $request)
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse();
         }
 
         $recordDenied = function (string $reason, int $statusCode, ?int $tenantId = null) use ($request, $user): void {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\Security\SecurityEvent::record(
+                    SecurityEvent::record(
                         eventType: 'tenant_access_denied',
                         ruleCode: 'SEC_TENANT_ACCESS_DENIED',
                         summary: "Authorization context denied: {$reason}",
@@ -1777,11 +1807,13 @@ class AuthController extends Controller
                         statusCode: $statusCode
                     );
                 }
-            } catch (\Throwable) {}
+            } catch (\Throwable) {
+            }
         };
 
         if ($request->attributes->get('jwt_tenant_id_invalid')) {
             $recordDenied('Token contains an invalid tenant claim', 403);
+
             return response()->json([
                 'status' => 'error',
                 'authorized' => false,
@@ -1801,8 +1833,9 @@ class AuthController extends Controller
         if ($rawRequestedTenant !== null && $rawRequestedTenant !== '') {
             $trimmedTenant = trim((string) $rawRequestedTenant);
             if ($trimmedTenant === 'all') {
-                if (!\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
+                if (! \App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
                     $recordDenied('Non-super-admin requested cross-tenant wildcard scope', 403);
+
                     return response()->json([
                         'status' => 'error',
                         'authorized' => false,
@@ -1815,6 +1848,7 @@ class AuthController extends Controller
                 $requestedTenantId = (int) $trimmedTenant;
             } else {
                 $recordDenied('Malformed tenant identifier supplied', 403);
+
                 return response()->json([
                     'status' => 'error',
                     'authorized' => false,
@@ -1832,7 +1866,7 @@ class AuthController extends Controller
             $requestedTenantScope !== 'all'
         );
 
-        if (!$context['authorized']) {
+        if (! $context['authorized']) {
             $statusCode = (int) ($context['status'] ?? 403);
             if ($statusCode === 403) {
                 $recordDenied(
@@ -1892,7 +1926,7 @@ class AuthController extends Controller
         }
 
         return $this->successResponse(
-         
+
             extra: [
                 'user' => new UserResource($user),
             ]
@@ -1910,18 +1944,22 @@ class AuthController extends Controller
     public function update(UpdateProfileRequest $request)
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse();
         }
 
         $validated = $request->validated();
 
         $updateData = [];
-        if (isset($validated['name'])) $updateData['name'] = trim($validated['name']);
-        if (array_key_exists('phone', $validated)) $updateData['phone'] = $validated['phone'];
+        if (isset($validated['name'])) {
+            $updateData['name'] = trim($validated['name']);
+        }
+        if (array_key_exists('phone', $validated)) {
+            $updateData['phone'] = $validated['phone'];
+        }
 
         // Secure PIN update: Require explicit tenant membership, hash with bcrypt
-        if (!empty($validated['pin_code'])) {
+        if (! empty($validated['pin_code'])) {
             if (empty($user->tenant_id)) {
                 return $this->errorResponse(
                     'Setting a POS PIN requires an active tenant membership.',
@@ -1945,8 +1983,8 @@ class AuthController extends Controller
         $avatarFile = $request->file('avatar') ?? $request->file('avatar_url');
 
         // 1. Delete / Remove Avatar
-        if ($request->boolean('remove_avatar') || ($request->has('avatar_url') && empty($request->avatar_url) && !$avatarFile)) {
-            app(\App\Services\ImageService::class)->deleteAvatar($user->avatar_url);
+        if ($request->boolean('remove_avatar') || ($request->has('avatar_url') && empty($request->avatar_url) && ! $avatarFile)) {
+            app(ImageService::class)->deleteAvatar($user->avatar_url);
             $updateData['avatar_url'] = null;
         }
         // 2. Create / Update Avatar from File Upload (accepts both avatar_url and avatar)
@@ -1954,31 +1992,33 @@ class AuthController extends Controller
             $uploadedUrl = null;
 
             try {
-                /** @var \App\Services\ImageService $imageService */
-                $imageService = app(\App\Services\ImageService::class);
+                /** @var ImageService $imageService */
+                $imageService = app(ImageService::class);
                 $uploadedUrl = $imageService->storeAvatar($avatarFile, $user->id, $user->avatar_url);
             } catch (\InvalidArgumentException $e) {
                 return $this->errorResponse($e->getMessage(), HttpStatus::UNPROCESSABLE_ENTITY, ResponseCode::VALIDATION_ERROR);
             } catch (\Throwable $e) {
-                Log::error('[updateProfile] Avatar upload failed: ' . $e->getMessage());
+                Log::error('[updateProfile] Avatar upload failed: '.$e->getMessage());
+
                 return $this->serverErrorResponse('Failed to store avatar image.');
             }
 
             $updateData['avatar_url'] = $uploadedUrl;
         }
         // 3. Create / Update Avatar from Direct URL or Base64 (converts Base64 to .webp -> MinIO)
-        elseif ($request->has('avatar_url') && !empty($request->avatar_url) && is_string($request->avatar_url)) {
+        elseif ($request->has('avatar_url') && ! empty($request->avatar_url) && is_string($request->avatar_url)) {
             $url = $request->avatar_url;
-            abort_unless(\App\Services\ImageService::isSafeImageUrlOrDataUri($url), 422, 'Unsupported avatar image.');
+            abort_unless(ImageService::isSafeImageUrlOrDataUri($url), 422, 'Unsupported avatar image.');
             if (stripos(trim($url), 'data:') === 0) {
                 try {
-                    /** @var \App\Services\ImageService $imageService */
-                    $imageService = app(\App\Services\ImageService::class);
+                    /** @var ImageService $imageService */
+                    $imageService = app(ImageService::class);
                     $url = $imageService->storeAvatar($url, $user->id, $user->avatar_url);
                 } catch (\InvalidArgumentException $e) {
                     return $this->errorResponse($e->getMessage(), HttpStatus::UNPROCESSABLE_ENTITY, ResponseCode::VALIDATION_ERROR);
                 } catch (\Throwable $e) {
-                    Log::error('[updateProfile] Base64 avatar upload failed: ' . $e->getMessage());
+                    Log::error('[updateProfile] Base64 avatar upload failed: '.$e->getMessage());
+
                     return $this->serverErrorResponse('Failed to process avatar image.');
                 }
             }
@@ -1990,7 +2030,7 @@ class AuthController extends Controller
         DB::table('users')->where('id', $user->id)->update($updateData);
 
         $freshUser = User::find($user->id) ?? $user;
-        if (!empty($uploadedUrl)) {
+        if (! empty($uploadedUrl)) {
             $freshUser->avatar_url = $uploadedUrl;
         } elseif (array_key_exists('avatar_url', $updateData)) {
             $freshUser->avatar_url = $updateData['avatar_url'];
@@ -2015,7 +2055,7 @@ class AuthController extends Controller
             module: 'auth',
             entityType: 'user',
             entityId: (string) $user->id,
-            details: "User updated profile attributes",
+            details: 'User updated profile attributes',
             userId: $user->id,
             userName: $freshUser->name ?? $user->name,
             tenantId: $freshUser->tenant_id ?? $user->tenant_id
@@ -2053,28 +2093,29 @@ class AuthController extends Controller
     public function uploadProfile(UploadProfileImageRequest $request)
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse();
         }
 
         $avatarFile = $request->file('avatar') ?? $request->file('avatar_url');
 
-        if (!$avatarFile && $request->filled('avatar_url') && is_string($request->avatar_url)) {
+        if (! $avatarFile && $request->filled('avatar_url') && is_string($request->avatar_url)) {
             $avatarFile = $request->avatar_url;
         }
 
-        if (!$avatarFile) {
+        if (! $avatarFile) {
             return $this->errorResponse('Image file is required.', HttpStatus::UNPROCESSABLE_ENTITY, ResponseCode::VALIDATION_ERROR);
         }
 
         try {
-            /** @var \App\Services\ImageService $imageService */
-            $imageService = app(\App\Services\ImageService::class);
+            /** @var ImageService $imageService */
+            $imageService = app(ImageService::class);
             $uploadedUrl = $imageService->storeAvatar($avatarFile, $user->id, $user->avatar_url);
         } catch (\InvalidArgumentException $e) {
             return $this->errorResponse($e->getMessage(), HttpStatus::UNPROCESSABLE_ENTITY, ResponseCode::VALIDATION_ERROR);
         } catch (\Throwable $e) {
-            Log::error('[uploadProfile] Avatar upload failed: ' . $e->getMessage());
+            Log::error('[uploadProfile] Avatar upload failed: '.$e->getMessage());
+
             return $this->serverErrorResponse('Failed to store avatar image.');
         }
 
@@ -2084,7 +2125,7 @@ class AuthController extends Controller
         ]);
 
         $freshUser = User::find($user->id) ?? $user;
-        if (!empty($uploadedUrl)) {
+        if (! empty($uploadedUrl)) {
             $freshUser->avatar_url = $uploadedUrl;
         }
         if ($freshUser && $freshUser->tenant_id) {
@@ -2109,7 +2150,7 @@ class AuthController extends Controller
             module: 'auth',
             entityType: 'user',
             entityId: (string) $user->id,
-            details: "User uploaded profile avatar to MinIO WebP",
+            details: 'User uploaded profile avatar to MinIO WebP',
             userId: $user->id,
             userName: $freshUser->name ?? $user->name,
             tenantId: $freshUser->tenant_id ?? $user->tenant_id
@@ -2133,13 +2174,13 @@ class AuthController extends Controller
     public function updatePassword(UpdatePasswordRequest $request)
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse();
         }
 
         $validated = $request->validated();
 
-        if (!Hash::check($validated['current_password'], $user->password)) {
+        if (! Hash::check($validated['current_password'], $user->password)) {
             return $this->errorResponse(
                 'The current password you provided is incorrect.',
                 HttpStatus::UNPROCESSABLE_ENTITY
@@ -2174,7 +2215,7 @@ class AuthController extends Controller
             module: 'auth',
             entityType: 'user',
             entityId: (string) $user->id,
-            details: "User changed password and invalidated all active sessions",
+            details: 'User changed password and invalidated all active sessions',
             userId: $user->id,
             userName: $user->name,
             tenantId: $user->tenant_id
@@ -2193,16 +2234,16 @@ class AuthController extends Controller
         $user = $request->user();
         if ($user) {
             Auth::setUser($user);
-        $request->setUserResolver(fn () => $user);
-        $request->attributes->set('auth_user_id', $user->id);
-        $request->attributes->set('auth_tenant_id', $user->tenant_id);
+            $request->setUserResolver(fn () => $user);
+            $request->attributes->set('auth_user_id', $user->id);
+            $request->attributes->set('auth_tenant_id', $user->tenant_id);
 
-        $this->recordAuditLog(
+            $this->recordAuditLog(
                 action: 'auth.logout',
                 module: 'auth',
                 entityType: 'user',
                 entityId: (string) $user->id,
-                details: "User logged out and session terminated",
+                details: 'User logged out and session terminated',
                 userId: $user->id,
                 userName: $user->name,
                 tenantId: $user->tenant_id
@@ -2217,22 +2258,29 @@ class AuthController extends Controller
             /** @var JwtService $jwtService */
             $jwtService = app(JwtService::class);
             $payload = $jwtService->verify($token);
-            if (!empty($payload['sid'])) {
+            if (! empty($payload['sid'])) {
                 $sid = (string) $payload['sid'];
-                if (\Illuminate\Support\Str::isUuid($sid)) {
+                if (Str::isUuid($sid)) {
                     $userSession = UserSession::where('uuid', $sid)->first();
                     if ($userSession) {
                         $userSession->revoke('user_logged_out');
                     }
+                } elseif (is_numeric($sid) && $user) {
+                    PersonalAccessToken::where('id', (int) $sid)
+                        ->where('tokenable_id', $user->id)
+                        ->whereIn('tokenable_type', [get_class($user), 'App\Models\User', 'user'])
+                        ->delete();
                 }
             }
-            if (!empty($payload['jti'])) {
+            if (! empty($payload['jti'])) {
                 $exp = $payload['exp'] ?? (time() + $jwtService->getTtlSeconds());
                 $remainingTtl = max(0, $exp - time());
                 $jwtService->revokeToken($payload['jti'], $remainingTtl);
                 if (empty($payload['sid'])) {
                     $user?->tokens()->delete();
-                    if ($user) $jwtService->revokeAllUserTokens($user->id);
+                    if ($user) {
+                        $jwtService->revokeAllUserTokens($user->id);
+                    }
                 }
             }
         }
@@ -2242,13 +2290,28 @@ class AuthController extends Controller
 
     private function parseDeviceName(?string $userAgent): string
     {
-        if (empty($userAgent)) return 'Web Client';
-        if (str_contains($userAgent, 'Windows')) return 'Windows PC';
-        if (str_contains($userAgent, 'Macintosh')) return 'Mac Desktop';
-        if (str_contains($userAgent, 'iPhone')) return 'Apple iPhone';
-        if (str_contains($userAgent, 'iPad')) return 'Apple iPad';
-        if (str_contains($userAgent, 'Android')) return 'Android POS Device';
-        if (str_contains($userAgent, 'Linux')) return 'Linux Device';
+        if (empty($userAgent)) {
+            return 'Web Client';
+        }
+        if (str_contains($userAgent, 'Windows')) {
+            return 'Windows PC';
+        }
+        if (str_contains($userAgent, 'Macintosh')) {
+            return 'Mac Desktop';
+        }
+        if (str_contains($userAgent, 'iPhone')) {
+            return 'Apple iPhone';
+        }
+        if (str_contains($userAgent, 'iPad')) {
+            return 'Apple iPad';
+        }
+        if (str_contains($userAgent, 'Android')) {
+            return 'Android POS Device';
+        }
+        if (str_contains($userAgent, 'Linux')) {
+            return 'Linux Device';
+        }
+
         return 'Web Browser';
     }
 
@@ -2276,7 +2339,7 @@ class AuthController extends Controller
         $scheme = parse_url($redirectUrl, PHP_URL_SCHEME);
 
         // Allow safe relative paths
-        if (!$host && str_starts_with($redirectUrl, '/') && !str_starts_with($redirectUrl, '//')) {
+        if (! $host && str_starts_with($redirectUrl, '/') && ! str_starts_with($redirectUrl, '//')) {
             return $redirectUrl;
         }
 
@@ -2286,6 +2349,6 @@ class AuthController extends Controller
         }
 
         // Fallback to configured safe frontend URL
-        return rtrim($frontendUrl, '/') . '/auth/login';
+        return rtrim($frontendUrl, '/').'/auth/login';
     }
 }

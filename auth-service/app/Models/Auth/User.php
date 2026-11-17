@@ -8,50 +8,48 @@
 
 namespace App\Models\Auth;
 
-use App\Models\Organization\Tenant;
-use App\Models\System\Role;
-use App\Models\Organization\Outlet;
-use App\Models\Organization\Department;
+use App\Models\Meeting\Meeting;
 use App\Models\Organization\Employee;
-use App\Models\Organization\Supplier;
-use App\Models\Crm\Customer;
-use App\Models\Security\SecurityEvent;
+use App\Models\Organization\Outlet;
+use App\Models\Organization\Tenant;
+use App\Models\Organization\TenantUser;
+use App\Models\Organization\TenantUserOutlet;
 use App\Models\Security\ApiKey;
 use App\Models\Security\AuditLog;
-use App\Models\Security\ApiClient;
-use App\Models\Security\NotificationProvider;
-use App\Models\Auth\UserSession;
-use App\Models\Auth\RefreshToken;
-use App\Models\Auth\PasskeyCredential;
-use App\Models\System\UserRole;
+use App\Models\Security\SecurityEvent;
 use App\Models\System\Permission;
-use App\Models\Organization\TenantUser;
-use App\Models\Organization\TenantModule;
-use App\Models\Organization\TenantSubscription;
-use App\Models\Organization\TenantUserOutlet;
-use App\Models\Auth\UserInvitation;
-use App\Models\Auth\UserPosPin;
-use App\Models\Crm\DigitalVoucher;
-use App\Models\Crm\StoreCreditInvoice;
-use App\Models\Security\ApiRequestLog;
-use App\Models\Meeting\Meeting;
-use App\Models\Meeting\MeetingRoom;
-
+use App\Models\System\Role;
+use App\Models\System\UserRole;
+use App\Notifications\VerifyEmailNotification;
+use App\Services\UserAuthorizationService;
+use App\Support\SchemaGuard;
+use Carbon\Carbon;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\URL;
+use Illuminate\Support\Str;
 use Laravel\Sanctum\HasApiTokens;
+use Laravel\Sanctum\Sanctum;
 
 /**
  * [BD-0038] Core User Identity Model aligned with ERD standards.
  *
  * @ticket BD-0038
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Models/User.php
+ *
  * @related-model App\Models\System\UserRole, App\Models\System\Role, App\Models\Organization\Outlet
+ *
  * @table users
+ *
  * @date-time 2026-10-23T15:35:00+07:00
  *
  * Attributes:
@@ -104,9 +102,13 @@ class User extends Authenticatable implements MustVerifyEmail
      * Pending relational attributes to sync after save.
      */
     public ?string $pendingRole = null;
+
     public ?int $pendingRoleId = null;
+
     public ?int $pendingTenantId = null;
+
     public ?string $pendingOutletUuid = null;
+
     public ?string $pendingPinCode = null;
 
     /**
@@ -158,15 +160,15 @@ class User extends Authenticatable implements MustVerifyEmail
         static::creating(function (User $user) {
             $user->is_active ??= true;
             if (empty($user->uuid)) {
-                $user->uuid = (string) \Illuminate\Support\Str::uuid();
+                $user->uuid = (string) Str::uuid();
             }
         });
 
         static::saved(function (User $user) {
             $roleId = null;
-            if (!empty($user->pendingRoleId)) {
+            if (! empty($user->pendingRoleId)) {
                 $roleId = (int) $user->pendingRoleId;
-            } elseif (!empty($user->pendingRole)) {
+            } elseif (! empty($user->pendingRole)) {
                 $role = Role::where('slug', $user->pendingRole)
                     ->where(function ($q) use ($user) {
                         $q->where(function ($sysQ) {
@@ -174,20 +176,20 @@ class User extends Authenticatable implements MustVerifyEmail
                         });
                         if ($user->tenant_id) {
                             $q->orWhere('tenant_id', $user->tenant_id)
-                              ->orWhere('company_id', $user->tenant_id);
+                                ->orWhere('company_id', $user->tenant_id);
                         }
                     })
                     ->first();
-                if (!$role) {
+                if (! $role) {
                     $roleData = [
                         'name' => ucfirst($user->pendingRole),
                         'slug' => $user->pendingRole,
                         'is_system' => true,
                     ];
-                    if (\App\Support\SchemaGuard::hasColumn('roles', 'tenant_id')) {
+                    if (SchemaGuard::hasColumn('roles', 'tenant_id')) {
                         $roleData['tenant_id'] = null;
                     }
-                    if (\App\Support\SchemaGuard::hasColumn('roles', 'company_id')) {
+                    if (SchemaGuard::hasColumn('roles', 'company_id')) {
                         $roleData['company_id'] = null;
                     }
                     $role = Role::create($roleData);
@@ -204,7 +206,7 @@ class User extends Authenticatable implements MustVerifyEmail
                 $effectiveRoleTenantId = $isPlatformSuperAdminRole
                     ? null
                     : ($user->pendingTenantId ?? $user->tenant_id);
-                $deactivateQuery = \Illuminate\Support\Facades\DB::table('user_roles')->where('user_id', $user->id);
+                $deactivateQuery = DB::table('user_roles')->where('user_id', $user->id);
                 if ($effectiveRoleTenantId === null) {
                     $deactivateQuery->whereNull('tenant_id');
                 } else {
@@ -212,7 +214,7 @@ class User extends Authenticatable implements MustVerifyEmail
                 }
                 $deactivateQuery->update(['is_active' => false]);
 
-                $existingQuery = \Illuminate\Support\Facades\DB::table('user_roles')
+                $existingQuery = DB::table('user_roles')
                     ->where('user_id', $user->id)
                     ->where('role_id', $roleId);
                 if ($effectiveRoleTenantId === null) {
@@ -227,7 +229,7 @@ class User extends Authenticatable implements MustVerifyEmail
                         'updated_at' => now(),
                     ]);
                 } else {
-                    \Illuminate\Support\Facades\DB::table('user_roles')->insert([
+                    DB::table('user_roles')->insert([
                         'tenant_id' => $effectiveRoleTenantId,
                         'user_id' => $user->id,
                         'role_id' => $roleId,
@@ -258,11 +260,11 @@ class User extends Authenticatable implements MustVerifyEmail
                 }
 
                 $effectivePinCode = $user->pin_code ?? $user->pendingPinCode;
-                if (!empty($effectivePinCode)) {
+                if (! empty($effectivePinCode)) {
                     $pinStr = (string) $effectivePinCode;
                     $hashedPin = (str_starts_with($pinStr, '$2') || str_starts_with($pinStr, '$argon2'))
                         ? $pinStr
-                        : \Illuminate\Support\Facades\Hash::make($pinStr);
+                        : Hash::make($pinStr);
 
                     UserPosPin::updateOrCreate(
                         ['tenant_id' => $effectiveTenantId, 'user_id' => $user->id],
@@ -290,20 +292,21 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getTenantIdAttribute(): ?int
     {
-        if (!empty($this->pendingTenantId)) {
+        if (! empty($this->pendingTenantId)) {
             return (int) $this->pendingTenantId;
         }
 
-        if (array_key_exists('tenant_id', $this->attributes) && !is_null($this->attributes['tenant_id'])) {
+        if (array_key_exists('tenant_id', $this->attributes) && ! is_null($this->attributes['tenant_id'])) {
             return (int) $this->attributes['tenant_id'];
         }
 
         if ($this->relationLoaded('tenantUsers')) {
             $membership = $this->tenantUsers->firstWhere('status', 'active') ?? $this->tenantUsers->first();
+
             return $membership?->tenant_id;
         }
 
-        if (!$this->exists) {
+        if (! $this->exists) {
             return null;
         }
 
@@ -321,15 +324,15 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getOutletUuidAttribute(): ?string
     {
-        if (!empty($this->pendingOutletUuid)) {
+        if (! empty($this->pendingOutletUuid)) {
             return $this->pendingOutletUuid;
         }
 
-        if (array_key_exists('outlet_uuid', $this->attributes) && !is_null($this->attributes['outlet_uuid'])) {
+        if (array_key_exists('outlet_uuid', $this->attributes) && ! is_null($this->attributes['outlet_uuid'])) {
             return $this->attributes['outlet_uuid'];
         }
 
-        if (!$this->exists) {
+        if (! $this->exists) {
             return null;
         }
 
@@ -357,15 +360,15 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getPinCodeAttribute(): ?string
     {
-        if (array_key_exists('pin_code', $this->attributes) && !is_null($this->attributes['pin_code'])) {
+        if (array_key_exists('pin_code', $this->attributes) && ! is_null($this->attributes['pin_code'])) {
             return $this->attributes['pin_code'];
         }
 
-        if (!empty($this->pendingPinCode)) {
+        if (! empty($this->pendingPinCode)) {
             return $this->pendingPinCode;
         }
 
-        if (!$this->exists) {
+        if (! $this->exists) {
             return null;
         }
 
@@ -390,14 +393,14 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getRoleAttribute(): ?string
     {
-        if (array_key_exists('role', $this->attributes) && !is_null($this->attributes['role'])) {
+        if (array_key_exists('role', $this->attributes) && ! is_null($this->attributes['role'])) {
             return $this->attributes['role'];
         }
 
         if ($this->relationLoaded('roles')) {
             $tenantId = $this->tenant_id;
             $matchingRoles = $this->roles->filter(function ($role) use ($tenantId) {
-                if (!$role->pivot->is_active) {
+                if (! $role->pivot->is_active) {
                     return false;
                 }
                 if ($role->slug === 'super_admin' && $role->pivot->tenant_id === null && $role->tenant_id === null) {
@@ -406,18 +409,19 @@ class User extends Authenticatable implements MustVerifyEmail
                 if ($tenantId !== null) {
                     return (int) $role->pivot->tenant_id === (int) $tenantId;
                 }
+
                 return $role->pivot->tenant_id === null;
             });
-            $sortedSlugs = \App\Services\UserAuthorizationService::sortRoleSlugs(
+            $sortedSlugs = UserAuthorizationService::sortRoleSlugs(
                 $matchingRoles->pluck('slug')->filter()->all()
             );
-            if (!empty($sortedSlugs)) {
+            if (! empty($sortedSlugs)) {
                 return $sortedSlugs[0];
             }
         }
 
-        if (!$this->exists) {
-            return !empty($this->pendingRole) ? $this->pendingRole : 'user';
+        if (! $this->exists) {
+            return ! empty($this->pendingRole) ? $this->pendingRole : 'user';
         }
 
         $activeRole = $this->activeRoles()->first();
@@ -426,8 +430,8 @@ class User extends Authenticatable implements MustVerifyEmail
         }
 
         // Dynamically resolve organization role ONLY if user owns the active tenant context
-        if ($this->exists && !empty($this->id) && !empty($this->tenant_id)) {
-            $isTenantOwner = \Illuminate\Support\Facades\DB::table('tenants')
+        if ($this->exists && ! empty($this->id) && ! empty($this->tenant_id)) {
+            $isTenantOwner = DB::table('tenants')
                 ->where('id', $this->tenant_id)
                 ->where('owner_user_id', $this->id)
                 ->exists();
@@ -444,18 +448,18 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getRoleIdAttribute(): ?int
     {
-        if (!empty($this->pendingRoleId)) {
+        if (! empty($this->pendingRoleId)) {
             return (int) $this->pendingRoleId;
         }
 
-        if (array_key_exists('role_id', $this->attributes) && !is_null($this->attributes['role_id'])) {
+        if (array_key_exists('role_id', $this->attributes) && ! is_null($this->attributes['role_id'])) {
             return (int) $this->attributes['role_id'];
         }
 
         if ($this->relationLoaded('roles')) {
             $tenantId = $this->tenant_id;
             $matchingRoles = $this->roles->filter(function ($role) use ($tenantId) {
-                if (!$role->pivot->is_active) {
+                if (! $role->pivot->is_active) {
                     return false;
                 }
                 if ($role->slug === 'super_admin' && $role->pivot->tenant_id === null && $role->tenant_id === null) {
@@ -464,25 +468,29 @@ class User extends Authenticatable implements MustVerifyEmail
                 if ($tenantId !== null) {
                     return (int) $role->pivot->tenant_id === (int) $tenantId;
                 }
+
                 return $role->pivot->tenant_id === null;
             });
-            $sortedSlugs = \App\Services\UserAuthorizationService::sortRoleSlugs(
+            $sortedSlugs = UserAuthorizationService::sortRoleSlugs(
                 $matchingRoles->pluck('slug')->filter()->all()
             );
             $primarySlug = $sortedSlugs[0] ?? null;
             $activeRole = $primarySlug ? $matchingRoles->firstWhere('slug', $primarySlug) : null;
+
             return $activeRole?->id;
         }
 
-        if (!$this->exists) {
-            if (!empty($this->pendingRole)) {
+        if (! $this->exists) {
+            if (! empty($this->pendingRole)) {
                 return Role::where('slug', $this->pendingRole)->value('id');
             }
+
             return null;
         }
 
         $activeRole = $this->activeRoles()->first();
-        return $activeRole?->id ?? (!empty($this->pendingRole) ? Role::where('slug', $this->pendingRole)->value('id') : null);
+
+        return $activeRole?->id ?? (! empty($this->pendingRole) ? Role::where('slug', $this->pendingRole)->value('id') : null);
     }
 
     public function setRoleIdAttribute($value): void
@@ -507,7 +515,7 @@ class User extends Authenticatable implements MustVerifyEmail
         // Handled via Cache/Redis, not database column
     }
 
-    public function getLockedUntilAttribute(): ?\Carbon\Carbon
+    public function getLockedUntilAttribute(): ?Carbon
     {
         return $this->lockout_until;
     }
@@ -517,15 +525,15 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getOutletIdAttribute(): ?int
     {
-        if (array_key_exists('outlet_id', $this->attributes) && !is_null($this->attributes['outlet_id'])) {
+        if (array_key_exists('outlet_id', $this->attributes) && ! is_null($this->attributes['outlet_id'])) {
             return (int) $this->attributes['outlet_id'];
         }
 
-        if (!$this->exists) {
+        if (! $this->exists) {
             return null;
         }
 
-        if (!empty($this->outlet_uuid)) {
+        if (! empty($this->outlet_uuid)) {
             return Outlet::where('uuid', $this->outlet_uuid)->value('id');
         }
 
@@ -558,13 +566,13 @@ class User extends Authenticatable implements MustVerifyEmail
                     });
                     if ($effectiveTenantId !== null) {
                         $q->orWhere('tenant_id', $effectiveTenantId)
-                          ->orWhere('company_id', $effectiveTenantId);
+                            ->orWhere('company_id', $effectiveTenantId);
                     }
                 })
                 ->value('id');
         }
         if ($roleId) {
-            $existingQuery = \Illuminate\Support\Facades\DB::table('user_roles')
+            $existingQuery = DB::table('user_roles')
                 ->where('user_id', $this->id)
                 ->where('role_id', $roleId);
             if ($effectiveTenantId === null) {
@@ -579,7 +587,7 @@ class User extends Authenticatable implements MustVerifyEmail
                     'updated_at' => now(),
                 ]);
             } else {
-                \Illuminate\Support\Facades\DB::table('user_roles')->insert([
+                DB::table('user_roles')->insert([
                     'tenant_id' => $effectiveTenantId,
                     'user_id' => $this->id,
                     'role_id' => $roleId,
@@ -629,7 +637,7 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function createEmailVerificationUrl(?int $expireMinutes = null): string
     {
-        return \Illuminate\Support\Facades\URL::temporarySignedRoute(
+        return URL::temporarySignedRoute(
             'verification.verify',
             now()->addMinutes($expireMinutes ?? config('auth.verification.expire', 60)),
             [
@@ -646,9 +654,9 @@ class User extends Authenticatable implements MustVerifyEmail
     {
         $verificationUrl = $this->createEmailVerificationUrl();
         $code = str_pad((string) random_int(100000, 999999), 6, '0', STR_PAD_LEFT);
-        \Illuminate\Support\Facades\Cache::put("auth:email_verify_code:{$this->id}", $code, now()->addMinutes(15));
+        Cache::put("auth:email_verify_code:{$this->id}", $code, now()->addMinutes(15));
 
-        $this->notify(new \App\Notifications\VerifyEmailNotification($verificationUrl, $code));
+        $this->notify(new VerifyEmailNotification($verificationUrl, $code));
     }
 
     /**
@@ -656,7 +664,7 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function isLockedOut(): bool
     {
-        return \Illuminate\Support\Facades\Cache::has('auth:login_lockout:' . $this->id);
+        return Cache::has('auth:login_lockout:'.$this->id);
     }
 
     /**
@@ -664,16 +672,17 @@ class User extends Authenticatable implements MustVerifyEmail
      */
     public function getFailedLoginAttemptsAttribute(): int
     {
-        return (int) \Illuminate\Support\Facades\Cache::get('auth:failed_attempts:' . $this->id, 0);
+        return (int) Cache::get('auth:failed_attempts:'.$this->id, 0);
     }
 
     /**
      * Get lockout until dynamically from Cache.
      */
-    public function getLockoutUntilAttribute(): ?\Carbon\Carbon
+    public function getLockoutUntilAttribute(): ?Carbon
     {
-        $exp = \Illuminate\Support\Facades\Cache::get('auth:login_lockout_expire:' . $this->id);
-        return $exp ? \Carbon\Carbon::createFromTimestamp($exp) : null;
+        $exp = Cache::get('auth:login_lockout_expire:'.$this->id);
+
+        return $exp ? Carbon::createFromTimestamp($exp) : null;
     }
 
     /**
@@ -705,8 +714,8 @@ class User extends Authenticatable implements MustVerifyEmail
                     $query->where('user_roles.tenant_id', $tenantId)
                         ->orWhere(function ($q) {
                             $q->whereNull('user_roles.tenant_id')
-                              ->where('roles.slug', 'super_admin')
-                              ->whereNull('roles.tenant_id');
+                                ->where('roles.slug', 'super_admin')
+                                ->whereNull('roles.tenant_id');
                         });
                 } else {
                     $query->whereNull('user_roles.tenant_id');
@@ -736,9 +745,10 @@ class User extends Authenticatable implements MustVerifyEmail
 
     public function getAllPermissions()
     {
-        if (in_array($this->role, array_merge(['super_admin'], \App\Services\UserAuthorizationService::ADMIN_ROLE_SLUGS), true)) {
+        if (in_array($this->role, array_merge(['super_admin'], UserAuthorizationService::ADMIN_ROLE_SLUGS), true)) {
             return collect([(object) ['name' => '*']]);
         }
+
         return Permission::query()->whereIn('id', function ($query) {
             $query->select('permission_id')->from('role_permissions')
                 ->whereIn('role_id', $this->activeRoles()->select('roles.id'));
@@ -856,8 +866,36 @@ class User extends Authenticatable implements MustVerifyEmail
         return $this->hasMany(SecurityEvent::class, 'user_id');
     }
 
+    /**
+     * Get the personal access tokens for the user, supporting both reorganized and legacy tokenable_type values.
+     */
+    public function tokens()
+    {
+        $relation = $this->morphMany(Sanctum::$personalAccessTokenModel, 'tokenable');
+
+        $query = $relation->getQuery();
+        $baseQuery = $query->getQuery();
+
+        foreach ($baseQuery->wheres as $i => $where) {
+            if (isset($where['column']) && ($where['column'] === 'personal_access_tokens.tokenable_type' || $where['column'] === 'tokenable_type')) {
+                unset($baseQuery->wheres[$i]);
+            }
+        }
+        $baseQuery->wheres = array_values($baseQuery->wheres);
+
+        $bindings = $baseQuery->getRawBindings()['where'] ?? [];
+        if (! empty($bindings) && $bindings[0] === $this->getMorphClass()) {
+            array_shift($bindings);
+            $baseQuery->setBindings($bindings, 'where');
+        }
+
+        $relation->whereIn('tokenable_type', [$this->getMorphClass(), 'App\Models\User', 'user']);
+
+        return $relation;
+    }
+
     protected static function newFactory()
     {
-        return \Database\Factories\UserFactory::new();
+        return UserFactory::new();
     }
 }

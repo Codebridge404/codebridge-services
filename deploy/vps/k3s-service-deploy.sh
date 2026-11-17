@@ -296,12 +296,15 @@ kubectl -n "${NAMESPACE}" rollout status "deployment/${DEPLOY_WORKER}" --timeout
 # ------------------------------------------------------------------------------
 echo ""
 echo ">>> Configuring application and documentation caches across all active replicas <<<"
-ACTIVE_PODS="$(kubectl -n "${NAMESPACE}" get pods -l "app.kubernetes.io/name=${DEPLOY_API}" -o jsonpath='{.items[?(@.status.phase=="Running")].metadata.name}')"
+ACTIVE_PODS=()
+while IFS= read -r pod_name; do
+    [ -n "${pod_name}" ] && ACTIVE_PODS+=("${pod_name}")
+done < <(kubectl -n "${NAMESPACE}" get pods -l "app.kubernetes.io/name=${DEPLOY_API}" -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')
 
-if [ -z "${ACTIVE_PODS}" ]; then
+if [ ${#ACTIVE_PODS[@]} -eq 0 ]; then
     echo "WARNING: No running pods found for deployment/${DEPLOY_API}."
 else
-    for pod in ${ACTIVE_PODS}; do
+    for pod in "${ACTIVE_PODS[@]}"; do
         echo "Configuring caches on pod ${pod}..."
         kubectl -n "${NAMESPACE}" exec "${pod}" -c "${CONTAINER_API}" -- php artisan optimize
 
@@ -311,7 +314,7 @@ else
             kubectl -n "${NAMESPACE}" exec "${pod}" -c "${CONTAINER_API}" -- php artisan scramble:cache
         fi
     done
-    echo "✔ Multi-replica cache warming complete."
+    echo "✔ Multi-replica cache warming complete across ${#ACTIVE_PODS[@]} pod(s)."
 fi
 
 # ------------------------------------------------------------------------------

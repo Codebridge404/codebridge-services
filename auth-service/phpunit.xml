@@ -35,5 +35,6 @@
         <env name="TELESCOPE_ENABLED" value="false"/>
         <env name="NIGHTWATCH_ENABLED" value="false"/>
         <env name="JWT_SECRET" value="testing_jwt_secret_key_minimum_32_characters_long_for_security"/>
+        <env name="TRUSTED_PROXIES" value="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1,::1" force="true"/>
     </php>
 </phpunit>

@@ -4,6 +4,10 @@ namespace App\Services;
 
 use App\Models\Auth\PasskeyCredential;
 use App\Models\Auth\User;
+use App\Models\Auth\UserSession;
+use CBOR\Decoder;
+use CBOR\StringStream;
+use Illuminate\Cache\RedisStore;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -11,19 +15,14 @@ use Illuminate\Support\Str;
 use Symfony\Component\Serializer\Serializer;
 use Webauthn\AttestationStatement\AttestationStatementSupportManager;
 use Webauthn\AttestationStatement\NoneAttestationStatementSupport;
-use Webauthn\AuthenticatorAssertionResponse;
 use Webauthn\AuthenticatorAssertionResponseValidator;
-use Webauthn\AuthenticatorAttestationResponse;
 use Webauthn\AuthenticatorAttestationResponseValidator;
 use Webauthn\AuthenticatorSelectionCriteria;
 use Webauthn\CeremonyStep\CeremonyStepManagerFactory;
 use Webauthn\Denormalizer\WebauthnSerializerFactory;
-use Webauthn\PublicKeyCredential;
 use Webauthn\PublicKeyCredentialCreationOptions;
 use Webauthn\PublicKeyCredentialParameters;
-use Webauthn\PublicKeyCredentialRequestOptions;
 use Webauthn\PublicKeyCredentialRpEntity;
-use Webauthn\PublicKeyCredentialSource;
 use Webauthn\PublicKeyCredentialUserEntity;
 
 /**
@@ -33,7 +32,9 @@ use Webauthn\PublicKeyCredentialUserEntity;
 class PasskeyService
 {
     protected Serializer $serializer;
+
     protected AuthenticatorAttestationResponseValidator $attestationValidator;
+
     protected AuthenticatorAssertionResponseValidator $assertionValidator;
 
     public function __construct()
@@ -44,7 +45,7 @@ class PasskeyService
         $serializerFactory = new WebauthnSerializerFactory($asm);
         $this->serializer = $serializerFactory->create();
 
-        $ceremonyFactory = new CeremonyStepManagerFactory();
+        $ceremonyFactory = new CeremonyStepManagerFactory;
         $this->attestationValidator = AuthenticatorAttestationResponseValidator::create(
             $ceremonyFactory->creationCeremony()
         );
@@ -159,13 +160,13 @@ class PasskeyService
     public function verifyRegistration(User $user, array $data, string $origin): PasskeyCredential
     {
         $challengeId = $data['challenge_id'] ?? null;
-        if (!$challengeId) {
+        if (! $challengeId) {
             throw new \InvalidArgumentException('Challenge ID is required for registration verification.');
         }
 
         // Atomically consume registration challenge to prevent replay
         $saved = $this->atomicCachePull("auth:passkey_reg_challenge:{$challengeId}");
-        if (!$saved || (int) $saved['user_id'] !== (int) $user->id) {
+        if (! $saved || (int) $saved['user_id'] !== (int) $user->id) {
             throw new \RuntimeException('Registration challenge is invalid, expired, or bound to another account.');
         }
 
@@ -177,7 +178,7 @@ class PasskeyService
         $credentialId = $credentialPayload['id'] ?? null;
         $response = $credentialPayload['response'] ?? null;
 
-        if (!$credentialId || !$response || !isset($response['clientDataJSON'], $response['attestationObject'])) {
+        if (! $credentialId || ! $response || ! isset($response['clientDataJSON'], $response['attestationObject'])) {
             throw new \InvalidArgumentException('Malformed passkey registration response.');
         }
 
@@ -185,13 +186,13 @@ class PasskeyService
         $clientDataJson = base64_decode(strtr($response['clientDataJSON'], '-_', '+/'));
         $clientData = json_decode($clientDataJson, true);
 
-        if (!is_array($clientData) || ($clientData['type'] ?? '') !== 'webauthn.create') {
+        if (! is_array($clientData) || ($clientData['type'] ?? '') !== 'webauthn.create') {
             throw new \RuntimeException('Invalid WebAuthn ceremony type in clientDataJSON.');
         }
 
         // Validate challenge
         $receivedChallenge = rtrim(strtr($clientData['challenge'] ?? '', '+/', '-_'), '=');
-        if (!hash_equals($saved['challenge'], $receivedChallenge)) {
+        if (! hash_equals($saved['challenge'], $receivedChallenge)) {
             throw new \RuntimeException('WebAuthn challenge mismatch.');
         }
 
@@ -206,12 +207,12 @@ class PasskeyService
 
         // Parse and extract public key and authenticator data from attestationObject
         $attestationRaw = base64_decode(strtr($response['attestationObject'], '-_', '+/'));
-        $attestationDecoded = \CBOR\Decoder::create()->decode(
-            new \CBOR\StringStream($attestationRaw)
+        $attestationDecoded = Decoder::create()->decode(
+            new StringStream($attestationRaw)
         )->normalize();
 
         $authData = $attestationDecoded['authData'] ?? null;
-        if (!$authData) {
+        if (! $authData) {
             throw new \RuntimeException('Missing authData in attestationObject.');
         }
 
@@ -221,13 +222,13 @@ class PasskeyService
         $uv = ($flags & 0x04) !== 0; // User Verified
         $at = ($flags & 0x40) !== 0; // Attested Credential Data present
 
-        if (!$up) {
+        if (! $up) {
             throw new \RuntimeException('User presence flag was not set during registration.');
         }
-        if (!$uv) {
+        if (! $uv) {
             throw new \RuntimeException('User verification (biometric or PIN) is strictly required.');
         }
-        if (!$at) {
+        if (! $at) {
             throw new \RuntimeException('Attested credential data missing from authenticator.');
         }
 
@@ -237,7 +238,7 @@ class PasskeyService
         $extractedCredId = substr($authDataBytes, 55, $credIdLen);
         $encodedExtractedId = rtrim(strtr(base64_encode($extractedCredId), '+/', '-_'), '=');
 
-        if (!hash_equals($credentialId, $encodedExtractedId)) {
+        if (! hash_equals($credentialId, $encodedExtractedId)) {
             throw new \RuntimeException('Credential ID does not match authenticator data payload.');
         }
 
@@ -248,7 +249,7 @@ class PasskeyService
         // Strictly validate that public key algorithm is supported before persisting
         $this->validateCosePublicKeyStructure($coseKeyBytes);
 
-        $name = !empty($data['name']) ? trim($data['name']) : 'Passkey ' . now()->format('Y-m-d H:i');
+        $name = ! empty($data['name']) ? trim($data['name']) : 'Passkey '.now()->format('Y-m-d H:i');
 
         return PasskeyCredential::create([
             'user_id' => $user->id,
@@ -318,13 +319,13 @@ class PasskeyService
     public function verifyAuthentication(array $data, string $origin): User
     {
         $challengeId = $data['challenge_id'] ?? null;
-        if (!$challengeId) {
+        if (! $challengeId) {
             throw new \InvalidArgumentException('Challenge ID is required for authentication verification.');
         }
 
         // Atomically consume authentication challenge to prevent replay
         $saved = $this->atomicCachePull("auth:passkey_auth_challenge:{$challengeId}");
-        if (!$saved) {
+        if (! $saved) {
             throw new \RuntimeException('Authentication challenge is invalid or has expired.');
         }
 
@@ -332,18 +333,18 @@ class PasskeyService
         $credentialId = $credentialPayload['id'] ?? null;
         $response = $credentialPayload['response'] ?? null;
 
-        if (!$credentialId || !$response || !isset($response['clientDataJSON'], $response['authenticatorData'], $response['signature'])) {
+        if (! $credentialId || ! $response || ! isset($response['clientDataJSON'], $response['authenticatorData'], $response['signature'])) {
             throw new \InvalidArgumentException('Malformed passkey authentication response.');
         }
 
         // Find registered credential
         $passkey = PasskeyCredential::where('credential_id', $credentialId)->active()->first();
-        if (!$passkey) {
+        if (! $passkey) {
             throw new \RuntimeException('Unrecognized or revoked passkey credential.');
         }
 
         $user = $passkey->user;
-        if (!$user || (isset($user->is_active) && !(bool) $user->is_active)) {
+        if (! $user || (isset($user->is_active) && ! (bool) $user->is_active)) {
             throw new \RuntimeException('User account associated with this passkey is inactive or not found.');
         }
 
@@ -351,13 +352,13 @@ class PasskeyService
         $clientDataJson = base64_decode(strtr($response['clientDataJSON'], '-_', '+/'));
         $clientData = json_decode($clientDataJson, true);
 
-        if (!is_array($clientData) || ($clientData['type'] ?? '') !== 'webauthn.get') {
+        if (! is_array($clientData) || ($clientData['type'] ?? '') !== 'webauthn.get') {
             throw new \RuntimeException('Invalid WebAuthn ceremony type in clientDataJSON.');
         }
 
         // Validate challenge
         $receivedChallenge = rtrim(strtr($clientData['challenge'] ?? '', '+/', '-_'), '=');
-        if (!hash_equals($saved['challenge'], $receivedChallenge)) {
+        if (! hash_equals($saved['challenge'], $receivedChallenge)) {
             throw new \RuntimeException('WebAuthn challenge mismatch.');
         }
 
@@ -371,10 +372,10 @@ class PasskeyService
         $up = ($flags & 0x01) !== 0; // User Present
         $uv = ($flags & 0x04) !== 0; // User Verified
 
-        if (!$up) {
+        if (! $up) {
             throw new \RuntimeException('User presence flag missing during authentication.');
         }
-        if (!$uv) {
+        if (! $uv) {
             throw new \RuntimeException('User verification (biometric or PIN) is required.');
         }
 
@@ -384,21 +385,21 @@ class PasskeyService
         $authDataRpIdHash = substr($authDataBytes, 0, 32);
 
         // Allow matching if RP ID matches configured host or request origin host
-        if (!hash_equals($expectedRpIdHash, $authDataRpIdHash)) {
+        if (! hash_equals($expectedRpIdHash, $authDataRpIdHash)) {
             $parsedHost = parse_url($origin, PHP_URL_HOST);
-            if (!$parsedHost || !hash_equals(hash('sha256', $parsedHost, true), $authDataRpIdHash)) {
+            if (! $parsedHost || ! hash_equals(hash('sha256', $parsedHost, true), $authDataRpIdHash)) {
                 throw new \RuntimeException('RP ID mismatch in authenticator data.');
             }
         }
 
         // Verify cryptographic assertion signature
         $clientDataHash = hash('sha256', $clientDataJson, true);
-        $signedData = $authDataBytes . $clientDataHash;
+        $signedData = $authDataBytes.$clientDataHash;
         $signature = base64_decode(strtr($response['signature'], '-_', '+/'));
         $coseKeyBytes = base64_decode(strtr($passkey->public_key, '-_', '+/'));
 
         $verified = $this->verifySignatureWithCoseKey($signedData, $signature, $coseKeyBytes);
-        if (!$verified) {
+        if (! $verified) {
             throw new \RuntimeException('Cryptographic assertion signature verification failed.');
         }
 
@@ -438,38 +439,38 @@ class PasskeyService
 
         // 2. Explicit UserSession from AuthenticateJwt middleware
         if ($userSession = $request->attributes->get('user_session')) {
-            if ($userSession instanceof \App\Models\Auth\UserSession && !empty($userSession->uuid)) {
-                return 'sid:' . $userSession->uuid;
+            if ($userSession instanceof UserSession && ! empty($userSession->uuid)) {
+                return 'sid:'.$userSession->uuid;
             }
         }
 
         // 3. Sanctum PersonalAccessToken
         if ($user && method_exists($user, 'currentAccessToken') && ($pat = $user->currentAccessToken())) {
-            if (!empty($pat->id)) {
-                return 'pat:' . $pat->id;
+            if (! empty($pat->id)) {
+                return 'pat:'.$pat->id;
             }
-            if (!empty($pat->token)) {
-                return 'pat_hash:' . hash('sha256', (string) $pat->token);
+            if (! empty($pat->token)) {
+                return 'pat_hash:'.hash('sha256', (string) $pat->token);
             }
         }
 
         // 4. Bearer token from header
         $bearer = $request->bearerToken();
         if ($bearer) {
-            return 'bearer:' . hash('sha256', $bearer);
+            return 'bearer:'.hash('sha256', $bearer);
         }
 
         // 5. Standard session
         if ($request->hasSession() && $request->session()->isStarted()) {
-            return 'sess:' . $request->session()->getId();
+            return 'sess:'.$request->session()->getId();
         }
 
         // 6. Test session attribute
         if ($testSession = $request->attributes->get('test_session_id')) {
-            return 'test:' . $testSession;
+            return 'test:'.$testSession;
         }
 
-        return 'user_default:' . ($user?->id ?? 'guest');
+        return 'user_default:'.($user?->id ?? 'guest');
     }
 
     /**
@@ -480,9 +481,9 @@ class PasskeyService
         $knownPurposes = ['security_action', 'passkey_enrollment', 'credential_management', 'change_payment_details'];
         if ($sessionIdOrPurpose !== null && in_array($sessionIdOrPurpose, $knownPurposes, true) && $purpose === 'security_action') {
             $purpose = $sessionIdOrPurpose;
-            $sessionId = 'user_default:' . $user->id;
+            $sessionId = 'user_default:'.$user->id;
         } else {
-            $sessionId = $sessionIdOrPurpose ?: ('user_default:' . $user->id);
+            $sessionId = $sessionIdOrPurpose ?: ('user_default:'.$user->id);
         }
 
         $token = Str::random(40);
@@ -515,7 +516,7 @@ class PasskeyService
         $cacheKey = "auth:reauth_grant:token:{$grantToken}";
         $data = Cache::get($cacheKey);
 
-        if (!$data || !is_array($data)) {
+        if (! $data || ! is_array($data)) {
             return false;
         }
 
@@ -537,12 +538,13 @@ class PasskeyService
         // Validate expiration
         if (($data['expires_at'] ?? 0) < now()->timestamp) {
             Cache::forget($cacheKey);
+
             return false;
         }
 
         // Atomically consume (delete) the grant token now that it has been matched to this session
         $consumed = $this->atomicCachePull($cacheKey);
-        if (!$consumed) {
+        if (! $consumed) {
             return false;
         }
 
@@ -582,14 +584,15 @@ class PasskeyService
     }
 
     /**
-     * Atomically fetch and delete a cache key using Redis Lua script when Redis is available,
-     * falling back to Cache::pull.
+     * Atomically fetch and delete a cache key using Redis Lua script when Redis is available.
+     * Fails closed when Redis execution fails, and uses atomic locking for non-Redis test stores.
+     * Raw authentication keys/tokens are never emitted to logs.
      */
     public function atomicCachePull(string $cacheKey): mixed
     {
-        try {
-            $store = Cache::getStore();
-            if ($store instanceof \Illuminate\Cache\RedisStore) {
+        $store = Cache::getStore();
+        if ($store instanceof RedisStore) {
+            try {
                 $script = <<<'LUA'
 local val = redis.call('get', KEYS[1])
 if val then
@@ -598,7 +601,7 @@ end
 return val
 LUA;
                 $prefix = $store->getPrefix();
-                $fullKey = $prefix . $cacheKey;
+                $fullKey = $prefix.$cacheKey;
                 $raw = $store->connection()->eval($script, 1, $fullKey);
 
                 if ($raw === null || $raw === false) {
@@ -606,12 +609,33 @@ LUA;
                 }
 
                 return is_numeric($raw) ? $raw : @unserialize($raw);
+            } catch (\Throwable $e) {
+                // Fail-closed on Redis scripting failure to preserve single-use guarantees.
+                // Log only a safe identifier hash and error class; never log raw tokens or keys.
+                Log::warning('Atomic Redis cache pull failed', [
+                    'key_hash' => substr(hash('sha256', $cacheKey), 0, 16),
+                    'error_class' => get_class($e),
+                ]);
+
+                return null;
             }
-        } catch (\Throwable $e) {
-            Log::warning("Atomic Redis cache pull failed on '{$cacheKey}': " . $e->getMessage());
         }
 
-        return Cache::pull($cacheKey);
+        // Non-Redis fallback (e.g., local tests): use an atomic lock to guard pull
+        try {
+            $lockKey = 'atomic_pull_lock:'.md5($cacheKey);
+
+            return Cache::lock($lockKey, 5)->block(2, function () use ($cacheKey) {
+                return Cache::pull($cacheKey);
+            });
+        } catch (\Throwable $e) {
+            Log::warning('Atomic locked cache pull failed', [
+                'key_hash' => substr(hash('sha256', $cacheKey), 0, 16),
+                'error_class' => get_class($e),
+            ]);
+
+            return null;
+        }
     }
 
     /**
@@ -620,14 +644,14 @@ LUA;
     public function validateCosePublicKeyStructure(string $coseBytes): array
     {
         try {
-            $cose = \CBOR\Decoder::create()->decode(
-                new \CBOR\StringStream($coseBytes)
+            $cose = Decoder::create()->decode(
+                new StringStream($coseBytes)
             )->normalize();
         } catch (\Throwable $e) {
-            throw new \InvalidArgumentException('Malformed COSE public key in attestation: ' . $e->getMessage());
+            throw new \InvalidArgumentException('Malformed COSE public key in attestation: '.$e->getMessage());
         }
 
-        if (!is_array($cose)) {
+        if (! is_array($cose)) {
             throw new \InvalidArgumentException('Invalid COSE public key format in attestationObject.');
         }
 
@@ -635,7 +659,7 @@ LUA;
         $alg = isset($cose[3]) ? (int) $cose[3] : null;  // -7 = ES256, -257 = RS256, -8 = EdDSA
 
         $supportedAlgorithms = [-7, -257, -8];
-        if (!in_array($alg, $supportedAlgorithms, true)) {
+        if (! in_array($alg, $supportedAlgorithms, true)) {
             throw new \InvalidArgumentException("Unsupported public key algorithm '{$alg}'. Only ES256 (-7), RS256 (-257), and Ed25519 (-8) are supported.");
         }
 
@@ -704,11 +728,11 @@ LUA;
     protected function verifySignatureWithCoseKey(string $signedData, string $signature, string $coseBytes): bool
     {
         try {
-            $cose = \CBOR\Decoder::create()->decode(
-                new \CBOR\StringStream($coseBytes)
+            $cose = Decoder::create()->decode(
+                new StringStream($coseBytes)
             )->normalize();
 
-            if (!is_array($cose)) {
+            if (! is_array($cose)) {
                 return false;
             }
 
@@ -723,7 +747,7 @@ LUA;
                 $derPublicKey = $this->ecPointsToDer($x, $y);
                 $opensslKey = openssl_pkey_get_public($derPublicKey);
 
-                if (!$opensslKey) {
+                if (! $opensslKey) {
                     return false;
                 }
 
@@ -739,7 +763,7 @@ LUA;
                 $rsaPublicKey = $this->rsaComponentsToDer($n, $e);
                 $opensslKey = openssl_pkey_get_public($rsaPublicKey);
 
-                if (!$opensslKey) {
+                if (! $opensslKey) {
                     return false;
                 }
 
@@ -762,7 +786,8 @@ LUA;
                 return false;
             }
         } catch (\Throwable $e) {
-            Log::warning('Passkey signature verification error: ' . $e->getMessage());
+            Log::warning('Passkey signature verification error: '.$e->getMessage());
+
             return false;
         }
 
@@ -776,12 +801,12 @@ LUA;
     {
         $x = str_pad($x, 32, "\0", STR_PAD_LEFT);
         $y = str_pad($y, 32, "\0", STR_PAD_LEFT);
-        $point = "\x04" . $x . $y;
+        $point = "\x04".$x.$y;
 
         // X.509 SubjectPublicKeyInfo for prime256v1
-        $der = "\x30\x59\x30\x13\x06\x07\x2a\x86\x48\xce\x3d\x02\x01\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07\x03\x42\x00" . $point;
+        $der = "\x30\x59\x30\x13\x06\x07\x2a\x86\x48\xce\x3d\x02\x01\x06\x08\x2a\x86\x48\xce\x3d\x03\x01\x07\x03\x42\x00".$point;
 
-        return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($der), 64, "\n") . "-----END PUBLIC KEY-----\n";
+        return "-----BEGIN PUBLIC KEY-----\n".chunk_split(base64_encode($der), 64, "\n")."-----END PUBLIC KEY-----\n";
     }
 
     /**
@@ -791,23 +816,24 @@ LUA;
     {
         $modulus = $this->encodeDerInteger($n);
         $exponent = $this->encodeDerInteger($e);
-        $rsaSequence = "\x30" . $this->encodeDerLength(strlen($modulus . $exponent)) . $modulus . $exponent;
+        $rsaSequence = "\x30".$this->encodeDerLength(strlen($modulus.$exponent)).$modulus.$exponent;
 
-        $bitString = "\x03" . $this->encodeDerLength(strlen($rsaSequence) + 1) . "\x00" . $rsaSequence;
+        $bitString = "\x03".$this->encodeDerLength(strlen($rsaSequence) + 1)."\x00".$rsaSequence;
         $algorithmIdentifier = "\x30\x0d\x06\x09\x2a\x86\x48\x86\xf7\x0d\x01\x01\x01\x05\x00";
 
-        $spki = "\x30" . $this->encodeDerLength(strlen($algorithmIdentifier . $bitString)) . $algorithmIdentifier . $bitString;
+        $spki = "\x30".$this->encodeDerLength(strlen($algorithmIdentifier.$bitString)).$algorithmIdentifier.$bitString;
 
-        return "-----BEGIN PUBLIC KEY-----\n" . chunk_split(base64_encode($spki), 64, "\n") . "-----END PUBLIC KEY-----\n";
+        return "-----BEGIN PUBLIC KEY-----\n".chunk_split(base64_encode($spki), 64, "\n")."-----END PUBLIC KEY-----\n";
     }
 
     protected function encodeDerInteger(string $data): string
     {
         $data = ltrim($data, "\x00");
         if (ord($data[0]) & 0x80) {
-            $data = "\x00" . $data;
+            $data = "\x00".$data;
         }
-        return "\x02" . $this->encodeDerLength(strlen($data)) . $data;
+
+        return "\x02".$this->encodeDerLength(strlen($data)).$data;
     }
 
     protected function encodeDerLength(int $len): string
@@ -817,10 +843,11 @@ LUA;
         }
         $bytes = '';
         while ($len > 0) {
-            $bytes = chr($len & 0xff) . $bytes;
+            $bytes = chr($len & 0xFF).$bytes;
             $len >>= 8;
         }
-        return chr(0x80 | strlen($bytes)) . $bytes;
+
+        return chr(0x80 | strlen($bytes)).$bytes;
     }
 
     /**
@@ -842,16 +869,16 @@ LUA;
             $s = ltrim($s, "\x00");
 
             if (ord($r[0]) & 0x80) {
-                $r = "\x00" . $r;
+                $r = "\x00".$r;
             }
             if (ord($s[0]) & 0x80) {
-                $s = "\x00" . $s;
+                $s = "\x00".$s;
             }
 
-            $rDer = "\x02" . chr(strlen($r)) . $r;
-            $sDer = "\x02" . chr(strlen($s)) . $s;
+            $rDer = "\x02".chr(strlen($r)).$r;
+            $sDer = "\x02".chr(strlen($s)).$s;
 
-            return "\x30" . chr(strlen($rDer . $sDer)) . $rDer . $sDer;
+            return "\x30".chr(strlen($rDer.$sDer)).$rDer.$sDer;
         }
 
         return $sig;
