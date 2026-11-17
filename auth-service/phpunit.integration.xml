@@ -19,7 +19,12 @@
         <env name="DB_CONNECTION" value="mysql" force="true"/>
         <env name="DB_DATABASE" value="codebridge_auth" force="true"/>
         <env name="CACHE_STORE" value="redis" force="true"/>
+        <env name="REDIS_DB" value="15" force="true"/>
+        <env name="REDIS_CACHE_DB" value="15" force="true"/>
+        <env name="REDIS_PREFIX" value="cb_test_infra:" force="true"/>
+        <env name="CACHE_PREFIX" value="cb_test_cache:" force="true"/>
         <env name="QUEUE_CONNECTION" value="redis" force="true"/>
+        <env name="REDIS_QUEUE" value="cb_test_queue" force="true"/>
         <env name="SESSION_DRIVER" value="redis" force="true"/>
         <env name="FILESYSTEM_DISK" value="s3" force="true"/>
         <env name="REAL_INFRASTRUCTURE_TEST" value="true" force="true"/>

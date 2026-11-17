@@ -7,9 +7,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
-use Tests\TestCase;
+use Tests\IntegrationTestCase;
 
-class InfrastructureIntegrationTest extends TestCase
+class InfrastructureIntegrationTest extends IntegrationTestCase
 {
     protected function setUp(): void
     {
