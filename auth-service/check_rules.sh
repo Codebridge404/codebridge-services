@@ -96,7 +96,7 @@ run_rule_check "7" "Security Testing (WAF, SQLi, XSS, Tenant Isolation, Financia
 # 8. Integration & Infrastructure Testing
 # ------------------------------------------------------------------------------
 run_rule_check "8" "Integration Testing (Database Transactions, Redis & MinIO WebP Uploads)" \
-    "php artisan test --filter='AvatarUploadTest|UserRelationshipsTest|InfrastructureIntegrationTest'"
+    "php artisan test --filter='AvatarUploadTest|UserRelationshipsTest' && ./vendor/bin/phpunit -c phpunit.integration.xml"
 
 # ------------------------------------------------------------------------------
 # 9. Performance & Telemetry Testing

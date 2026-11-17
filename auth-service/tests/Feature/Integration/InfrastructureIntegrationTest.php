@@ -11,12 +11,26 @@ use Tests\TestCase;
 
 class InfrastructureIntegrationTest extends TestCase
 {
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        if (config('database.connections.mysql.database') === ':memory:') {
+            config(['database.connections.mysql.database' => 'codebridge_auth']);
+            DB::purge('mysql');
+        }
+    }
+
     /**
      * Helper to determine if MySQL container is reachable.
      */
     protected function isMysqlAvailable(): bool
     {
         try {
+            if (config('database.connections.mysql.database') === ':memory:') {
+                config(['database.connections.mysql.database' => 'codebridge_auth']);
+                DB::purge('mysql');
+            }
             DB::connection('mysql')->getPdo();
 
             return true;
@@ -56,9 +70,10 @@ class InfrastructureIntegrationTest extends TestCase
      */
     public function test_mysql_real_connection_and_transaction_isolation(): void
     {
-        if (! $this->isMysqlAvailable()) {
-            $this->markTestSkipped('Real MySQL service is not reachable in this environment.');
-        }
+        $this->assertTrue(
+            $this->isMysqlAvailable(),
+            'Integration Gate Failure: Real MySQL database (auth-mysql:3306) is not reachable.'
+        );
 
         $conn = DB::connection('mysql');
         $conn->beginTransaction();
@@ -86,9 +101,10 @@ class InfrastructureIntegrationTest extends TestCase
      */
     public function test_redis_real_connection_and_atomic_script_execution(): void
     {
-        if (! $this->isRedisAvailable()) {
-            $this->markTestSkipped('Real Redis service is not reachable in this environment.');
-        }
+        $this->assertTrue(
+            $this->isRedisAvailable(),
+            'Integration Gate Failure: Real Redis cache service (auth-redis:6379) is not reachable.'
+        );
 
         $redis = Redis::connection();
         $key = 'codebridge:integration:atomic_test_'.Str::random(8);
@@ -117,9 +133,10 @@ LUA;
      */
     public function test_redis_horizon_queue_integration(): void
     {
-        if (! $this->isRedisAvailable()) {
-            $this->markTestSkipped('Real Redis queue service is not reachable in this environment.');
-        }
+        $this->assertTrue(
+            $this->isRedisAvailable(),
+            'Integration Gate Failure: Real Redis queue service (auth-redis:6379) is not reachable.'
+        );
 
         $redis = Redis::connection();
         $queueKey = 'queues:integration_probe_'.Str::random(6);
@@ -145,9 +162,10 @@ LUA;
      */
     public function test_real_minio_s3_media_upload_and_webp_storage(): void
     {
-        if (! $this->isMinioAvailable()) {
-            $this->markTestSkipped('Real MinIO S3 service is not reachable in this environment.');
-        }
+        $this->assertTrue(
+            $this->isMinioAvailable(),
+            'Integration Gate Failure: Real MinIO S3 media service (minio:9000) is not reachable.'
+        );
 
         $disk = Storage::disk('s3');
         $fileName = 'test_uploads/integration_'.Str::random(10).'.webp';

@@ -221,16 +221,13 @@ class PasskeyService
             throw new \RuntimeException('Malformed authenticator data payload.');
         }
 
-        // WebAuthn Level 3 Step 14: Verify that rpIdHash in authData matches expected RP ID or request origin host
+        // WebAuthn Level 3 Step 14: Verify that rpIdHash in authData strictly matches the configured RP ID
         $expectedRpId = config('webauthn.rp.id', 'localhost');
         $expectedRpIdHash = hash('sha256', $expectedRpId, true);
         $authDataRpIdHash = substr($authDataBytes, 0, 32);
 
         if (! hash_equals($expectedRpIdHash, $authDataRpIdHash)) {
-            $parsedHost = parse_url($origin, PHP_URL_HOST);
-            if (! $parsedHost || ! hash_equals(hash('sha256', $parsedHost, true), $authDataRpIdHash)) {
-                throw new \RuntimeException('RP ID mismatch in authenticator data during passkey registration.');
-            }
+            throw new \RuntimeException('RP ID mismatch in authenticator data during passkey registration.');
         }
 
         $flags = ord($authDataBytes[32]);
@@ -395,17 +392,13 @@ class PasskeyService
             throw new \RuntimeException('User verification (biometric or PIN) is required.');
         }
 
-        // Verify RP ID hash matches config('webauthn.rp.id')
+        // Verify RP ID hash strictly matches config('webauthn.rp.id')
         $expectedRpId = config('webauthn.rp.id', 'localhost');
         $expectedRpIdHash = hash('sha256', $expectedRpId, true);
         $authDataRpIdHash = substr($authDataBytes, 0, 32);
 
-        // Allow matching if RP ID matches configured host or request origin host
         if (! hash_equals($expectedRpIdHash, $authDataRpIdHash)) {
-            $parsedHost = parse_url($origin, PHP_URL_HOST);
-            if (! $parsedHost || ! hash_equals(hash('sha256', $parsedHost, true), $authDataRpIdHash)) {
-                throw new \RuntimeException('RP ID mismatch in authenticator data.');
-            }
+            throw new \RuntimeException('RP ID mismatch in authenticator data.');
         }
 
         // Verify cryptographic assertion signature

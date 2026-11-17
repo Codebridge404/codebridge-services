@@ -26,6 +26,7 @@ use App\Support\SchemaGuard;
 use Carbon\Carbon;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
@@ -905,6 +906,16 @@ class User extends Authenticatable implements MustVerifyEmail
                     $this->getRelationQuery()
                 );
                 $this->query->whereIn($this->morphType, $this->allowedTypes);
+            }
+
+            public function getRelationExistenceQuery(
+                Builder $query,
+                Builder $parentQuery,
+                $columns = ['*']
+            ) {
+                return $query->select($columns)
+                    ->whereColumn($this->getQualifiedParentKeyName(), '=', $this->getExistenceCompareKey())
+                    ->whereIn($query->qualifyColumn($this->getMorphType()), $this->allowedTypes);
             }
         };
     }

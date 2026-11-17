@@ -48,6 +48,8 @@ if command -v semgrep &> /dev/null; then
     if ! semgrep --config="p/php" --config="p/owasp-top-ten" --error ./auth-service/app ./operations-service/app; then
         echo -e "${RED}✘ Semgrep SAST scan identified security findings!${NC}"
         FAILED_PILLARS=$((FAILED_PILLARS + 1))
+    else
+        echo -e "${GREEN}✓ Semgrep scan completed.${NC}\n"
     fi
 elif docker info &> /dev/null; then
     echo "Running Semgrep via official Docker image..."
@@ -58,11 +60,14 @@ elif docker info &> /dev/null; then
         /src/auth-service/app /src/operations-service/app; then
         echo -e "${RED}✘ Semgrep SAST scan identified security findings!${NC}"
         FAILED_PILLARS=$((FAILED_PILLARS + 1))
+    else
+        echo -e "${GREEN}✓ Semgrep scan completed.${NC}\n"
     fi
 else
-    echo "Semgrep not installed. Install with 'brew install semgrep' or 'pip install semgrep'."
+    echo -e "${RED}✘ Semgrep is not installed and Docker is unavailable. SAST scan cannot run!${NC}"
+    echo "Install with 'brew install semgrep' or 'pip install semgrep'."
+    FAILED_PILLARS=$((FAILED_PILLARS + 1))
 fi
-echo -e "${GREEN}✓ Semgrep scan completed.${NC}\n"
 
 # ------------------------------------------------------------------------------
 # Pillar 3: OWASP ZAP (DAST - Dynamic API Penetration Scan)
@@ -78,11 +83,13 @@ if docker info &> /dev/null; then
         -r zap_report.html; then
         echo -e "${RED}✘ OWASP ZAP DAST scan detected findings! Check reports/zap_report.html.${NC}"
         FAILED_PILLARS=$((FAILED_PILLARS + 1))
+    else
+        echo -e "${GREEN}✓ OWASP ZAP DAST scan completed.${NC}\n"
     fi
 else
-    echo "Docker not accessible for ZAP scan."
+    echo -e "${RED}✘ Docker is not accessible for OWASP ZAP scan. DAST scan cannot run!${NC}"
+    FAILED_PILLARS=$((FAILED_PILLARS + 1))
 fi
-echo -e "${GREEN}✓ OWASP ZAP DAST scan completed.${NC}\n"
 
 # ------------------------------------------------------------------------------
 # Pillar 4: Laravel PHPUnit / Pest Security Regression Tests
