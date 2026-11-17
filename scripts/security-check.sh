@@ -7,13 +7,15 @@
 # 4. Laravel PHPUnit / Pest (Automated Regression Security Suite)
 # ==============================================================================
 
-set -e
+set -u
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
+
+FAILED_PILLARS=0
 
 echo -e "${BLUE}====================================================================${NC}"
 echo -e "${BLUE}        CodeBridge Enterprise DevSecOps Pipeline                   ${NC}"
@@ -25,10 +27,16 @@ echo -e "${BLUE}================================================================
 echo -e "${YELLOW}[1/4] Running Composer Audit across microservices...${NC}"
 
 echo -e "--> Auditing auth-service dependencies..."
-docker exec codebridge-auth-service composer audit || echo -e "${YELLOW}Warning: Advisories found in auth-service. Review and run composer update.${NC}"
+if ! docker exec codebridge-auth-service composer audit; then
+    echo -e "${RED}✘ Composer audit failed in auth-service!${NC}"
+    FAILED_PILLARS=$((FAILED_PILLARS + 1))
+fi
 
 echo -e "--> Auditing operations-service dependencies..."
-docker exec codebridge-operations-service composer audit || echo -e "${YELLOW}Warning: Advisories found in operations-service. Review and run composer update.${NC}"
+if ! docker exec codebridge-operations-service composer audit; then
+    echo -e "${RED}✘ Composer audit failed in operations-service!${NC}"
+    FAILED_PILLARS=$((FAILED_PILLARS + 1))
+fi
 
 echo -e "${GREEN}✓ Composer Audit step completed.${NC}\n"
 
@@ -37,13 +45,20 @@ echo -e "${GREEN}✓ Composer Audit step completed.${NC}\n"
 # ------------------------------------------------------------------------------
 echo -e "${YELLOW}[2/4] Running Semgrep SAST Scan (PHP / Laravel / OWASP Top 10)...${NC}"
 if command -v semgrep &> /dev/null; then
-    semgrep --config="p/php" --config="p/owasp-top-ten" ./auth-service/app ./operations-service/app || true
+    if ! semgrep --config="p/php" --config="p/owasp-top-ten" --error ./auth-service/app ./operations-service/app; then
+        echo -e "${RED}✘ Semgrep SAST scan identified security findings!${NC}"
+        FAILED_PILLARS=$((FAILED_PILLARS + 1))
+    fi
 elif docker info &> /dev/null; then
     echo "Running Semgrep via official Docker image..."
-    docker run --rm -v "$(pwd):/src" returntocorp/semgrep semgrep \
+    if ! docker run --rm -v "$(pwd):/src" returntocorp/semgrep semgrep \
         --config="p/php" \
         --config="p/owasp-top-ten" \
-        /src/auth-service/app /src/operations-service/app || true
+        --error \
+        /src/auth-service/app /src/operations-service/app; then
+        echo -e "${RED}✘ Semgrep SAST scan identified security findings!${NC}"
+        FAILED_PILLARS=$((FAILED_PILLARS + 1))
+    fi
 else
     echo "Semgrep not installed. Install with 'brew install semgrep' or 'pip install semgrep'."
 fi
@@ -56,11 +71,14 @@ echo -e "${YELLOW}[3/4] Running OWASP ZAP Baseline Scan on API Gateway...${NC}"
 mkdir -p ./reports
 if docker info &> /dev/null; then
     echo "Scanning http://codebridge-api-gateway:80 via Docker network 'codebridge-network'..."
-    docker run --rm --network codebridge-network \
+    if ! docker run --rm --network codebridge-network \
         -v "$(pwd)/reports:/zap/wrk/:rw" \
         zaproxy/zap-stable zap-baseline.py \
         -t http://codebridge-api-gateway \
-        -r zap_report.html -I || echo -e "${YELLOW}ZAP finished with findings. Check reports/zap_report.html.${NC}"
+        -r zap_report.html; then
+        echo -e "${RED}✘ OWASP ZAP DAST scan detected findings! Check reports/zap_report.html.${NC}"
+        FAILED_PILLARS=$((FAILED_PILLARS + 1))
+    fi
 else
     echo "Docker not accessible for ZAP scan."
 fi
@@ -72,11 +90,25 @@ echo -e "${GREEN}✓ OWASP ZAP DAST scan completed.${NC}\n"
 echo -e "${YELLOW}[4/4] Running Automated Laravel Security Test Suites...${NC}"
 
 echo -e "--> Running Auth Service Domain Tests (Auth, Users, Roles, Sessions, Tenants, API Keys, Org, CRM, Meetings, SuperAdmin)..."
-docker exec codebridge-auth-service php artisan test
+if ! docker exec codebridge-auth-service php artisan test; then
+    echo -e "${RED}✘ Auth Service automated tests failed!${NC}"
+    FAILED_PILLARS=$((FAILED_PILLARS + 1))
+fi
 
 echo -e "--> Running Operations Service Domain Tests (Catalog, Inventory, Sales, Shifts, Payments, Finance, Reports)..."
-docker exec codebridge-operations-service php artisan test
+if ! docker exec codebridge-operations-service php artisan test; then
+    echo -e "${RED}✘ Operations Service automated tests failed!${NC}"
+    FAILED_PILLARS=$((FAILED_PILLARS + 1))
+fi
+
+if [ ${FAILED_PILLARS} -ne 0 ]; then
+    echo -e "\n${RED}====================================================================${NC}"
+    echo -e "${RED}  ✘ Security Pipeline Failed with ${FAILED_PILLARS} failing pillar(s)!${NC}"
+    echo -e "${RED}====================================================================${NC}"
+    exit 1
+fi
 
 echo -e "\n${GREEN}====================================================================${NC}"
 echo -e "${GREEN}  ✓ All 4 Security Pipeline Checks Executed Successfully!           ${NC}"
 echo -e "${GREEN}====================================================================${NC}"
+exit 0

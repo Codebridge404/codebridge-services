@@ -27,6 +27,7 @@ use Carbon\Carbon;
 use Database\Factories\UserFactory;
 use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Illuminate\Support\Facades\Cache;
@@ -867,31 +868,45 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
-     * Get the personal access tokens for the user, supporting both reorganized and legacy tokenable_type values.
+     * Get the personal access tokens for the user, supporting both reorganized and legacy tokenable_type values
+     * across direct queries, eager loading (User::with('tokens')), and token creation.
      */
     public function tokens()
     {
-        $relation = $this->morphMany(Sanctum::$personalAccessTokenModel, 'tokenable');
+        $instance = new Sanctum::$personalAccessTokenModel;
+        [$type, $id] = $this->getMorphs('tokenable', null, null);
+        $table = $instance->getTable();
+        $localKey = $this->getKeyName();
 
-        $query = $relation->getQuery();
-        $baseQuery = $query->getQuery();
+        return new class($instance->newQuery(), $this, $table.'.'.$type, $table.'.'.$id, $localKey) extends MorphMany
+        {
+            protected array $allowedTypes = [
+                User::class,
+                'App\Models\User',
+                'user',
+            ];
 
-        foreach ($baseQuery->wheres as $i => $where) {
-            if (isset($where['column']) && ($where['column'] === 'personal_access_tokens.tokenable_type' || $where['column'] === 'tokenable_type')) {
-                unset($baseQuery->wheres[$i]);
+            public function addConstraints()
+            {
+                if (self::$constraints) {
+                    $this->query->whereIn($this->morphType, $this->allowedTypes);
+                    $this->query->where($this->foreignKey, '=', $this->getParentKey());
+                    $this->query->whereNotNull($this->foreignKey);
+                }
             }
-        }
-        $baseQuery->wheres = array_values($baseQuery->wheres);
 
-        $bindings = $baseQuery->getRawBindings()['where'] ?? [];
-        if (! empty($bindings) && $bindings[0] === $this->getMorphClass()) {
-            array_shift($bindings);
-            $baseQuery->setBindings($bindings, 'where');
-        }
-
-        $relation->whereIn('tokenable_type', [$this->getMorphClass(), 'App\Models\User', 'user']);
-
-        return $relation;
+            public function addEagerConstraints(array $models)
+            {
+                $whereIn = $this->whereInMethod($this->parent, $this->localKey);
+                $this->whereInEager(
+                    $whereIn,
+                    $this->foreignKey,
+                    $this->getKeys($models, $this->localKey),
+                    $this->getRelationQuery()
+                );
+                $this->query->whereIn($this->morphType, $this->allowedTypes);
+            }
+        };
     }
 
     protected static function newFactory()

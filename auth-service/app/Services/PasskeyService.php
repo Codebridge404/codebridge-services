@@ -217,6 +217,22 @@ class PasskeyService
         }
 
         $authDataBytes = is_string($authData) ? $authData : (string) $authData;
+        if (strlen($authDataBytes) < 37) {
+            throw new \RuntimeException('Malformed authenticator data payload.');
+        }
+
+        // WebAuthn Level 3 Step 14: Verify that rpIdHash in authData matches expected RP ID or request origin host
+        $expectedRpId = config('webauthn.rp.id', 'localhost');
+        $expectedRpIdHash = hash('sha256', $expectedRpId, true);
+        $authDataRpIdHash = substr($authDataBytes, 0, 32);
+
+        if (! hash_equals($expectedRpIdHash, $authDataRpIdHash)) {
+            $parsedHost = parse_url($origin, PHP_URL_HOST);
+            if (! $parsedHost || ! hash_equals(hash('sha256', $parsedHost, true), $authDataRpIdHash)) {
+                throw new \RuntimeException('RP ID mismatch in authenticator data during passkey registration.');
+            }
+        }
+
         $flags = ord($authDataBytes[32]);
         $up = ($flags & 0x01) !== 0; // User Present
         $uv = ($flags & 0x04) !== 0; // User Verified
@@ -427,24 +443,21 @@ class PasskeyService
 
     /**
      * Resolve unique session identifier from the incoming request.
+     * Enforces strict session binding: authenticated session objects and bearer tokens take precedence
+     * over caller-supplied client headers to prevent session grant hijacking.
      */
     public function resolveSessionId(Request $request, ?User $user = null): string
     {
         $user = $user ?? $request->user();
 
-        // 1. Explicit session header (for multi-device testing & native clients)
-        if ($sessionHeader = $request->header('X-Session-Id')) {
-            return (string) $sessionHeader;
-        }
-
-        // 2. Explicit UserSession from AuthenticateJwt middleware
+        // 1. Explicit UserSession from AuthenticateJwt middleware (enterprise JWT session)
         if ($userSession = $request->attributes->get('user_session')) {
             if ($userSession instanceof UserSession && ! empty($userSession->uuid)) {
                 return 'sid:'.$userSession->uuid;
             }
         }
 
-        // 3. Sanctum PersonalAccessToken
+        // 2. Sanctum PersonalAccessToken bound to authenticated user
         if ($user && method_exists($user, 'currentAccessToken') && ($pat = $user->currentAccessToken())) {
             if (! empty($pat->id)) {
                 return 'pat:'.$pat->id;
@@ -454,15 +467,20 @@ class PasskeyService
             }
         }
 
-        // 4. Bearer token from header
+        // 3. Bearer token from header
         $bearer = $request->bearerToken();
         if ($bearer) {
             return 'bearer:'.hash('sha256', $bearer);
         }
 
-        // 5. Standard session
+        // 4. Standard session
         if ($request->hasSession() && $request->session()->isStarted()) {
             return 'sess:'.$request->session()->getId();
+        }
+
+        // 5. Explicit session header (only trusted when no authenticated session or bearer is present)
+        if ($sessionHeader = $request->header('X-Session-Id')) {
+            return (string) $sessionHeader;
         }
 
         // 6. Test session attribute

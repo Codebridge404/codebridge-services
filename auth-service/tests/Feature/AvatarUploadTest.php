@@ -17,14 +17,16 @@ class AvatarUploadTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        Storage::fake('minio');
-        Storage::fake('s3');
-        Storage::fake('public');
+        if (! env('REAL_MINIO_TEST', false)) {
+            Storage::fake('minio');
+            Storage::fake('s3');
+            Storage::fake('public');
+        }
     }
 
     public function test_image_service_converts_png_and_jpeg_to_webp(): void
     {
-        $service = new ImageService();
+        $service = new ImageService;
 
         // 1. Create truecolor test PNG with transparency
         $im = imagecreatetruecolor(50, 50);
@@ -184,7 +186,7 @@ class AvatarUploadTest extends TestCase
         $jpgBytes = ob_get_clean();
         imagedestroy($im);
 
-        $base64 = 'data:image/jpeg;base64,' . base64_encode($jpgBytes);
+        $base64 = 'data:image/jpeg;base64,'.base64_encode($jpgBytes);
 
         $response = $this->putJson('/api/v1/auth/profile', [
             'avatar_url' => $base64,
@@ -257,5 +259,33 @@ class AvatarUploadTest extends TestCase
         $user->refresh();
         $this->assertStringEndsWith('.webp', $user->avatar_url);
     }
-}
 
+    /**
+     * Real MinIO S3 media upload and WebP storage integration test.
+     */
+    public function test_real_minio_s3_avatar_upload_end_to_end(): void
+    {
+        $endpoint = config('filesystems.disks.s3.endpoint');
+        if (! $endpoint || ! env('REAL_MINIO_TEST', false)) {
+            $this->markTestSkipped('Real MinIO infrastructure not configured or REAL_MINIO_TEST not enabled.');
+        }
+
+        $user = User::factory()->create();
+        Sanctum::actingAs($user, ['*']);
+
+        $file = UploadedFile::fake()->image('real_avatar.png', 100, 100);
+        $response = $this->postJson('/api/v1/auth/profile/avatar', [
+            'avatar' => $file,
+        ]);
+
+        $response->assertStatus(200);
+        $url = $response->json('data.avatar_url') ?? $response->json('avatar_url');
+        $this->assertNotEmpty($url);
+
+        $path = parse_url($url, PHP_URL_PATH);
+        $s3Path = ltrim(preg_replace('#^/'.config('filesystems.disks.s3.bucket').'/#', '', $path), '/');
+        $this->assertTrue(Storage::disk('s3')->exists($s3Path));
+
+        Storage::disk('s3')->delete($s3Path);
+    }
+}

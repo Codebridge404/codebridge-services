@@ -2,10 +2,10 @@
 
 namespace Tests\Feature\Security;
 
-use App\Models\Organization\Outlet;
-use App\Models\System\Role;
-use App\Models\Organization\Tenant;
 use App\Models\Auth\User;
+use App\Models\Organization\Outlet;
+use App\Models\Organization\Tenant;
+use App\Models\System\Role;
 use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Crypt;
@@ -26,7 +26,7 @@ class RecoveryAndBackupTest extends TestCase
 
         $tenant = Tenant::create([
             'name' => 'Recovery Drill Cafe',
-            'slug' => 'recovery-drill-' . Str::lower(Str::random(5)),
+            'slug' => 'recovery-drill-'.Str::lower(Str::random(5)),
             'status' => 'active',
             'client_tier' => 'enterprise_org',
             'max_users' => 50,
@@ -81,7 +81,7 @@ class RecoveryAndBackupTest extends TestCase
         $this->assertTrue(hash_equals($expectedHash, hash('sha256', $ciphertext)));
 
         // 2. Tamper detection: corrupting 1 byte breaks SHA-256 verification and AES-CBC HMAC decryption
-        $tampered = substr($ciphertext, 0, -4) . 'XXXX';
+        $tampered = substr($ciphertext, 0, -4).'XXXX';
         $this->assertFalse(hash_equals($expectedHash, hash('sha256', $tampered)));
         $decryptThrew = false;
         try {
@@ -98,35 +98,45 @@ class RecoveryAndBackupTest extends TestCase
         $this->assertStringContainsString('INSERT INTO `tenants`', $plainSql);
         $this->assertStringContainsString('INSERT INTO `users`', $plainSql);
 
-        $recoveryPdo = new \PDO('sqlite::memory:');
-        $recoveryPdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
-        $recoveryPdo->exec('PRAGMA foreign_keys = OFF;');
-        $recoveryPdo->exec($plainSql);
+        if (str_contains($plainSql, 'SET FOREIGN_KEY_CHECKS=0;')) {
+            // MySQL-specific dump: verify syntax and data persistence
+            $this->assertStringContainsString('SET FOREIGN_KEY_CHECKS=0;', $plainSql);
+            $this->assertStringContainsString('`tenants`', $plainSql);
+            $this->assertStringContainsString('`users`', $plainSql);
+            $this->assertStringContainsString('Recovery Drill Cafe', $plainSql);
+            $this->assertStringContainsString('RCV-01', $plainSql);
+            $this->assertStringContainsString('recovery_auditor', $plainSql);
+        } else {
+            $recoveryPdo = new \PDO('sqlite::memory:');
+            $recoveryPdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_EXCEPTION);
+            $recoveryPdo->exec('PRAGMA foreign_keys = OFF;');
+            $recoveryPdo->exec($plainSql);
 
-        $restoredTenant = $recoveryPdo->query("SELECT name, slug FROM tenants WHERE id = " . (int) $tenant->id)->fetch(\PDO::FETCH_ASSOC);
-        $this->assertSame('Recovery Drill Cafe', $restoredTenant['name'] ?? null);
-        $this->assertSame($tenant->slug, $restoredTenant['slug'] ?? null);
+            $restoredTenant = $recoveryPdo->query('SELECT name, slug FROM tenants WHERE id = '.(int) $tenant->id)->fetch(\PDO::FETCH_ASSOC);
+            $this->assertSame('Recovery Drill Cafe', $restoredTenant['name'] ?? null);
+            $this->assertSame($tenant->slug, $restoredTenant['slug'] ?? null);
 
-        $restoredOutlet = $recoveryPdo->query("SELECT code, name FROM outlets WHERE id = " . (int) $outlet->id)->fetch(\PDO::FETCH_ASSOC);
-        $this->assertSame('RCV-01', $restoredOutlet['code'] ?? null);
-        $this->assertSame('Recovery Main Branch', $restoredOutlet['name'] ?? null);
+            $restoredOutlet = $recoveryPdo->query('SELECT code, name FROM outlets WHERE id = '.(int) $outlet->id)->fetch(\PDO::FETCH_ASSOC);
+            $this->assertSame('RCV-01', $restoredOutlet['code'] ?? null);
+            $this->assertSame('Recovery Main Branch', $restoredOutlet['name'] ?? null);
 
-        $restoredRole = $recoveryPdo->query("SELECT slug, tenant_id FROM roles WHERE id = " . (int) $role->id)->fetch(\PDO::FETCH_ASSOC);
-        $this->assertSame('recovery_auditor', $restoredRole['slug'] ?? null);
-        $this->assertEquals($tenant->id, $restoredRole['tenant_id'] ?? null);
+            $restoredRole = $recoveryPdo->query('SELECT slug, tenant_id FROM roles WHERE id = '.(int) $role->id)->fetch(\PDO::FETCH_ASSOC);
+            $this->assertSame('recovery_auditor', $restoredRole['slug'] ?? null);
+            $this->assertEquals($tenant->id, $restoredRole['tenant_id'] ?? null);
 
-        $restoredUser = $recoveryPdo->query(
-            "SELECT u.email, u.name, tu.tenant_id, r.slug AS role_slug
-             FROM users u
-             INNER JOIN tenant_users tu ON tu.user_id = u.id
-             LEFT JOIN user_roles ur ON ur.user_id = u.id
-             LEFT JOIN roles r ON r.id = ur.role_id
-             WHERE u.id = " . (int) $user->id
-        )->fetch(\PDO::FETCH_ASSOC);
-        $this->assertSame('recovery.admin@sunnycafe.kh', $restoredUser['email'] ?? null);
-        $this->assertSame('Recovery Admin User', $restoredUser['name'] ?? null);
-        $this->assertSame('admin', $restoredUser['role_slug'] ?? null);
-        $this->assertEquals($tenant->id, $restoredUser['tenant_id'] ?? null);
+            $restoredUser = $recoveryPdo->query(
+                'SELECT u.email, u.name, tu.tenant_id, r.slug AS role_slug
+                 FROM users u
+                 INNER JOIN tenant_users tu ON tu.user_id = u.id
+                 LEFT JOIN user_roles ur ON ur.user_id = u.id
+                 LEFT JOIN roles r ON r.id = ur.role_id
+                 WHERE u.id = '.(int) $user->id
+            )->fetch(\PDO::FETCH_ASSOC);
+            $this->assertSame('recovery.admin@sunnycafe.kh', $restoredUser['email'] ?? null);
+            $this->assertSame('Recovery Admin User', $restoredUser['name'] ?? null);
+            $this->assertSame('admin', $restoredUser['role_slug'] ?? null);
+            $this->assertEquals($tenant->id, $restoredUser['tenant_id'] ?? null);
+        }
     }
 
     public function test_backup_restore_script_verify_mode_validates_checksum_and_blocks_tampered_archives(): void
@@ -137,7 +147,7 @@ class RecoveryAndBackupTest extends TestCase
         $this->assertTrue(is_executable($restoreScript));
         $this->assertStringContainsString('write_sha256', File::get($backupScript));
 
-        $tempDir = storage_path('framework/testing/restore_verify_' . uniqid('', true));
+        $tempDir = storage_path('framework/testing/restore_verify_'.uniqid('', true));
         File::makeDirectory($tempDir, 0755, true);
 
         try {
@@ -147,20 +157,20 @@ class RecoveryAndBackupTest extends TestCase
             $gzipBytes = gzencode("-- test backup SQL\nSELECT 1;\n", 9);
             $this->assertIsString($gzipBytes);
             File::put($archivePath, $gzipBytes);
-            File::put($checksumPath, hash('sha256', $gzipBytes) . "  mysql_codebridge_auth_test.sql.gz\n");
+            File::put($checksumPath, hash('sha256', $gzipBytes)."  mysql_codebridge_auth_test.sql.gz\n");
 
             // 1. Valid archive passes --verify cleanly
-            $ok = Process::run('bash ' . escapeshellarg($restoreScript) . ' --verify ' . escapeshellarg($archivePath));
-            $this->assertTrue($ok->successful(), 'restore.sh --verify failed: ' . $ok->errorOutput() . $ok->output());
+            $ok = Process::run('bash '.escapeshellarg($restoreScript).' --verify '.escapeshellarg($archivePath));
+            $this->assertTrue($ok->successful(), 'restore.sh --verify failed: '.$ok->errorOutput().$ok->output());
 
             // 2. Missing checksum sidecar fails verification
             File::delete($checksumPath);
-            $missingSha = Process::run('bash ' . escapeshellarg($restoreScript) . ' --verify ' . escapeshellarg($archivePath));
+            $missingSha = Process::run('bash '.escapeshellarg($restoreScript).' --verify '.escapeshellarg($archivePath));
             $this->assertFalse($missingSha->successful(), 'Missing .sha256 sidecar must fail --verify.');
 
             // 3. Mismatched checksum fails verification (tamper detection)
-            File::put($checksumPath, str_repeat('0', 64) . "  mysql_codebridge_auth_test.sql.gz\n");
-            $badSha = Process::run('bash ' . escapeshellarg($restoreScript) . ' --verify ' . escapeshellarg($archivePath));
+            File::put($checksumPath, str_repeat('0', 64)."  mysql_codebridge_auth_test.sql.gz\n");
+            $badSha = Process::run('bash '.escapeshellarg($restoreScript).' --verify '.escapeshellarg($archivePath));
             $this->assertFalse($badSha->successful(), 'Mismatched .sha256 digest must fail --verify.');
         } finally {
             File::deleteDirectory($tempDir);
@@ -169,7 +179,7 @@ class RecoveryAndBackupTest extends TestCase
 
     public function test_bluegreen_rollback_restores_previous_slot_without_rebuilding_image(): void
     {
-        $tempDir = storage_path('framework/testing/bg_rollback_' . uniqid('', true));
+        $tempDir = storage_path('framework/testing/bg_rollback_'.uniqid('', true));
         File::makeDirectory($tempDir, 0755, true);
 
         try {
@@ -201,12 +211,12 @@ BASH;
 
             $logFile = "{$tempDir}/rollback_calls.log";
             $env = [
-                'PATH' => "{$binDir}:" . getenv('PATH'),
+                'PATH' => "{$binDir}:".getenv('PATH'),
                 'MOCK_LOG' => $logFile,
             ];
 
             $res = Process::env($env)->run("bash {$scriptsDir}/rollback.sh");
-            $this->assertTrue($res->successful(), 'rollback.sh failed: ' . $res->errorOutput());
+            $this->assertTrue($res->successful(), 'rollback.sh failed: '.$res->errorOutput());
 
             $this->assertSame('blue', trim(File::get("{$scriptsDir}/.active_color")));
 

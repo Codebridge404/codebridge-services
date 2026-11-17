@@ -8,6 +8,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
+# Ensure isolated testing environment for repeatable test execution
+export APP_ENV=testing
+export DB_CONNECTION=sqlite
+export DB_DATABASE=:memory:
+export CACHE_STORE=array
+export CACHE_DRIVER=array
+export SESSION_DRIVER=array
+export QUEUE_CONNECTION=sync
+export FILESYSTEM_DISK=local
+export TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1,::1
+
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
@@ -40,64 +51,76 @@ run_rule_check() {
 }
 
 # ------------------------------------------------------------------------------
-# 1. Unit Testing
+# 1. Complete Test Suite Quality Gate (Zero Omissions - All Tests)
 # ------------------------------------------------------------------------------
-run_rule_check "1" "Unit Testing (Methods, Classes & Domain Models)" \
+run_rule_check "1" "Comprehensive Test Suite Gate (All Unit & Feature Test Classes Without Omission)" \
+    "php artisan test"
+
+# ------------------------------------------------------------------------------
+# 2. Unit Testing
+# ------------------------------------------------------------------------------
+run_rule_check "2" "Unit Testing (Methods, Classes & Domain Models)" \
     "php artisan test --testsuite=Unit"
 
 # ------------------------------------------------------------------------------
-# 2. Functional & API Testing
+# 3. Functional & API Testing
 # ------------------------------------------------------------------------------
-run_rule_check "2" "Functional & API Testing (Endpoints, Responses & Status Codes)" \
-    "php artisan test --filter='AuthTest|AdminTest|ApiKeysTest|TenantsTest|UsersTest|UserInvitationTest'"
+run_rule_check "3" "Functional & API Testing (Endpoints, Responses & Status Codes)" \
+    "php artisan test --filter='AuthTest|AdminTest|ApiKeysTest|TenantsTest|UsersTest|UserInvitationTest|OrganizationTest|MeetingsTest|CrmTest|SuperAdminTest'"
 
 # ------------------------------------------------------------------------------
-# 3. Input Validation Testing
+# 4. Input Validation Testing
 # ------------------------------------------------------------------------------
-run_rule_check "3" "Validation Testing (Rejection of Invalid / Malformed Inputs)" \
+run_rule_check "4" "Validation Testing (Rejection of Invalid / Malformed Inputs)" \
     "php artisan test --filter='InputValidationSecurityTest'"
 
 # ------------------------------------------------------------------------------
-# 4. Authentication Testing
+# 5. Authentication & Token Lifecycle Testing
 # ------------------------------------------------------------------------------
-run_rule_check "4" "Authentication Testing (Login, JWT Lifecycle, 2FA, Passkeys, Session Revocation & Logout)" \
-    "php artisan test --filter='AuthTest|JwtAuthenticationTest|TwoFactorAuthenticationTest|TwoFactorHardeningTest|PasskeyAuthenticationTest|SessionsSecurityTest|RejectExpiredSanctumTokenTest|UserSessionRotationFlowTest'"
+run_rule_check "5" "Authentication Testing (Login, JWT, 2FA, Passkeys, Atomic Fallbacks & Legacy Tokens)" \
+    "php artisan test --filter='AuthTest|JwtAuthenticationTest|TwoFactorAuthenticationTest|TwoFactorHardeningTest|PasskeyAuthenticationTest|SessionsSecurityTest|RejectExpiredSanctumTokenTest|UserSessionRotationFlowTest|AtomicAuthenticationFallbackTest|LegacyTokenCompatibilityTest|ReviewDefectsRegressionTest'"
 
 # ------------------------------------------------------------------------------
-# 5. Authorization & RBAC Testing
+# 6. Authorization & RBAC Testing
 # ------------------------------------------------------------------------------
-run_rule_check "5" "Authorization Testing (Policies, RBAC, Scopes & Super Admin Boundaries)" \
+run_rule_check "6" "Authorization Testing (Policies, RBAC, Scopes & Super Admin Boundaries)" \
     "php artisan test --filter='RolesPermissionsTest|SuperAdminTest|PolicySecurityEnforcementTest'"
 
 # ------------------------------------------------------------------------------
-# 6. Security & Tenant Isolation Testing
+# 7. Security & Tenant Isolation Testing
 # ------------------------------------------------------------------------------
-run_rule_check "6" "Security Testing (WAF, SQLi, XSS, Tenant Isolation, Financial & Log Redaction)" \
-    "php artisan test --filter='ProtectAttackMiddlewareTest|PrivilegeAndTenantIsolationSecurityTest|LoggingAndAuditSecurityTest|FinancialAndApiHardeningTest|StepFiveHardeningTest'"
+run_rule_check "7" "Security Testing (WAF, SQLi, XSS, Tenant Isolation, Financial & Log Redaction)" \
+    "php artisan test --filter='ProtectAttackMiddlewareTest|PrivilegeAndTenantIsolationSecurityTest|LoggingAndAuditSecurityTest|FinancialAndApiHardeningTest|StepFiveHardeningTest|TenantRoleIsolationSecurityTest|AuditP1RemediationTest|NotificationProviderSecurityTest|MeetingTelegramEncryptionAndRetryTest|SecurityEventsTest'"
 
 # ------------------------------------------------------------------------------
-# 7. Integration Testing
+# 8. Integration & Infrastructure Testing
 # ------------------------------------------------------------------------------
-run_rule_check "7" "Integration Testing (Database Transactions, Redis & MinIO WebP Uploads)" \
-    "php artisan test --filter='AvatarUploadTest|UserRelationshipsTest'"
+run_rule_check "8" "Integration Testing (Database Transactions, Redis & MinIO WebP Uploads)" \
+    "php artisan test --filter='AvatarUploadTest|UserRelationshipsTest|InfrastructureIntegrationTest'"
 
 # ------------------------------------------------------------------------------
-# 8. Regression Testing
+# 9. Performance & Telemetry Testing
 # ------------------------------------------------------------------------------
-run_rule_check "8" "Regression Testing (Ensuring Previously Resolved Defects Remain Fixed)" \
-    "php artisan test --filter='ReviewRegressionTest'"
+run_rule_check "9" "Performance & Telemetry Testing (Sub-200ms Latency, Redis Cache & Queues)" \
+    "php artisan test --filter='StepThreeSettingsAndRevocationTest|StepFourQueueAndHorizonTest|StepSixTelemetryAndLatencyTest'"
 
 # ------------------------------------------------------------------------------
-# 9. Deployment, Backup & Recovery Testing
+# 10. Regression Testing
 # ------------------------------------------------------------------------------
-run_rule_check "9" "Deployment & Recovery Testing (Blue/Green Rollback, K8s Kustomize & Backup Recovery)" \
+run_rule_check "10" "Regression Testing (Ensuring Previously Resolved Defects Remain Fixed)" \
+    "php artisan test --filter='ReviewRegressionTest|AllModelsCrudTest|ReviewDefectsRegressionTest'"
+
+# ------------------------------------------------------------------------------
+# 11. Deployment, Backup & Recovery Testing
+# ------------------------------------------------------------------------------
+run_rule_check "11" "Deployment & Recovery Testing (Blue/Green Rollback, K8s Kustomize & Backup Recovery)" \
     "php artisan test --filter='DeploymentTest|RecoveryAndBackupTest'"
 
 # ------------------------------------------------------------------------------
-# 10. Dependency Vulnerability Audit
+# 12. Dependency Vulnerability Audit
 # ------------------------------------------------------------------------------
-run_rule_check "10" "Dependency Security Audit (composer audit = 0 vulnerabilities)" \
-    "composer audit --ignore-unreachable"
+run_rule_check "12" "Dependency Security Audit (composer audit = 0 vulnerabilities, Packagist reachable)" \
+    "composer audit"
 
 # ------------------------------------------------------------------------------
 # Final Verification Summary
