@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Crm;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\GiftCard\StoreGiftCardRequest;
+use App\Services\UserAuthorizationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -12,15 +13,21 @@ use Illuminate\Support\Str;
  * [BD-0066] Digital & Physical Gift Card Issuance & Balance Controller
  *
  * @ticket BD-0066
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/GiftCardController.php
+ *
  * @related-model DB table gift_cards, DB table gift_card_transactions
+ *
  * @entry-point GiftCardController::index(), issue(), checkBalance(), redeem()
+ *
  * @routes
  *  - GET  /api/v1/gift-cards
  *  - POST /api/v1/gift-cards/issue
  *  - POST /api/v1/gift-cards/check-balance
  *  - POST /api/v1/gift-cards/redeem
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -32,25 +39,12 @@ use Illuminate\Support\Str;
  */
 class GiftCardController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        $user = $request->user();
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
-            return $user->tenant_id ? (string) $user->tenant_id : null;
-        }
-
-        return $request->header('X-Tenant-Id')
-            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
-
     public function index(Request $request)
     {
         $tenantId = $this->getTenantId($request);
         $query = DB::table('gift_cards');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
@@ -60,6 +54,7 @@ class GiftCardController extends Controller
             $c->card_code = $c->card_number;
             $c->balance = (float) $c->current_balance;
             $c->status = $c->is_active ? 'active' : 'inactive';
+
             return $c;
         });
 
@@ -79,14 +74,14 @@ class GiftCardController extends Controller
     {
         $tenantId = $this->getTenantId($request);
         abort_unless(
-            ! empty($tenantId) || \App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($request->user()),
+            ! empty($tenantId) || UserAuthorizationService::hasPlatformSuperAdminRole($request->user()),
             403,
             'Workspace tenant context is required.'
         );
         $validated = $request->validated();
 
         $cardNumber = $validated['card_number'] ?? $validated['card_code']
-            ?? ('GC-' . Str::upper(Str::random(4)) . '-' . random_int(1000, 9999));
+            ?? ('GC-'.Str::upper(Str::random(4)).'-'.random_int(1000, 9999));
         $initialValue = (float) ($validated['initial_value'] ?? $validated['balance'] ?? 0.00);
         if ($initialValue <= 0) {
             return response()->json(['status' => 'error', 'message' => 'Initial gift card value must be greater than zero.'], 422);
@@ -99,7 +94,7 @@ class GiftCardController extends Controller
             'current_balance' => $initialValue,
             'currency' => $validated['currency'] ?? 'USD',
             'is_active' => true,
-            'expires_at' => !empty($validated['expires_at']) ? $validated['expires_at'] : null,
+            'expires_at' => ! empty($validated['expires_at']) ? $validated['expires_at'] : null,
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -122,19 +117,19 @@ class GiftCardController extends Controller
     {
         $tenantId = $this->getTenantId($request);
         abort_unless(
-            ! empty($tenantId) || \App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($request->user()),
+            ! empty($tenantId) || UserAuthorizationService::hasPlatformSuperAdminRole($request->user()),
             403,
             'Workspace tenant context is required.'
         );
         $code = $request->input('card_number') ?? $request->input('card_code');
 
         $query = DB::table('gift_cards')->where('card_number', $code);
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
         $card = $query->first();
-        if (!$card) {
+        if (! $card) {
             return response()->json(['status' => 'error', 'message' => 'Gift card not found.'], 404);
         }
 
@@ -157,7 +152,7 @@ class GiftCardController extends Controller
     {
         $tenantId = $this->getTenantId($request);
         abort_unless(
-            ! empty($tenantId) || \App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($request->user()),
+            ! empty($tenantId) || UserAuthorizationService::hasPlatformSuperAdminRole($request->user()),
             403,
             'Workspace tenant context is required.'
         );
@@ -174,16 +169,16 @@ class GiftCardController extends Controller
 
         return DB::transaction(function () use ($tenantId, $code, $amount) {
             $query = DB::table('gift_cards')->where('card_number', $code)->lockForUpdate();
-            if (!empty($tenantId) && $tenantId !== 'all') {
+            if (! empty($tenantId) && $tenantId !== 'all') {
                 $query->where('tenant_id', $tenantId);
             }
 
             $card = $query->first();
-            if (!$card) {
+            if (! $card) {
                 return response()->json(['status' => 'error', 'message' => 'Gift card not found.'], 404);
             }
 
-            if (!$card->is_active) {
+            if (! $card->is_active) {
                 return response()->json(['status' => 'error', 'message' => 'Gift card is inactive or disabled.'], 422);
             }
 

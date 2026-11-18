@@ -16,16 +16,20 @@ use App\Http\Requests\Auth\TwoFactorSetupRequest;
 use App\Http\Resources\User\UserResource;
 use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
+use App\Models\Auth\RefreshToken;
 use App\Models\Auth\User;
+use App\Models\Auth\UserSession;
+use App\Models\Security\ApiClient;
+use App\Services\DeviceDetectorService;
 use App\Services\JwtService;
 use App\Services\TwoFactorService;
-use App\Support\SchemaGuard;
 use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
 
 /**
  * Two-Factor Authentication (2FA) Controller.
@@ -61,13 +65,13 @@ class TwoFactorController extends Controller
     {
         /** @var User|null $user */
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse();
         }
 
         // [P1] If 2FA is already enabled, require password reauthentication to prevent unauthorized replacement
         if ($user->two_factor_enabled) {
-            if (!$request->filled('password') || !Hash::check((string) $request->input('password'), $user->password)) {
+            if (! $request->filled('password') || ! Hash::check((string) $request->input('password'), $user->password)) {
                 return $this->errorResponse(
                     'Current password confirmation is required to reconfigure two-factor authentication.',
                     HttpStatus::UNPROCESSABLE_ENTITY,
@@ -80,7 +84,7 @@ class TwoFactorController extends Controller
         // Never overwrite an existing active authenticator before successful confirmation.
         $secret = $this->twoFactorService->generateSecretKey(32);
         $this->twoFactorService->storePendingSecret($user, $secret);
-        if (!$user->two_factor_enabled && empty($user->two_factor_secret)) {
+        if (! $user->two_factor_enabled && empty($user->two_factor_secret)) {
             $this->twoFactorService->storeSecret($user, $secret);
         }
 
@@ -121,17 +125,17 @@ class TwoFactorController extends Controller
     {
         /** @var User|null $user */
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse();
         }
 
         // [P1] Retrieve pending secret first, with fallback to initial secret if not yet enabled
         $secret = $this->twoFactorService->getPendingSecret($user);
-        if (!$secret && !$user->two_factor_enabled) {
+        if (! $secret && ! $user->two_factor_enabled) {
             $secret = $this->twoFactorService->getDecryptedSecret($user);
         }
 
-        if (!$secret) {
+        if (! $secret) {
             return $this->errorResponse(
                 'Two-factor setup has not been initiated. Please call /auth/2fa/setup first.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -140,7 +144,7 @@ class TwoFactorController extends Controller
         }
 
         $code = (string) $request->input('code');
-        if (!$this->twoFactorService->verifyCode($secret, $code)) {
+        if (! $this->twoFactorService->verifyCode($secret, $code)) {
             return $this->errorResponse(
                 'The provided two-factor authentication code is invalid or has expired.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -202,7 +206,7 @@ class TwoFactorController extends Controller
         $code = trim((string) $request->input('code'));
 
         $user = $this->twoFactorService->validateChallengeToken($challengeToken);
-        if (!$user) {
+        if (! $user) {
             return $this->errorResponse(
                 'The two-factor challenge token is invalid or has expired. Please sign in again.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -210,11 +214,12 @@ class TwoFactorController extends Controller
             );
         }
 
-        $accountKey = '2fa_attempts:' . $user->id;
-        $challengeKey = '2fa_challenge_attempts:' . sha1($challengeToken);
+        $accountKey = '2fa_attempts:'.$user->id;
+        $challengeKey = '2fa_challenge_attempts:'.sha1($challengeToken);
 
         if (RateLimiter::tooManyAttempts($accountKey, 5) || RateLimiter::tooManyAttempts($challengeKey, 5)) {
             $seconds = max(RateLimiter::availableIn($accountKey), RateLimiter::availableIn($challengeKey), 1);
+
             return response()->json([
                 'status' => 'error',
                 'code' => 'ACCOUNT_LOCKED_OUT',
@@ -238,12 +243,13 @@ class TwoFactorController extends Controller
             $isCodeValid = true;
         }
 
-        if (!$isCodeValid) {
+        if (! $isCodeValid) {
             RateLimiter::hit($accountKey, 15 * 60);
             RateLimiter::hit($challengeKey, 15 * 60);
 
             if (RateLimiter::tooManyAttempts($accountKey, 5) || RateLimiter::tooManyAttempts($challengeKey, 5)) {
                 $seconds = max(RateLimiter::availableIn($accountKey), RateLimiter::availableIn($challengeKey), 1);
+
                 return response()->json([
                     'status' => 'error',
                     'code' => 'ACCOUNT_LOCKED_OUT',
@@ -267,7 +273,7 @@ class TwoFactorController extends Controller
 
         // Atomically consume challenge token to prevent concurrent duplicate verification
         $consumed = $this->twoFactorService->validateAndConsumeChallengeToken($challengeToken);
-        if (!$consumed) {
+        if (! $consumed) {
             return $this->errorResponse(
                 'The two-factor challenge token has already been consumed or has expired.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -280,14 +286,14 @@ class TwoFactorController extends Controller
         if (! $client) {
             $clientKey = $request->header('X-Client-Key') ?? $request->header('X-App-Key') ?? $request->input('client_key');
             if ($clientKey) {
-                $client = \App\Models\Security\ApiClient::where('client_key', $clientKey)->active()->first();
+                $client = ApiClient::where('client_key', $clientKey)->active()->first();
             }
             if (! $client) {
-                $client = \App\Models\Security\ApiClient::where('client_key', 'client_web_admin_cb2026')->first() ?? \App\Models\Security\ApiClient::first();
+                $client = ApiClient::where('client_key', 'client_web_admin_cb2026')->first() ?? ApiClient::first();
             }
             if (! $client) {
-                $client = \App\Models\Security\ApiClient::create([
-                    'uuid' => (string) \Illuminate\Support\Str::uuid(),
+                $client = ApiClient::create([
+                    'uuid' => (string) Str::uuid(),
                     'name' => 'Default Platform Client',
                     'client_key' => 'client_web_admin_cb2026',
                     'client_type' => 'first_party',
@@ -296,8 +302,8 @@ class TwoFactorController extends Controller
             }
         }
 
-        /** @var \App\Services\DeviceDetectorService $detector */
-        $detector = app(\App\Services\DeviceDetectorService::class);
+        /** @var DeviceDetectorService $detector */
+        $detector = app(DeviceDetectorService::class);
         $deviceName = $request->input('device_name') ?? $detector->parseDeviceName($request->userAgent());
 
         $sessionPermissions = method_exists($user, 'getAllPermissions')
@@ -305,7 +311,7 @@ class TwoFactorController extends Controller
             : [];
 
         // Create Enterprise UserSession
-        $userSession = \App\Models\Auth\UserSession::create([
+        $userSession = UserSession::create([
             'user_id' => $user->id,
             'api_client_id' => $client->id,
             'tenant_id' => $user->tenant_id,
@@ -318,7 +324,7 @@ class TwoFactorController extends Controller
         ]);
 
         // Issue root rotating refresh token
-        $rootPair = \App\Models\Auth\RefreshToken::issueRoot($userSession);
+        $rootPair = RefreshToken::issueRoot($userSession);
         $refreshToken = $rootPair['credential'];
 
         // Mint access JWT with sid = user_sessions.uuid and MFA AMR assurance
@@ -390,12 +396,12 @@ class TwoFactorController extends Controller
     {
         /** @var User|null $user */
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse();
         }
 
         $password = (string) $request->input('password');
-        if ($user->password && !Hash::check($password, $user->password)) {
+        if ($user->password && ! Hash::check($password, $user->password)) {
             return $this->errorResponse(
                 'Current password is required to disable Two-Factor Authentication.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -439,7 +445,7 @@ class TwoFactorController extends Controller
     public function toggle(Request $request)
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse();
         }
 
@@ -458,7 +464,7 @@ class TwoFactorController extends Controller
             );
         }
 
-        if ($user->password && (!isset($request->password) || !Hash::check($request->password, $user->password))) {
+        if ($user->password && (! isset($request->password) || ! Hash::check($request->password, $user->password))) {
             return $this->errorResponse(
                 'Current password is required to disable Two-Factor Authentication.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -492,11 +498,11 @@ class TwoFactorController extends Controller
     public function recoveryCodes(Request $request)
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse('Unauthenticated.');
         }
 
-        if (!$user->two_factor_enabled) {
+        if (! $user->two_factor_enabled) {
             return $this->errorResponse(
                 'Two-factor authentication is not enabled for this account.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -509,16 +515,16 @@ class TwoFactorController extends Controller
         $code = $request->input('code') ?? $request->input('totp_code') ?? $request->header('X-2FA-Code');
 
         $reauthenticated = false;
-        if (!empty($password) && Hash::check((string) $password, $user->password)) {
+        if (! empty($password) && Hash::check((string) $password, $user->password)) {
             $reauthenticated = true;
-        } elseif (!empty($code)) {
+        } elseif (! empty($code)) {
             $secret = $this->twoFactorService->getDecryptedSecret($user);
             if ($secret && $this->twoFactorService->verifyCode($secret, (string) $code)) {
                 $reauthenticated = true;
             }
         }
 
-        if (!$reauthenticated) {
+        if (! $reauthenticated) {
             return $this->errorResponse(
                 'Reauthentication required. Provide current password or fresh 2FA authenticator code to view recovery codes.',
                 HttpStatus::FORBIDDEN,
@@ -551,11 +557,11 @@ class TwoFactorController extends Controller
     public function regenerateRecoveryCodes(Request $request)
     {
         $user = $request->user();
-        if (!$user) {
+        if (! $user) {
             return $this->unauthorizedResponse('Unauthenticated.');
         }
 
-        if (!$user->two_factor_enabled) {
+        if (! $user->two_factor_enabled) {
             return $this->errorResponse(
                 'Two-factor authentication is not enabled for this account.',
                 HttpStatus::UNPROCESSABLE_ENTITY,
@@ -568,16 +574,16 @@ class TwoFactorController extends Controller
         $password = $request->input('password') ?? $request->header('X-Reauth-Password');
 
         $reauthenticated = false;
-        if (!empty($code)) {
+        if (! empty($code)) {
             $secret = $this->twoFactorService->getDecryptedSecret($user);
             if ($secret && $this->twoFactorService->verifyCode($secret, (string) $code)) {
                 $reauthenticated = true;
             }
-        } elseif (!empty($password) && Hash::check((string) $password, $user->password)) {
+        } elseif (! empty($password) && Hash::check((string) $password, $user->password)) {
             $reauthenticated = true;
         }
 
-        if (!$reauthenticated) {
+        if (! $reauthenticated) {
             return $this->errorResponse(
                 'Fresh 2FA verification required. Provide a valid TOTP authenticator code or account password to regenerate recovery codes.',
                 HttpStatus::FORBIDDEN,
@@ -609,17 +615,5 @@ class TwoFactorController extends Controller
                 'recovery_codes' => $codes,
             ]
         );
-    }
-
-    private function parseDeviceName(?string $userAgent): string
-    {
-        if (empty($userAgent)) return 'Web Client';
-        if (str_contains($userAgent, 'Windows')) return 'Windows PC';
-        if (str_contains($userAgent, 'Macintosh')) return 'Mac Desktop';
-        if (str_contains($userAgent, 'iPhone')) return 'Apple iPhone';
-        if (str_contains($userAgent, 'iPad')) return 'Apple iPad';
-        if (str_contains($userAgent, 'Android')) return 'Android POS Device';
-        if (str_contains($userAgent, 'Linux')) return 'Linux Device';
-        return 'Web Browser';
     }
 }

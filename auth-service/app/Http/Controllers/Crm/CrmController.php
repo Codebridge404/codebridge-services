@@ -16,10 +16,15 @@ use Illuminate\Support\Str;
  * [BD-0007] Customer CRM, Sales Pipeline & Deals Management Controller.
  *
  * @ticket BD-0007
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/CrmController.php
+ *
  * @table crm_deals, crm_leads, crm_activities
+ *
  * @entry-point GET /api/v1/crm/deals, POST /api/v1/crm/deals, GET /api/v1/crm/pipeline
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -29,19 +34,6 @@ use Illuminate\Support\Str;
  */
 class CrmController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        $user = $request->user();
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
-            return $user->tenant_id ? (string) $user->tenant_id : null;
-        }
-
-        return $request->header('X-Tenant-Id')
-            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
-
     // ==========================================
     // 1. Deals Pipeline
     // ==========================================
@@ -54,20 +46,20 @@ class CrmController extends Controller
 
         $query = DB::table('deals');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
-        if (!empty($stage) && $stage !== 'all') {
+        if (! empty($stage) && $stage !== 'all') {
             $query->where('stage', $stage);
         }
 
-        if (!empty($search)) {
+        if (! empty($search)) {
             $escaped = SchemaGuard::escapeLike(trim((string) $search));
             $query->where(function ($q) use ($escaped) {
                 $q->where('title', 'like', "%{$escaped}%")
-                  ->orWhere('company', 'like', "%{$escaped}%")
-                  ->orWhere('owner_name', 'like', "%{$escaped}%");
+                    ->orWhere('company', 'like', "%{$escaped}%")
+                    ->orWhere('owner_name', 'like', "%{$escaped}%");
             });
         }
 
@@ -123,7 +115,7 @@ class CrmController extends Controller
         $validated = $request->validated();
 
         $query = DB::table('deals')->where('id', $id);
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
@@ -145,7 +137,7 @@ class CrmController extends Controller
         $tenantId = $this->getTenantId($request);
         $query = DB::table('deals')->where('id', $id);
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
@@ -168,17 +160,17 @@ class CrmController extends Controller
 
         $query = DB::table('leads');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
-        if (!empty($search)) {
+        if (! empty($search)) {
             $escaped = SchemaGuard::escapeLike(trim((string) $search));
             $query->where(function ($q) use ($escaped) {
                 $q->where('name', 'like', "%{$escaped}%")
-                  ->orWhere('company', 'like', "%{$escaped}%")
-                  ->orWhere('email', 'like', "%{$escaped}%")
-                  ->orWhere('phone', 'like', "%{$escaped}%");
+                    ->orWhere('company', 'like', "%{$escaped}%")
+                    ->orWhere('email', 'like', "%{$escaped}%")
+                    ->orWhere('phone', 'like', "%{$escaped}%");
             });
         }
 
@@ -235,7 +227,7 @@ class CrmController extends Controller
         $tenantId = $this->getTenantId($request);
         $query = DB::table('crm_activities');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
@@ -288,7 +280,7 @@ class CrmController extends Controller
         $dealsQuery = DB::table('deals');
         $leadsQuery = DB::table('leads');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $dealsQuery->where('tenant_id', $tenantId);
             $leadsQuery->where('tenant_id', $tenantId);
         }

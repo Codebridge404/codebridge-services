@@ -31,7 +31,7 @@ class UserInvitationController extends Controller
 
         $query = UserInvitation::with(['roleRecord', 'outlet', 'invitedBy']);
 
-        if ($currentUser && !$isPlatformSuper && $tenantId) {
+        if ($currentUser && ! $isPlatformSuper && $tenantId) {
             $query->where('tenant_id', $tenantId);
         } elseif ($tenantId) {
             $query->where('tenant_id', $tenantId);
@@ -45,7 +45,7 @@ class UserInvitationController extends Controller
             $query->whereNull('accepted_at')->where('expires_at', '<=', now());
         }
 
-        if (!empty($search)) {
+        if (! empty($search)) {
             $escaped = SchemaGuard::escapeLike(trim((string) $search));
             $query->where('email', 'like', "%{$escaped}%");
         }
@@ -75,11 +75,11 @@ class UserInvitationController extends Controller
         $currentUser = $request->user();
         $isPlatformSuper = UserAuthorizationService::hasPlatformSuperAdminRole($currentUser);
 
-        $tenantId = ($isPlatformSuper && !empty($validated['tenant_id']))
+        $tenantId = ($isPlatformSuper && ! empty($validated['tenant_id']))
             ? (int) $validated['tenant_id']
             : (int) $currentUser?->tenant_id;
 
-        if (!$tenantId) {
+        if (! $tenantId) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Workspace context (tenant_id) is required to issue staff invitations.',
@@ -104,7 +104,7 @@ class UserInvitationController extends Controller
         }
 
         // Subscription seat limit check
-        if ($quotaErr = $this->checkUserLimit($currentUser, $tenantId)) {
+        if ($quotaErr = UserAuthorizationService::checkTenantUserQuota($currentUser, $tenantId)) {
             return response()->json([
                 'status' => 'error',
                 'code' => 'QUOTA_EXCEEDED',
@@ -114,26 +114,26 @@ class UserInvitationController extends Controller
 
         // 1. Resolve role and ensure role belongs to the invited tenant
         $roleRecord = null;
-        if (!empty($validated['role_id'])) {
+        if (! empty($validated['role_id'])) {
             $roleRecord = DB::table('roles')->where('id', $validated['role_id'])->first();
-        } elseif (!empty($validated['role'])) {
+        } elseif (! empty($validated['role'])) {
             $roleRecord = DB::table('roles')
                 ->where('slug', $validated['role'])
                 ->where(function ($q) use ($tenantId) {
                     $q->where('tenant_id', $tenantId)
-                      ->orWhere('company_id', $tenantId)
-                      ->orWhere(function ($sysQ) {
-                          $sysQ->whereNull('tenant_id')->whereNull('company_id');
-                      });
+                        ->orWhere('company_id', $tenantId)
+                        ->orWhere(function ($sysQ) {
+                            $sysQ->whereNull('tenant_id')->whereNull('company_id');
+                        });
                 })
                 ->first();
 
-            if (!$roleRecord) {
+            if (! $roleRecord) {
                 $roleRecord = DB::table('roles')->where('slug', $validated['role'])->first();
             }
         }
 
-        if (!$roleRecord) {
+        if (! $roleRecord) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'The selected role does not exist.',
@@ -151,7 +151,7 @@ class UserInvitationController extends Controller
         // 2. Resolve outlet and ensure outlet belongs to the invited tenant
         $outletUuid = null;
         $outletIdentifier = $validated['outlet_uuid'] ?? ($validated['outlet_id'] ?? null);
-        if (!empty($outletIdentifier)) {
+        if (! empty($outletIdentifier)) {
             $outlet = DB::table('outlets')
                 ->where(function ($q) use ($outletIdentifier) {
                     $q->where('uuid', $outletIdentifier);
@@ -161,7 +161,7 @@ class UserInvitationController extends Controller
                 })
                 ->first();
 
-            if (!$outlet) {
+            if (! $outlet) {
                 return response()->json([
                     'status' => 'error',
                     'message' => 'The selected outlet does not exist.',
@@ -186,7 +186,7 @@ class UserInvitationController extends Controller
             $tenantId
         );
 
-        if (!$isAuthorized) {
+        if (! $isAuthorized) {
             return response()->json([
                 'status' => 'error',
                 'message' => $authMessage,
@@ -239,12 +239,12 @@ class UserInvitationController extends Controller
         $currentUser = $request->user();
         $query = UserInvitation::with(['roleRecord', 'outlet', 'invitedBy']);
 
-        if ($currentUser && !UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && $currentUser->tenant_id) {
+        if ($currentUser && ! UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && $currentUser->tenant_id) {
             $query->where('tenant_id', $currentUser->tenant_id);
         }
 
         $invitation = $query->find($id);
-        if (!$invitation) {
+        if (! $invitation) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Invitation not found.',
@@ -266,12 +266,12 @@ class UserInvitationController extends Controller
         $currentUser = $request->user();
         $query = UserInvitation::whereNull('accepted_at');
 
-        if ($currentUser && !UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && $currentUser->tenant_id) {
+        if ($currentUser && ! UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && $currentUser->tenant_id) {
             $query->where('tenant_id', $currentUser->tenant_id);
         }
 
         $invitation = $query->find($id);
-        if (!$invitation) {
+        if (! $invitation) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Invitation not found or has already been accepted.',
@@ -310,12 +310,12 @@ class UserInvitationController extends Controller
         $currentUser = $request->user();
         $query = UserInvitation::query();
 
-        if ($currentUser && !UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && $currentUser->tenant_id) {
+        if ($currentUser && ! UserAuthorizationService::hasPlatformSuperAdminRole($currentUser) && $currentUser->tenant_id) {
             $query->where('tenant_id', $currentUser->tenant_id);
         }
 
         $invitation = $query->find($id);
-        if (!$invitation) {
+        if (! $invitation) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Invitation not found.',
@@ -336,25 +336,4 @@ class UserInvitationController extends Controller
             'message' => 'Staff invitation revoked successfully.',
         ]);
     }
-
-    /**
-     * Helper to check subscription seat quota.
-     */
-    private function checkUserLimit($currentUser, $tenantId): ?string
-    {
-        if ($currentUser && !UserAuthorizationService::isSuperAdmin($currentUser, $tenantId ? (int) $tenantId : null) && $tenantId) {
-            $tenant = DB::table('tenants')->where('id', $tenantId)->first();
-            $maxUsers = $tenant->max_users ?? 50;
-            $count = DB::table('tenant_users')
-                ->where('tenant_id', $tenantId)
-                ->where('status', 'active')
-                ->count();
-
-            if ($count >= $maxUsers) {
-                return "User limit reached ({$count}/{$maxUsers}) for your subscription tier.";
-            }
-        }
-        return null;
-    }
 }
-

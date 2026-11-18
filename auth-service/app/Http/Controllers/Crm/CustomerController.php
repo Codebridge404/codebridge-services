@@ -15,16 +15,22 @@ use Illuminate\Support\Str;
  * [BD-0062] Customer Profile, Credit Balance & CRM Directory Controller
  *
  * @ticket BD-0062
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/CustomerController.php
+ *
  * @related-model DB table customers, App\Models\Crm\Customer, App\Models\Crm\StoreCreditInvoice
+ *
  * @entry-point CustomerController::index(), store(), show(), update(), destroy()
+ *
  * @routes
  *  - GET    /api/v1/customers
  *  - POST   /api/v1/customers
  *  - GET    /api/v1/customers/{id}
  *  - PUT    /api/v1/customers/{id}
  *  - DELETE /api/v1/customers/{id}
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -36,19 +42,6 @@ use Illuminate\Support\Str;
  */
 class CustomerController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        $user = $request->user();
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
-            return $user->tenant_id ? (string) $user->tenant_id : null;
-        }
-
-        return $request->header('X-Tenant-Id')
-            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
-
     public function index(Request $request)
     {
         $tenantId = $this->getTenantId($request);
@@ -57,19 +50,19 @@ class CustomerController extends Controller
 
         $query = DB::table('customers');
 
-        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+        if ($user && $user->role !== 'super_admin' && ! empty($tenantId)) {
             $query->where('tenant_id', $tenantId);
-        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+        } elseif (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
-        if (!empty($search)) {
+        if (! empty($search)) {
             $escaped = SchemaGuard::escapeLike(trim((string) $search));
             $query->where(function ($q) use ($escaped) {
                 $q->where('name', 'like', "%{$escaped}%")
-                  ->orWhere('phone', 'like', "%{$escaped}%")
-                  ->orWhere('email', 'like', "%{$escaped}%")
-                  ->orWhere('code', 'like', "%{$escaped}%");
+                    ->orWhere('phone', 'like', "%{$escaped}%")
+                    ->orWhere('email', 'like', "%{$escaped}%")
+                    ->orWhere('code', 'like', "%{$escaped}%");
             });
         }
 
@@ -93,7 +86,7 @@ class CustomerController extends Controller
         $tenantId = $this->getTenantId($request);
         $validated = $request->validated();
 
-        $code = 'CUST-' . strtoupper(substr(uniqid(), -6));
+        $code = 'CUST-'.strtoupper(substr(uniqid(), -6));
 
         $id = DB::table('customers')->insertGetId([
             'uuid' => (string) Str::uuid(),
@@ -125,14 +118,14 @@ class CustomerController extends Controller
         $validated = $request->validated();
 
         $query = DB::table('customers')->where('id', $id);
-        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+        if ($user && $user->role !== 'super_admin' && ! empty($tenantId)) {
             $query->where('tenant_id', $tenantId);
-        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+        } elseif (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
         $customer = $query->first();
-        if (!$customer) {
+        if (! $customer) {
             return response()->json(['status' => 'error', 'message' => 'Customer profile not found or unauthorized.'], 404);
         }
 
@@ -162,14 +155,14 @@ class CustomerController extends Controller
         $user = $request->user();
         $query = DB::table('customers')->where('id', $id);
 
-        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+        if ($user && $user->role !== 'super_admin' && ! empty($tenantId)) {
             $query->where('tenant_id', $tenantId);
-        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+        } elseif (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
         $deleted = $query->delete();
-        if (!$deleted) {
+        if (! $deleted) {
             return response()->json(['status' => 'error', 'message' => 'Customer profile not found or unauthorized.'], 404);
         }
 

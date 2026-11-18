@@ -12,6 +12,8 @@ use App\Models\Crm\Customer;
 use App\Models\Crm\DigitalVoucher;
 use App\Models\Crm\StoreCreditInvoice;
 use App\Services\StoreCreditService;
+use App\Services\TenantAccess;
+use App\Services\UserAuthorizationService;
 use Dedoc\Scramble\Attributes\Group;
 use Exception;
 use Illuminate\Http\Request;
@@ -20,10 +22,15 @@ use Illuminate\Http\Request;
  * [BD-0035] Customer Store Credit Invoicing, Voucher Redemption & Wallet APIs.
  *
  * @ticket BD-0035
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/StoreCreditInvoiceController.php
+ *
  * @related-service App\Services\StoreCreditService
+ *
  * @entry-point API Routes: /api/v1/customers/{id}/credit/* & /api/v1/vouchers/*
+ *
  * @date-time 2026-10-23T15:35:00+07:00
  *
  * Capabilities:
@@ -41,19 +48,6 @@ class StoreCreditInvoiceController extends Controller
         protected StoreCreditService $storeCreditService
     ) {}
 
-    protected function getTenantId(Request $request): ?string
-    {
-        $user = $request->user();
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
-            return $user->tenant_id ? (string) $user->tenant_id : null;
-        }
-
-        return $request->header('X-Tenant-Id')
-            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
-
     /**
      * Issue Customer Store Credit Top-Up Invoice.
      * POST /api/v1/customers/{id}/credit/topup-invoice
@@ -62,8 +56,8 @@ class StoreCreditInvoiceController extends Controller
     {
         $validated = $request->validated();
 
-        $customer = Customer::find(\App\Services\TenantAccess::record('customers', $id, $request)->id);
-        if (!$customer) {
+        $customer = Customer::find(TenantAccess::record('customers', $id, $request)->id);
+        if (! $customer) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Customer not found.',
@@ -71,7 +65,9 @@ class StoreCreditInvoiceController extends Controller
         }
 
         $tenantId = $this->getTenantId($request);
-        if (!empty($validated['outlet_id'])) \App\Services\TenantAccess::record('outlets', $validated['outlet_id'], $request);
+        if (! empty($validated['outlet_id'])) {
+            TenantAccess::record('outlets', $validated['outlet_id'], $request);
+        }
 
         $result = $this->storeCreditService->createTopUpInvoice(
             customer: $customer,
@@ -99,8 +95,8 @@ class StoreCreditInvoiceController extends Controller
      */
     public function customerInvoices(Request $request, $id)
     {
-        $customer = Customer::find(\App\Services\TenantAccess::record('customers', $id, $request)->id);
-        if (!$customer) {
+        $customer = Customer::find(TenantAccess::record('customers', $id, $request)->id);
+        if (! $customer) {
             return response()->json(['status' => 'error', 'message' => 'Customer not found.'], 404);
         }
 
@@ -124,10 +120,12 @@ class StoreCreditInvoiceController extends Controller
     public function showInvoice(Request $request, $invoiceId)
     {
         $query = StoreCreditInvoice::with(['customer', 'cashier'])->where(fn ($q) => $q->where('id', $invoiceId)->orWhere('invoice_number', $invoiceId));
-        if (!\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($request->user())) $query->where('tenant_id', $request->user()->tenant_id);
+        if (! UserAuthorizationService::hasPlatformSuperAdminRole($request->user())) {
+            $query->where('tenant_id', $request->user()->tenant_id);
+        }
         $invoice = $query->first();
 
-        if (!$invoice) {
+        if (! $invoice) {
             return response()->json(['status' => 'error', 'message' => 'Store credit invoice not found.'], 404);
         }
 
@@ -147,7 +145,9 @@ class StoreCreditInvoiceController extends Controller
 
         $tenantId = $this->getTenantId($request);
 
-        if (!empty($validated['customer_id'])) \App\Services\TenantAccess::record('customers', $validated['customer_id'], $request);
+        if (! empty($validated['customer_id'])) {
+            TenantAccess::record('customers', $validated['customer_id'], $request);
+        }
         $voucher = $this->storeCreditService->issueDigitalVoucher(
             value: (float) $validated['value'],
             title: $validated['title'] ?? 'Customer Gift Voucher',
@@ -173,7 +173,7 @@ class StoreCreditInvoiceController extends Controller
     {
         $validated = $request->validated();
 
-        $customer = Customer::find(\App\Services\TenantAccess::record('customers', $validated['customer_id'], $request)->id);
+        $customer = Customer::find(TenantAccess::record('customers', $validated['customer_id'], $request)->id);
 
         try {
             $result = $this->storeCreditService->redeemDigitalVoucher(
@@ -207,16 +207,16 @@ class StoreCreditInvoiceController extends Controller
 
         $query = DigitalVoucher::query();
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
-        if (!empty($status)) {
+        if (! empty($status)) {
             $query->where('status', $status);
         }
-        if (!empty($customerId)) {
+        if (! empty($customerId)) {
             $query->where(function ($q) use ($customerId) {
                 $q->where('issued_to_customer_id', $customerId)
-                  ->orWhere('redeemed_by_customer_id', $customerId);
+                    ->orWhere('redeemed_by_customer_id', $customerId);
             });
         }
 
@@ -257,13 +257,13 @@ class StoreCreditInvoiceController extends Controller
      */
     public function statement(Request $request, $id)
     {
-        \App\Services\TenantAccess::record('customers', $id, $request);
+        TenantAccess::record('customers', $id, $request);
         $startDate = $request->query('start_date');
         $endDate = $request->query('end_date');
 
         $statement = $this->storeCreditService->getCustomerStatement((int) $id, $startDate, $endDate);
 
-        if (!$statement) {
+        if (! $statement) {
             return response()->json(['status' => 'error', 'message' => 'Customer not found.'], 404);
         }
 

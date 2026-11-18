@@ -15,16 +15,22 @@ use Illuminate\Support\Str;
  * [BD-0077] Vendor & Supplier Contact & Procurement Directory Controller
  *
  * @ticket BD-0077
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/SupplierController.php
+ *
  * @related-model DB table suppliers, App\Models\Organization\Tenant
+ *
  * @entry-point SupplierController::index(), store(), show(), update(), destroy()
+ *
  * @routes
  *  - GET    /api/v1/suppliers
  *  - POST   /api/v1/suppliers
  *  - GET    /api/v1/suppliers/{id}
  *  - PUT    /api/v1/suppliers/{id}
  *  - DELETE /api/v1/suppliers/{id}
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -36,19 +42,6 @@ use Illuminate\Support\Str;
  */
 class SupplierController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        $user = $request->user();
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
-            return $user->tenant_id ? (string) $user->tenant_id : null;
-        }
-
-        return $request->header('X-Tenant-Id')
-            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
-
     public function index(Request $request)
     {
         $tenantId = $this->getTenantId($request);
@@ -57,7 +50,7 @@ class SupplierController extends Controller
         $query = DB::table('suppliers');
 
         // Scope to tenant organization
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $hasTenant = DB::table('suppliers')->where('tenant_id', $tenantId)->exists();
             if ($hasTenant) {
                 $query->where('tenant_id', $tenantId);
@@ -68,14 +61,14 @@ class SupplierController extends Controller
             }
         }
 
-        if (!empty($search)) {
+        if (! empty($search)) {
             $escaped = SchemaGuard::escapeLike(trim((string) $search));
             $query->where(function ($q) use ($escaped) {
                 $q->where('name', 'like', "%{$escaped}%")
-                  ->orWhere('company_name', 'like', "%{$escaped}%")
-                  ->orWhere('phone', 'like', "%{$escaped}%")
-                  ->orWhere('email', 'like', "%{$escaped}%")
-                  ->orWhere('address', 'like', "%{$escaped}%");
+                    ->orWhere('company_name', 'like', "%{$escaped}%")
+                    ->orWhere('phone', 'like', "%{$escaped}%")
+                    ->orWhere('email', 'like', "%{$escaped}%")
+                    ->orWhere('address', 'like', "%{$escaped}%");
             });
         }
 
@@ -127,12 +120,12 @@ class SupplierController extends Controller
         $validated = $request->validated();
 
         $query = DB::table('suppliers')->where('id', $id);
-        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+        if ($user && $user->role !== 'super_admin' && ! empty($tenantId)) {
             $query->where('tenant_id', $tenantId);
         }
 
         $supplier = $query->first();
-        if (!$supplier) {
+        if (! $supplier) {
             return response()->json(['status' => 'error', 'message' => 'Supplier not found or unauthorized.'], 404);
         }
 
@@ -159,12 +152,12 @@ class SupplierController extends Controller
         $user = $request->user();
         $query = DB::table('suppliers')->where('id', $id);
 
-        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+        if ($user && $user->role !== 'super_admin' && ! empty($tenantId)) {
             $query->where('tenant_id', $tenantId);
         }
 
         $deleted = $query->delete();
-        if (!$deleted) {
+        if (! $deleted) {
             return response()->json(['status' => 'error', 'message' => 'Supplier not found or unauthorized.'], 404);
         }
 

@@ -3,13 +3,26 @@
 namespace Tests\Feature\Security;
 
 use App\Models\Auth\User;
+use App\Services\PasskeyService;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
-use Tests\Feature\PasskeyAuthenticationTest;
+use Tests\Feature\PasskeyTestHelpers;
+use Tests\TestCase;
 
-class ReviewDefectsRegressionTest extends PasskeyAuthenticationTest
+class ReviewDefectsRegressionTest extends TestCase
 {
+    use PasskeyTestHelpers, RefreshDatabase;
+
+    protected PasskeyService $passkeyService;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->passkeyService = app(PasskeyService::class);
+    }
+
     /**
      * Issue 2: Reauthentication grant cannot move between authenticated sessions via client header.
      */

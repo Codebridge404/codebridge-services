@@ -15,16 +15,22 @@ use Illuminate\Support\Str;
  * [BD-0065] Human Resource Management & Staff Records Controller
  *
  * @ticket BD-0065
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/EmployeeController.php
+ *
  * @related-model App\Models\Organization\Employee, App\Models\Auth\User, App\Models\Organization\Department
+ *
  * @entry-point EmployeeController::index(), store(), show(), update(), destroy()
+ *
  * @routes
  *  - GET    /api/v1/employees
  *  - POST   /api/v1/employees
  *  - GET    /api/v1/employees/{id}
  *  - PUT    /api/v1/employees/{id}
  *  - DELETE /api/v1/employees/{id}
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -36,19 +42,6 @@ use Illuminate\Support\Str;
  */
 class EmployeeController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        $user = $request->user();
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
-            return $user->tenant_id ? (string) $user->tenant_id : null;
-        }
-
-        return $request->header('X-Tenant-Id')
-            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
-
     public function index(Request $request)
     {
         $tenantId = $this->getTenantId($request);
@@ -60,46 +53,46 @@ class EmployeeController extends Controller
             ->leftJoin('departments as d', 'e.department_id', '=', 'd.id')
             ->leftJoin('outlets as o', 'e.outlet_id', '=', 'o.id');
 
-        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+        if ($user && $user->role !== 'super_admin' && ! empty($tenantId)) {
             $query->where('e.tenant_id', $tenantId);
-        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+        } elseif (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('e.tenant_id', $tenantId);
         }
 
-        if (!empty($departmentId)) {
+        if (! empty($departmentId)) {
             $query->where('e.department_id', $departmentId);
         }
 
-        if (!empty($search)) {
+        if (! empty($search)) {
             $escaped = SchemaGuard::escapeLike(trim((string) $search));
             $query->where(function ($q) use ($escaped) {
                 $q->where(DB::raw("CONCAT(e.first_name, ' ', e.last_name)"), 'like', "%{$escaped}%")
-                  ->orWhere('e.employee_code', 'like', "%{$escaped}%")
-                  ->orWhere('e.email', 'like', "%{$escaped}%")
-                  ->orWhere('e.phone', 'like', "%{$escaped}%");
+                    ->orWhere('e.employee_code', 'like', "%{$escaped}%")
+                    ->orWhere('e.email', 'like', "%{$escaped}%")
+                    ->orWhere('e.phone', 'like', "%{$escaped}%");
             });
         }
 
         $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
         $paginator = $query->select(
-                'e.id',
-                'e.employee_code',
-                'e.first_name',
-                'e.last_name',
-                DB::raw("CONCAT(e.first_name, ' ', e.last_name) as full_name"),
-                'e.email',
-                'e.phone',
-                'e.designation',
-                'e.employment_type',
-                'e.hire_date',
-                'e.salary',
-                'e.is_active',
-                'e.department_id',
-                'd.name as department_name',
-                'e.outlet_id',
-                'o.name as outlet_name',
-                'e.created_at'
-            )
+            'e.id',
+            'e.employee_code',
+            'e.first_name',
+            'e.last_name',
+            DB::raw("CONCAT(e.first_name, ' ', e.last_name) as full_name"),
+            'e.email',
+            'e.phone',
+            'e.designation',
+            'e.employment_type',
+            'e.hire_date',
+            'e.salary',
+            'e.is_active',
+            'e.department_id',
+            'd.name as department_name',
+            'e.outlet_id',
+            'o.name as outlet_name',
+            'e.created_at'
+        )
             ->orderBy('e.created_at', 'desc')
             ->paginate($perPage);
 
@@ -120,7 +113,7 @@ class EmployeeController extends Controller
         $tenantId = $this->getTenantId($request);
         $validated = $request->validated();
 
-        $code = 'EMP-' . strtoupper(substr(uniqid(), -4));
+        $code = 'EMP-'.strtoupper(substr(uniqid(), -4));
 
         $id = DB::table('employees')->insertGetId([
             'uuid' => (string) Str::uuid(),
@@ -130,8 +123,8 @@ class EmployeeController extends Controller
             'last_name' => $validated['last_name'],
             'email' => $validated['email'] ?? null,
             'phone' => $validated['phone'] ?? null,
-            'department_id' => !empty($validated['department_id']) ? $validated['department_id'] : null,
-            'outlet_id' => !empty($validated['outlet_id']) ? $validated['outlet_id'] : null,
+            'department_id' => ! empty($validated['department_id']) ? $validated['department_id'] : null,
+            'outlet_id' => ! empty($validated['outlet_id']) ? $validated['outlet_id'] : null,
             'position' => $validated['designation'] ?? null,
             'designation' => $validated['designation'],
             'employment_type' => $validated['employment_type'],
@@ -157,14 +150,14 @@ class EmployeeController extends Controller
         $validated = $request->validated();
 
         $query = DB::table('employees')->where('id', $id);
-        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+        if ($user && $user->role !== 'super_admin' && ! empty($tenantId)) {
             $query->where('tenant_id', $tenantId);
-        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+        } elseif (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
         $employee = $query->first();
-        if (!$employee) {
+        if (! $employee) {
             return response()->json(['status' => 'error', 'message' => 'Employee record not found or unauthorized.'], 404);
         }
 
@@ -173,8 +166,8 @@ class EmployeeController extends Controller
             'last_name' => $validated['last_name'],
             'email' => $validated['email'] ?? null,
             'phone' => $validated['phone'] ?? null,
-            'department_id' => !empty($validated['department_id']) ? $validated['department_id'] : null,
-            'outlet_id' => !empty($validated['outlet_id']) ? $validated['outlet_id'] : null,
+            'department_id' => ! empty($validated['department_id']) ? $validated['department_id'] : null,
+            'outlet_id' => ! empty($validated['outlet_id']) ? $validated['outlet_id'] : null,
             'designation' => $validated['designation'],
             'employment_type' => $validated['employment_type'],
             'hire_date' => $validated['hire_date'] ?? null,
@@ -194,14 +187,14 @@ class EmployeeController extends Controller
         $user = $request->user();
         $query = DB::table('employees')->where('id', $id);
 
-        if ($user && $user->role !== 'super_admin' && !empty($tenantId)) {
+        if ($user && $user->role !== 'super_admin' && ! empty($tenantId)) {
             $query->where('tenant_id', $tenantId);
-        } elseif (!empty($tenantId) && $tenantId !== 'all') {
+        } elseif (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('tenant_id', $tenantId);
         }
 
         $employee = $query->first();
-        if (!$employee) {
+        if (! $employee) {
             return response()->json(['status' => 'error', 'message' => 'Employee record not found or unauthorized.'], 404);
         }
 

@@ -15,21 +15,37 @@
         </include>
     </source>
     <php>
-        <env name="APP_ENV" value="testing"/>
+        <env name="APP_ENV" value="testing" force="true"/>
+        <server name="APP_ENV" value="testing" force="true"/>
         <env name="DB_CONNECTION" value="mysql" force="true"/>
+        <server name="DB_CONNECTION" value="mysql" force="true"/>
         <env name="DB_DATABASE" value="codebridge_auth" force="true"/>
+        <server name="DB_DATABASE" value="codebridge_auth" force="true"/>
         <env name="CACHE_STORE" value="redis" force="true"/>
+        <server name="CACHE_STORE" value="redis" force="true"/>
         <env name="REDIS_DB" value="15" force="true"/>
+        <server name="REDIS_DB" value="15" force="true"/>
         <env name="REDIS_CACHE_DB" value="15" force="true"/>
+        <server name="REDIS_CACHE_DB" value="15" force="true"/>
         <env name="REDIS_PREFIX" value="cb_test_infra:" force="true"/>
+        <server name="REDIS_PREFIX" value="cb_test_infra:" force="true"/>
         <env name="CACHE_PREFIX" value="cb_test_cache:" force="true"/>
+        <server name="CACHE_PREFIX" value="cb_test_cache:" force="true"/>
         <env name="QUEUE_CONNECTION" value="redis" force="true"/>
+        <server name="QUEUE_CONNECTION" value="redis" force="true"/>
         <env name="REDIS_QUEUE" value="cb_test_queue" force="true"/>
+        <server name="REDIS_QUEUE" value="cb_test_queue" force="true"/>
         <env name="SESSION_DRIVER" value="redis" force="true"/>
+        <server name="SESSION_DRIVER" value="redis" force="true"/>
         <env name="FILESYSTEM_DISK" value="s3" force="true"/>
+        <server name="FILESYSTEM_DISK" value="s3" force="true"/>
         <env name="REAL_INFRASTRUCTURE_TEST" value="true" force="true"/>
+        <server name="REAL_INFRASTRUCTURE_TEST" value="true" force="true"/>
         <env name="REAL_MINIO_TEST" value="true" force="true"/>
+        <server name="REAL_MINIO_TEST" value="true" force="true"/>
         <env name="JWT_SECRET" value="testing_jwt_secret_key_minimum_32_characters_long_for_security" force="true"/>
+        <server name="JWT_SECRET" value="testing_jwt_secret_key_minimum_32_characters_long_for_security" force="true"/>
         <env name="TRUSTED_PROXIES" value="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1,::1" force="true"/>
+        <server name="TRUSTED_PROXIES" value="10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1,::1" force="true"/>
     </php>
 </phpunit>

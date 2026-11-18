@@ -17,9 +17,9 @@ use App\Http\Requests\User\StoreUserRequest;
 use App\Http\Requests\User\UpdateUserRequest;
 use App\Http\Requests\User\VerifyPinRequest;
 use App\Http\Resources\User\UserResource;
-use App\Models\Organization\Outlet;
 use App\Models\Auth\User;
 use App\Models\Auth\UserPosPin;
+use App\Models\Organization\Outlet;
 use App\Services\JwtService;
 use App\Services\PinService;
 use App\Services\TenantAccess;
@@ -226,20 +226,6 @@ class UserController extends Controller
         return [$record->slug, $record->id];
     }
 
-    private function checkQuota($currentUser, $tenantId): ?string
-    {
-        if ($currentUser && ! UserAuthorizationService::isSuperAdmin($currentUser, $tenantId ? (int) $tenantId : null) && $tenantId) {
-            $tenant = DB::table('tenants')->where('id', $tenantId)->first();
-            $maxUsers = $tenant->max_users ?? 50;
-            $count = DB::table('tenant_users')->where('tenant_id', $tenantId)->where('status', 'active')->count();
-            if ($count >= $maxUsers) {
-                return "User limit reached ({$count}/{$maxUsers}) for your subscription tier.";
-            }
-        }
-
-        return null;
-    }
-
     public function lookup(Request $request)
     {
         $q = trim($request->query('q', ''));
@@ -330,7 +316,7 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'message' => 'This user is already a member of your workspace.'], 422);
         }
 
-        if ($quotaErr = $this->checkQuota($currentUser, $tenantId)) {
+        if ($quotaErr = UserAuthorizationService::checkTenantUserQuota($currentUser, $tenantId)) {
             return response()->json(['status' => 'error', 'code' => 'QUOTA_EXCEEDED', 'message' => $quotaErr], 403);
         }
 
@@ -411,7 +397,7 @@ class UserController extends Controller
             ? (int) $validated['tenant_id']
             : $currentUser?->tenant_id;
 
-        if ($quotaErr = $this->checkQuota($currentUser, $tenantId)) {
+        if ($quotaErr = UserAuthorizationService::checkTenantUserQuota($currentUser, $tenantId)) {
             return response()->json(['status' => 'error', 'code' => 'QUOTA_EXCEEDED', 'message' => $quotaErr], 403);
         }
 

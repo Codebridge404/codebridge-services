@@ -61,6 +61,7 @@ class UserAuthorizationService
             if ($pa !== $pb) {
                 return $pa <=> $pb;
             }
+
             return strcmp($a, $b);
         });
 
@@ -72,15 +73,15 @@ class UserAuthorizationService
      */
     public static function hasPlatformSuperAdminRole($user): bool
     {
-        if (!$user || !is_object($user)) {
+        if (! $user || ! is_object($user)) {
             return false;
         }
 
-        if (isset($user->is_active) && !(bool) $user->is_active) {
+        if (isset($user->is_active) && ! (bool) $user->is_active) {
             return false;
         }
 
-        if (!empty($user->pendingRole) && $user->pendingRole === 'super_admin') {
+        if (! empty($user->pendingRole) && $user->pendingRole === 'super_admin') {
             return true;
         }
 
@@ -90,11 +91,11 @@ class UserAuthorizationService
         }
 
         // Canonical root platform super admin email
-        if (!empty($user->email) && $user->email === 'codebridge2026@gmail.com') {
+        if (! empty($user->email) && $user->email === 'codebridge2026@gmail.com') {
             return true;
         }
 
-        if (!empty($user->exists) && !empty($user->id)) {
+        if (! empty($user->exists) && ! empty($user->id)) {
             try {
                 if (SchemaGuard::hasTable('user_roles') && SchemaGuard::hasTable('roles')) {
                     return DB::table('user_roles as ur')
@@ -124,7 +125,7 @@ class UserAuthorizationService
      */
     public static function isSuperAdmin($user, ?int $tenantId = null): bool
     {
-        if (!$user || !is_object($user)) {
+        if (! $user || ! is_object($user)) {
             return false;
         }
 
@@ -134,7 +135,7 @@ class UserAuthorizationService
 
         // Legacy test compatibility: super_admin role row bound explicitly to the caller's active tenant context
         $effectiveTenantId = $tenantId ?? ($user->tenant_id ? (int) $user->tenant_id : null);
-        if ($effectiveTenantId !== null && !empty($user->exists) && !empty($user->id)) {
+        if ($effectiveTenantId !== null && ! empty($user->exists) && ! empty($user->id)) {
             try {
                 if (SchemaGuard::hasTable('user_roles') && SchemaGuard::hasTable('roles')) {
                     return DB::table('user_roles as ur')
@@ -168,7 +169,7 @@ class UserAuthorizationService
         ?int $claimTenantId = null,
         bool $requireTenant = true
     ): array {
-        if (!$user || !is_object($user)) {
+        if (! $user || ! is_object($user)) {
             return [
                 'authorized' => false,
                 'status' => 401,
@@ -177,7 +178,7 @@ class UserAuthorizationService
             ];
         }
 
-        if (isset($user->is_active) && !(bool) $user->is_active) {
+        if (isset($user->is_active) && ! (bool) $user->is_active) {
             return [
                 'authorized' => false,
                 'status' => 401,
@@ -202,7 +203,7 @@ class UserAuthorizationService
         if ($isPlatformSuperAdmin) {
             $effectiveTenantId = $requestedTenantId ?? $rawBoundTenantId;
             $tenant = $effectiveTenantId ? DB::table('tenants')->where('id', $effectiveTenantId)->first() : null;
-            if ($requestedTenantId !== null && !$tenant) {
+            if ($requestedTenantId !== null && ! $tenant) {
                 return [
                     'authorized' => false,
                     'status' => 404,
@@ -213,7 +214,7 @@ class UserAuthorizationService
             }
 
             $scopedSlugs = [];
-            if ($effectiveTenantId !== null && !empty($user->id)) {
+            if ($effectiveTenantId !== null && ! empty($user->id)) {
                 $scopedSlugs = DB::table('user_roles as ur')
                     ->join('roles as r', 'ur.role_id', '=', 'r.id')
                     ->where('ur.user_id', $user->id)
@@ -223,14 +224,14 @@ class UserAuthorizationService
                         $q->where(function ($sysQ) {
                             $sysQ->whereNull('r.tenant_id')->whereNull('r.company_id');
                         })->orWhere('r.tenant_id', $effectiveTenantId)
-                          ->orWhere('r.company_id', $effectiveTenantId);
+                            ->orWhere('r.company_id', $effectiveTenantId);
                     })
                     ->pluck('r.slug')
                     ->all();
             }
 
             $roles = self::sortRoleSlugs(array_merge(['super_admin'], $scopedSlugs));
-            $membership = ($effectiveTenantId && !empty($user->id))
+            $membership = ($effectiveTenantId && ! empty($user->id))
                 ? DB::table('tenant_users')->where('tenant_id', $effectiveTenantId)->where('user_id', $user->id)->first()
                 : null;
             $outletUuid = $membership
@@ -286,10 +287,11 @@ class UserAuthorizationService
 
         $effectiveTenantId = $requestedTenantId ?? $rawBoundTenantId;
         if ($effectiveTenantId === null) {
-            if (!$requireTenant) {
+            if (! $requireTenant) {
                 $fallbackRole = self::sortRoleSlugs([
-                    !empty($user->pendingRole) ? $user->pendingRole : 'user',
+                    ! empty($user->pendingRole) ? $user->pendingRole : 'user',
                 ]);
+
                 return [
                     'authorized' => true,
                     'status' => 200,
@@ -320,7 +322,7 @@ class UserAuthorizationService
 
         // 3. Confirm active/trial tenant status and active membership in that exact tenant
         $tenant = DB::table('tenants')->where('id', $effectiveTenantId)->first();
-        if (!$tenant || !in_array($tenant->status, ['active', 'trial'], true)) {
+        if (! $tenant || ! in_array($tenant->status, ['active', 'trial'], true)) {
             return [
                 'authorized' => false,
                 'status' => 403,
@@ -330,7 +332,7 @@ class UserAuthorizationService
             ];
         }
 
-        $membership = !empty($user->id)
+        $membership = ! empty($user->id)
             ? DB::table('tenant_users')
                 ->where('tenant_id', $effectiveTenantId)
                 ->where('user_id', $user->id)
@@ -338,7 +340,7 @@ class UserAuthorizationService
                 ->first()
             : null;
 
-        if (!$membership) {
+        if (! $membership) {
             return [
                 'authorized' => false,
                 'status' => 403,
@@ -361,7 +363,7 @@ class UserAuthorizationService
                 $q->where(function ($sysQ) {
                     $sysQ->whereNull('r.tenant_id')->whereNull('r.company_id');
                 })->orWhere('r.tenant_id', $effectiveTenantId)
-                  ->orWhere('r.company_id', $effectiveTenantId);
+                    ->orWhere('r.company_id', $effectiveTenantId);
             })
             ->select('r.id', 'r.slug')
             ->get();
@@ -370,7 +372,7 @@ class UserAuthorizationService
         $roleSlugs = self::sortRoleSlugs($rawRoles->pluck('slug')->all());
 
         if (empty($roleSlugs)) {
-            if (!empty($tenant->owner_user_id) && (int) $tenant->owner_user_id === (int) $user->id) {
+            if (! empty($tenant->owner_user_id) && (int) $tenant->owner_user_id === (int) $user->id) {
                 $roleSlugs = ['organization'];
             } else {
                 $roleSlugs = ['user'];
@@ -379,17 +381,17 @@ class UserAuthorizationService
 
         $primaryRole = $roleSlugs[0];
         $isTenantScopedSuperAdmin = in_array('super_admin', $roleSlugs, true);
-        $isAdminRole = $isTenantScopedSuperAdmin || !empty(array_intersect($roleSlugs, self::ADMIN_ROLE_SLUGS));
+        $isAdminRole = $isTenantScopedSuperAdmin || ! empty(array_intersect($roleSlugs, self::ADMIN_ROLE_SLUGS));
 
         if ($isAdminRole) {
             $permissions = ['*'];
-        } elseif (!empty($roleIds)) {
+        } elseif (! empty($roleIds)) {
             $permissions = DB::table('role_permissions as rp')
                 ->join('permissions as p', 'rp.permission_id', '=', 'p.id')
                 ->whereIn('rp.role_id', $roleIds)
                 ->select('p.name', 'p.slug')
                 ->get()
-                ->map(fn ($p) => !empty($p->name) ? (string) $p->name : (string) $p->slug)
+                ->map(fn ($p) => ! empty($p->name) ? (string) $p->name : (string) $p->slug)
                 ->filter()
                 ->unique()
                 ->values()
@@ -435,7 +437,7 @@ class UserAuthorizationService
      */
     public static function isTenantAdmin($user, ?int $tenantId = null): bool
     {
-        if (!$user || !is_object($user)) {
+        if (! $user || ! is_object($user)) {
             return false;
         }
 
@@ -453,13 +455,14 @@ class UserAuthorizationService
             return false;
         }
 
-        if (!empty($user->exists) && !empty($user->id)) {
+        if (! empty($user->exists) && ! empty($user->id)) {
             $context = self::resolveAuthorizationContext($user, null, $effectiveTenantId, true);
-            if (!$context['authorized']) {
+            if (! $context['authorized']) {
                 return false;
             }
-            return !empty($context['is_super_admin'])
-                || !empty(array_intersect($context['roles'] ?? [], self::ADMIN_ROLE_SLUGS));
+
+            return ! empty($context['is_super_admin'])
+                || ! empty(array_intersect($context['roles'] ?? [], self::ADMIN_ROLE_SLUGS));
         }
 
         return in_array($user->role ?? '', self::ADMIN_ROLE_SLUGS, true);
@@ -470,25 +473,27 @@ class UserAuthorizationService
      */
     public static function isOutletManager($user, ?int $tenantId = null): bool
     {
-        if (!$user || !is_object($user)) {
+        if (! $user || ! is_object($user)) {
             return false;
         }
 
         $outletManagerSlugs = ['outlet_manager', 'supervisor', 'store_manager'];
         $effectiveTenantId = $tenantId ?? ($user->tenant_id ? (int) $user->tenant_id : null);
 
-        if (!empty($user->exists) && !empty($user->id)) {
+        if (! empty($user->exists) && ! empty($user->id)) {
             if ($effectiveTenantId === null) {
                 return false;
             }
             $context = self::resolveAuthorizationContext($user, null, $effectiveTenantId, true);
-            if (!$context['authorized']) {
+            if (! $context['authorized']) {
                 return false;
             }
-            return !empty(array_intersect($context['roles'] ?? [], $outletManagerSlugs));
+
+            return ! empty(array_intersect($context['roles'] ?? [], $outletManagerSlugs));
         }
 
         $role = $user->role ?? '';
+
         return in_array($role, $outletManagerSlugs, true);
     }
 
@@ -499,7 +504,7 @@ class UserAuthorizationService
      */
     public static function authorizeInvitation($currentUser, string $targetRoleSlug, ?string $targetOutletUuid, ?int $tenantId): array
     {
-        if (!$currentUser) {
+        if (! $currentUser) {
             return [false, 'Unauthenticated.', 401];
         }
 
@@ -536,7 +541,7 @@ class UserAuthorizationService
 
             // Outlet scope verification: Outlet manager can ONLY invite users to their own outlet
             $callerOutletUuid = $currentUser->outlet_uuid ?? null;
-            if (!$callerOutletUuid) {
+            if (! $callerOutletUuid) {
                 return [false, 'Caller does not have an assigned outlet scope.', 403];
             }
 
@@ -558,7 +563,7 @@ class UserAuthorizationService
      */
     public static function authorizeUserManagement($currentUser, $targetUser, ?string $newRoleSlug = null, ?string $newOutletUuid = null): array
     {
-        if (!$currentUser) {
+        if (! $currentUser) {
             return [false, 'Unauthenticated.', 401];
         }
 
@@ -575,13 +580,13 @@ class UserAuthorizationService
 
         // Determine target tenant context relative to the caller's workspace (supporting multi-tenant users cleanly)
         $scopedTarget = $targetUser;
-        if ($callerTenantId !== null && is_object($targetUser) && !empty($targetUser->id)) {
+        if ($callerTenantId !== null && is_object($targetUser) && ! empty($targetUser->id)) {
             $targetMemberInCallerTenant = DB::table('tenant_users')
                 ->where('tenant_id', $callerTenantId)
                 ->where('user_id', $targetUser->id)
                 ->exists();
 
-            if (!$targetMemberInCallerTenant) {
+            if (! $targetMemberInCallerTenant) {
                 return [false, 'Unauthorized access to user from another workspace.', 403];
             }
 
@@ -609,6 +614,7 @@ class UserAuthorizationService
             if ($newRoleSlug && $newRoleSlug !== $targetRole) {
                 return [false, 'Users cannot modify their own administrative role.', 403];
             }
+
             return [true, '', 200];
         }
 
@@ -617,6 +623,7 @@ class UserAuthorizationService
             if ($newRoleSlug === 'super_admin') {
                 return [false, 'Cannot assign super_admin role.', 403];
             }
+
             return [true, '', 200];
         }
 
@@ -658,7 +665,7 @@ class UserAuthorizationService
      */
     public static function authorizePasswordReset($currentUser, $targetUser): array
     {
-        if (!$currentUser) {
+        if (! $currentUser) {
             return [false, 'Unauthenticated.', 401];
         }
 
@@ -673,13 +680,13 @@ class UserAuthorizationService
         }
 
         $scopedTarget = $targetUser;
-        if ($callerTenantId !== null && is_object($targetUser) && !empty($targetUser->id)) {
+        if ($callerTenantId !== null && is_object($targetUser) && ! empty($targetUser->id)) {
             $targetMemberInCallerTenant = DB::table('tenant_users')
                 ->where('tenant_id', $callerTenantId)
                 ->where('user_id', $targetUser->id)
                 ->exists();
 
-            if (!$targetMemberInCallerTenant) {
+            if (! $targetMemberInCallerTenant) {
                 return [false, 'Unauthorized access to user from another workspace.', 403];
             }
 
@@ -724,5 +731,26 @@ class UserAuthorizationService
         }
 
         return [false, 'Unauthorized to reset user passwords.', 403];
+    }
+
+    /**
+     * Check whether a tenant has reached its subscription active-user seat quota.
+     */
+    public static function checkTenantUserQuota(?User $currentUser, int|string|null $tenantId): ?string
+    {
+        if ($currentUser && ! self::isSuperAdmin($currentUser, $tenantId ? (int) $tenantId : null) && $tenantId) {
+            $tenant = DB::table('tenants')->where('id', $tenantId)->first();
+            $maxUsers = $tenant->max_users ?? 50;
+            $count = DB::table('tenant_users')
+                ->where('tenant_id', $tenantId)
+                ->where('status', 'active')
+                ->count();
+
+            if ($count >= $maxUsers) {
+                return "User limit reached ({$count}/{$maxUsers}) for your subscription tier.";
+            }
+        }
+
+        return null;
     }
 }

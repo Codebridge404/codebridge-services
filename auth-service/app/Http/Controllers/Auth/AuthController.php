@@ -2288,33 +2288,6 @@ class AuthController extends Controller
         return $this->successResponse(message: 'Logged out successfully');
     }
 
-    private function parseDeviceName(?string $userAgent): string
-    {
-        if (empty($userAgent)) {
-            return 'Web Client';
-        }
-        if (str_contains($userAgent, 'Windows')) {
-            return 'Windows PC';
-        }
-        if (str_contains($userAgent, 'Macintosh')) {
-            return 'Mac Desktop';
-        }
-        if (str_contains($userAgent, 'iPhone')) {
-            return 'Apple iPhone';
-        }
-        if (str_contains($userAgent, 'iPad')) {
-            return 'Apple iPad';
-        }
-        if (str_contains($userAgent, 'Android')) {
-            return 'Android POS Device';
-        }
-        if (str_contains($userAgent, 'Linux')) {
-            return 'Linux Device';
-        }
-
-        return 'Web Browser';
-    }
-
     /**
      * Validate and sanitize redirect_url against allowlisted frontend domains.
      * Prevents Open Redirect (CWE-601) vulnerabilities.

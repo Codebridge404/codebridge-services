@@ -207,6 +207,10 @@ class LegacyTokenCompatibilityTest extends TestCase
             'sid' => (string) $tokenData['id'],
         ]);
 
+        $refreshToken = $this->jwtService->generateRefreshTokenForUser($this->user, [
+            'sid' => (string) $tokenData['id'],
+        ]);
+
         $logoutResponse = $this->withHeaders([
             'Authorization' => 'Bearer '.$jwt,
         ])->postJson('/api/v1/auth/logout');
@@ -216,6 +220,16 @@ class LegacyTokenCompatibilityTest extends TestCase
         // Verify token in database is deleted
         $exists = DB::table('personal_access_tokens')->where('id', $tokenData['id'])->exists();
         $this->assertFalse($exists);
+
+        // Verify revoked JWT access token is rejected
+        $this->withHeaders([
+            'Authorization' => 'Bearer '.$jwt,
+        ])->postJson('/api/v1/auth/sessions/ping')->assertStatus(401);
+
+        // Verify refresh token for revoked legacy numeric session is rejected
+        $this->postJson('/api/v1/auth/refresh', [
+            'refresh_token' => $refreshToken,
+        ])->assertStatus(401);
     }
 
     /**

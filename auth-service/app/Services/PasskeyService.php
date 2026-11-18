@@ -5,9 +5,10 @@ namespace App\Services;
 use App\Models\Auth\PasskeyCredential;
 use App\Models\Auth\User;
 use App\Models\Auth\UserSession;
+use App\Services\Concerns\HandlesAtomicCache;
 use CBOR\Decoder;
+use CBOR\Normalizable;
 use CBOR\StringStream;
-use Illuminate\Cache\RedisStore;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
@@ -31,6 +32,8 @@ use Webauthn\PublicKeyCredentialUserEntity;
  */
 class PasskeyService
 {
+    use HandlesAtomicCache;
+
     protected Serializer $serializer;
 
     protected AuthenticatorAttestationResponseValidator $attestationValidator;
@@ -207,9 +210,7 @@ class PasskeyService
 
         // Parse and extract public key and authenticator data from attestationObject
         $attestationRaw = base64_decode(strtr($response['attestationObject'], '-_', '+/'));
-        $attestationDecoded = Decoder::create()->decode(
-            new StringStream($attestationRaw)
-        )->normalize();
+        $attestationDecoded = $this->decodeCbor($attestationRaw);
 
         $authData = $attestationDecoded['authData'] ?? null;
         if (! $authData) {
@@ -594,59 +595,15 @@ class PasskeyService
         Cache::forget("auth:reauth_grant:{$user->id}:{$purpose}");
     }
 
-    /**
-     * Atomically fetch and delete a cache key using Redis Lua script when Redis is available.
-     * Fails closed when Redis execution fails, and uses atomic locking for non-Redis test stores.
-     * Raw authentication keys/tokens are never emitted to logs.
-     */
-    public function atomicCachePull(string $cacheKey): mixed
+    private function decodeCbor(string $bytes): mixed
     {
-        $store = Cache::getStore();
-        if ($store instanceof RedisStore) {
-            try {
-                $script = <<<'LUA'
-local val = redis.call('get', KEYS[1])
-if val then
-    redis.call('del', KEYS[1])
-end
-return val
-LUA;
-                $prefix = $store->getPrefix();
-                $fullKey = $prefix.$cacheKey;
-                $raw = $store->connection()->eval($script, 1, $fullKey);
+        $decoded = Decoder::create()->decode(new StringStream($bytes));
 
-                if ($raw === null || $raw === false) {
-                    return null;
-                }
-
-                return is_numeric($raw) ? $raw : @unserialize($raw);
-            } catch (\Throwable $e) {
-                // Fail-closed on Redis scripting failure to preserve single-use guarantees.
-                // Log only a safe identifier hash and error class; never log raw tokens or keys.
-                Log::warning('Atomic Redis cache pull failed', [
-                    'key_hash' => substr(hash('sha256', $cacheKey), 0, 16),
-                    'error_class' => get_class($e),
-                ]);
-
-                return null;
-            }
+        if (! $decoded instanceof Normalizable) {
+            throw new \RuntimeException('Decoded CBOR object does not support normalization.');
         }
 
-        // Non-Redis fallback (e.g., local tests): use an atomic lock to guard pull
-        try {
-            $lockKey = 'atomic_pull_lock:'.md5($cacheKey);
-
-            return Cache::lock($lockKey, 5)->block(2, function () use ($cacheKey) {
-                return Cache::pull($cacheKey);
-            });
-        } catch (\Throwable $e) {
-            Log::warning('Atomic locked cache pull failed', [
-                'key_hash' => substr(hash('sha256', $cacheKey), 0, 16),
-                'error_class' => get_class($e),
-            ]);
-
-            return null;
-        }
+        return $decoded->normalize();
     }
 
     /**
@@ -655,9 +612,7 @@ LUA;
     public function validateCosePublicKeyStructure(string $coseBytes): array
     {
         try {
-            $cose = Decoder::create()->decode(
-                new StringStream($coseBytes)
-            )->normalize();
+            $cose = $this->decodeCbor($coseBytes);
         } catch (\Throwable $e) {
             throw new \InvalidArgumentException('Malformed COSE public key in attestation: '.$e->getMessage());
         }
@@ -739,9 +694,7 @@ LUA;
     protected function verifySignatureWithCoseKey(string $signedData, string $signature, string $coseBytes): bool
     {
         try {
-            $cose = Decoder::create()->decode(
-                new StringStream($coseBytes)
-            )->normalize();
+            $cose = $this->decodeCbor($coseBytes);
 
             if (! is_array($cose)) {
                 return false;

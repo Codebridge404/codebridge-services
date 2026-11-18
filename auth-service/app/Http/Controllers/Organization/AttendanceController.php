@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Organization;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Attendance\ClockInRequest;
 use App\Http\Requests\Attendance\ClockOutRequest;
+use App\Services\TenantAccess;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -13,15 +14,21 @@ use Illuminate\Support\Facades\DB;
  * [BD-0060] Staff Shift Attendance, Clock In/Out & GPS Geofencing Controller
  *
  * @ticket BD-0060
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/AttendanceController.php
+ *
  * @related-model App\Models\Organization\Employee, DB table attendances
+ *
  * @entry-point AttendanceController::index(), clockIn(), clockOut(), summary()
+ *
  * @routes
  *  - GET  /api/v1/attendances
  *  - POST /api/v1/attendances/clock-in
  *  - POST /api/v1/attendances/clock-out
  *  - GET  /api/v1/attendances/summary
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -33,19 +40,6 @@ use Illuminate\Support\Facades\DB;
  */
 class AttendanceController extends Controller
 {
-    protected function getTenantId(Request $request): ?string
-    {
-        $user = $request->user();
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
-            return $user->tenant_id ? (string) $user->tenant_id : null;
-        }
-
-        return $request->header('X-Tenant-Id')
-            ?? ($user?->tenant_id ? (string) $user->tenant_id : null)
-            ?? $request->query('tenant_id')
-            ?? null;
-    }
-
     public function index(Request $request)
     {
         $tenantId = $this->getTenantId($request);
@@ -57,40 +51,42 @@ class AttendanceController extends Controller
             ->leftJoin('employees as e', 'a.employee_id', '=', 'e.id')
             ->leftJoin('outlets as o', 'a.outlet_id', '=', 'o.id');
 
-        if (!empty($tenantId) && $tenantId !== 'all') {
+        if (! empty($tenantId) && $tenantId !== 'all') {
             $query->where('a.tenant_id', $tenantId);
         }
 
-        if (!\App\Services\TenantAccess::isAdmin($request->user())) $query->where('a.user_id', $request->user()->id);
+        if (! TenantAccess::isAdmin($request->user())) {
+            $query->where('a.user_id', $request->user()->id);
+        }
 
-        if (!empty($date)) {
+        if (! empty($date)) {
             $query->whereDate('a.clock_in', $date);
         }
 
-        if (!empty($search)) {
+        if (! empty($search)) {
             $escaped = SchemaGuard::escapeLike(trim((string) $search));
             $query->where(function ($q) use ($escaped) {
                 $q->where('u.name', 'like', "%{$escaped}%")
-                  ->orWhere(DB::raw("CONCAT(e.first_name, ' ', e.last_name)"), 'like', "%{$escaped}%")
-                  ->orWhere('e.employee_code', 'like', "%{$escaped}%");
+                    ->orWhere(DB::raw("CONCAT(e.first_name, ' ', e.last_name)"), 'like', "%{$escaped}%")
+                    ->orWhere('e.employee_code', 'like', "%{$escaped}%");
             });
         }
 
         $perPage = min(100, max(1, (int) $request->query('per_page', 50)));
         $paginator = $query->select(
-                'a.id',
-                'a.user_id',
-                'a.employee_id',
-                'a.outlet_id',
-                'a.clock_in',
-                'a.clock_out',
-                'a.status',
-                'a.notes',
-                DB::raw("COALESCE(u.name, CONCAT(e.first_name, ' ', e.last_name), 'Staff') as staff_name"),
-                DB::raw("COALESCE(u.email, e.email) as staff_email"),
-                'o.name as outlet_name',
-                'a.created_at'
-            )
+            'a.id',
+            'a.user_id',
+            'a.employee_id',
+            'a.outlet_id',
+            'a.clock_in',
+            'a.clock_out',
+            'a.status',
+            'a.notes',
+            DB::raw("COALESCE(u.name, CONCAT(e.first_name, ' ', e.last_name), 'Staff') as staff_name"),
+            DB::raw('COALESCE(u.email, e.email) as staff_email'),
+            'o.name as outlet_name',
+            'a.created_at'
+        )
             ->orderBy('a.clock_in', 'desc')
             ->paginate($perPage);
 
@@ -116,13 +112,21 @@ class AttendanceController extends Controller
         $outletId = $validated['outlet_id'] ?? $request->user()?->outlet_id;
 
         $actor = $request->user();
-        if (!\App\Services\TenantAccess::isAdmin($actor)) {
+        if (! TenantAccess::isAdmin($actor)) {
             abort_unless((int) $userId === $actor->id, 403);
-            if ($employeeId) abort_unless(DB::table('employees')->where('id', $employeeId)->where('user_id', $actor->id)->exists(), 403);
+            if ($employeeId) {
+                abort_unless(DB::table('employees')->where('id', $employeeId)->where('user_id', $actor->id)->exists(), 403);
+            }
         }
-        if ($userId) abort_unless(DB::table('tenant_users')->where('tenant_id', $tenantId)->where('user_id', $userId)->where('status', 'active')->exists(), 422);
-        if ($employeeId) \App\Services\TenantAccess::record('employees', $employeeId, $request);
-        if ($outletId) \App\Services\TenantAccess::record('outlets', $outletId, $request);
+        if ($userId) {
+            abort_unless(DB::table('tenant_users')->where('tenant_id', $tenantId)->where('user_id', $userId)->where('status', 'active')->exists(), 422);
+        }
+        if ($employeeId) {
+            TenantAccess::record('employees', $employeeId, $request);
+        }
+        if ($outletId) {
+            TenantAccess::record('outlets', $outletId, $request);
+        }
 
         // Check if there is already an active clock-in without clock-out
         $activeQuery = DB::table('attendances')
@@ -157,6 +161,7 @@ class AttendanceController extends Controller
         ]);
 
         $record = DB::table('attendances')->where('id', $id)->first();
+
         return response()->json([
             'status' => 'success',
             'message' => 'Clock-in recorded successfully.',
@@ -169,17 +174,19 @@ class AttendanceController extends Controller
         $validated = $request->validated();
 
         $userId = $request->user()?->id;
-        $query = \App\Services\TenantAccess::scope(DB::table('attendances')->whereNull('clock_out'), $request);
-        if (!\App\Services\TenantAccess::isAdmin($request->user())) $query->where('user_id', $userId);
+        $query = TenantAccess::scope(DB::table('attendances')->whereNull('clock_out'), $request);
+        if (! TenantAccess::isAdmin($request->user())) {
+            $query->where('user_id', $userId);
+        }
 
-        if (!empty($validated['attendance_id'])) {
+        if (! empty($validated['attendance_id'])) {
             $query->where('id', $validated['attendance_id']);
         } else {
             $query->where('user_id', $userId)->whereNull('clock_out')->orderBy('clock_in', 'desc');
         }
 
         $attendance = $query->first();
-        if (!$attendance) {
+        if (! $attendance) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'No active clock-in record found to clock out from.',
@@ -194,6 +201,7 @@ class AttendanceController extends Controller
         ]);
 
         $updated = DB::table('attendances')->where('id', $attendance->id)->first();
+
         return response()->json([
             'status' => 'success',
             'message' => 'Clock-out recorded successfully.',
