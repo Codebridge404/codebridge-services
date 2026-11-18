@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -16,17 +17,22 @@ class HealthController extends Controller
         return view('welcome');
     }
 
-    public function health(): JsonResponse
+    public function health(Request $request): JsonResponse
     {
+        $includeInternalTelemetry = $request->header('X-Internal-Telemetry') === '1';
+
         $checks = [
             'database' => false,
             'cache' => false,
         ];
 
-        $runtime = $this->collectRuntimeMetrics();
+        $runtime = $includeInternalTelemetry ? $this->collectRuntimeMetrics() : null;
+        $dbStart = microtime(true);
+        $dbLatencyMs = 0.0;
 
         try {
             DB::select('SELECT 1');
+            $dbLatencyMs = max(0.01, round((microtime(true) - $dbStart) * 1000, 2));
             $checks['database'] = true;
 
             $probeKey = 'health:' . Str::uuid();
@@ -45,23 +51,193 @@ class HealthController extends Controller
                 'error' => $e->getMessage(),
             ]);
 
-            return response()->json([
+            $errorPayload = [
                 'status' => 'unhealthy',
                 'service' => 'operations-service',
                 'checks' => $checks,
-                'runtime' => $runtime,
                 'timestamp' => now()->toIso8601String(),
-            ], 503);
+            ];
+
+            if ($includeInternalTelemetry) {
+                $errorPayload['runtime'] = $runtime;
+                $errorPayload['database'] = $checks['database']
+                    ? $this->collectDatabaseTelemetry($dbLatencyMs)
+                    : $this->offlineDatabasePayload();
+                $errorPayload['entityCounts'] = $checks['database'] ? $this->collectEntityCounts() : $this->emptyEntityCounts();
+                $errorPayload['queueMetrics'] = $checks['database'] ? $this->collectQueueMetrics() : ['pending_jobs' => 0, 'failed_jobs' => 0];
+            }
+
+            return response()->json($errorPayload, 503);
         }
 
-        return response()->json([
+        $payload = [
             'status' => 'healthy',
             'service' => 'operations-service',
             'version' => config('app.version', '1.0.0'),
             'checks' => $checks,
-            'runtime' => $runtime,
             'timestamp' => now()->toIso8601String(),
-        ]);
+        ];
+
+        if ($includeInternalTelemetry) {
+            $payload['runtime'] = $runtime;
+            $payload['database'] = $this->collectDatabaseTelemetry($dbLatencyMs);
+            $payload['entityCounts'] = $this->collectEntityCounts();
+            $payload['queueMetrics'] = $this->collectQueueMetrics();
+        }
+
+        return response()->json($payload);
+    }
+
+    /**
+     * Collect real database telemetry owned by operations-service (MySQL or SQLite).
+     *
+     * @return array<string, mixed>
+     */
+    protected function collectDatabaseTelemetry(float $latencyMs): array
+    {
+        $conn = DB::connection();
+        $driver = $conn->getDriverName();
+        $dbName = $conn->getDatabaseName() ?: 'codebridge_operations';
+
+        $version = $driver;
+        $sizeMb = 0.0;
+        $threadsConnected = 1;
+        $threadsRunning = 1;
+        $uptimeSeconds = null;
+        $tables = [];
+
+        if ($driver === 'sqlite') {
+            try {
+                $row = $conn->select('SELECT sqlite_version() as v');
+                if (!empty($row)) {
+                    $version = 'SQLite ' . ($row[0]->v ?? '');
+                }
+            } catch (\Throwable) {
+            }
+        } else {
+            try {
+                $verRow = $conn->select('SELECT VERSION() as v');
+                if (!empty($verRow)) {
+                    $version = 'MySQL ' . ($verRow[0]->v ?? '');
+                }
+            } catch (\Throwable) {
+            }
+
+            try {
+                $statusRows = $conn->select("SHOW GLOBAL STATUS WHERE Variable_name IN ('Uptime', 'Threads_connected', 'Threads_running')");
+                foreach ($statusRows as $row) {
+                    $var = $row->Variable_name ?? '';
+                    $val = (int) ($row->Value ?? 0);
+                    if ($var === 'Uptime') {
+                        $uptimeSeconds = $val;
+                    } elseif ($var === 'Threads_connected') {
+                        $threadsConnected = $val;
+                    } elseif ($var === 'Threads_running') {
+                        $threadsRunning = $val;
+                    }
+                }
+            } catch (\Throwable) {
+            }
+
+            try {
+                $sizeRow = $conn->select('SELECT ROUND(SUM(data_length + index_length) / 1024 / 1024, 2) AS size_mb FROM information_schema.TABLES WHERE table_schema = DATABASE()');
+                if (!empty($sizeRow)) {
+                    $sizeMb = (float) ($sizeRow[0]->size_mb ?? 0);
+                }
+            } catch (\Throwable) {
+            }
+
+            try {
+                $rawTables = $conn->select('SELECT TABLE_NAME, TABLE_ROWS, ROUND((data_length + index_length) / 1024, 1) AS size_kb, UPDATE_TIME FROM information_schema.TABLES WHERE table_schema = DATABASE() ORDER BY (data_length + index_length) DESC LIMIT 30');
+                foreach ($rawTables as $t) {
+                    $tables[] = [
+                        'name' => $t->TABLE_NAME ?? $t->table_name ?? 'unknown',
+                        'rows' => (int) ($t->TABLE_ROWS ?? $t->table_rows ?? 0),
+                        'size_kb' => (float) ($t->size_kb ?? 0),
+                        'updated_at' => $t->UPDATE_TIME ?? $t->update_time ?? now()->toIso8601String(),
+                    ];
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        return [
+            'name' => $dbName,
+            'connected' => true,
+            'version' => $version,
+            'latency' => $latencyMs,
+            'sizeMb' => $sizeMb,
+            'threadsConnected' => $threadsConnected,
+            'threadsRunning' => $threadsRunning,
+            'uptimeSeconds' => $uptimeSeconds,
+            'tables' => $tables,
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function offlineDatabasePayload(): array
+    {
+        return [
+            'name' => DB::connection()->getDatabaseName() ?: 'codebridge_operations',
+            'connected' => false,
+            'version' => 'Unavailable',
+            'latency' => 0.0,
+            'sizeMb' => 0.0,
+            'threadsConnected' => 0,
+            'threadsRunning' => 0,
+            'uptimeSeconds' => null,
+            'tables' => [],
+        ];
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    protected function emptyEntityCounts(): array
+    {
+        return [
+            'products' => 0,
+            'sales' => 0,
+            'categories' => 0,
+            'brands' => 0,
+            'discounts' => 0,
+            'coupons' => 0,
+        ];
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    protected function collectEntityCounts(): array
+    {
+        $counts = $this->emptyEntityCounts();
+        $schema = DB::getSchemaBuilder();
+
+        foreach (array_keys($counts) as $table) {
+            try {
+                if ($schema->hasTable($table)) {
+                    $counts[$table] = DB::table($table)->count();
+                }
+            } catch (\Throwable) {
+            }
+        }
+
+        return $counts;
+    }
+
+    /**
+     * @return array{pending_jobs: int, failed_jobs: int}
+     */
+    protected function collectQueueMetrics(): array
+    {
+        $schema = DB::getSchemaBuilder();
+
+        return [
+            'pending_jobs' => $schema->hasTable('jobs') ? DB::table('jobs')->count() : 0,
+            'failed_jobs' => $schema->hasTable('failed_jobs') ? DB::table('failed_jobs')->count() : 0,
+        ];
     }
 
     /**

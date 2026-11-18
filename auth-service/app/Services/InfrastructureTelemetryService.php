@@ -927,7 +927,8 @@ class InfrastructureTelemetryService
     }
 
     /**
-     * Probe internal Operations Service health endpoint (port 8081) for live CPU, memory, uptime, and runtime versions.
+     * Probe internal Operations Service health endpoint (port 8081) for live CPU, memory, uptime,
+     * database metrics, entity counts, and queue metrics (clean microservice boundary — no cross-DB access).
      *
      * @return array<string, mixed>
      */
@@ -937,12 +938,28 @@ class InfrastructureTelemetryService
         $probe = $this->probeHttp($url, 0.8);
 
         if ($probe['body'] === null) {
-            return ['available' => false, 'latency' => 0.0, 'runtime' => null, 'status' => 'offline'];
+            return [
+                'available' => false,
+                'latency' => 0.0,
+                'runtime' => null,
+                'database' => null,
+                'entityCounts' => null,
+                'queueMetrics' => null,
+                'status' => 'offline',
+            ];
         }
 
         $decoded = json_decode($probe['body'], true);
         if (! is_array($decoded)) {
-            return ['available' => false, 'latency' => $probe['latency'], 'runtime' => null, 'status' => $probe['status']];
+            return [
+                'available' => false,
+                'latency' => $probe['latency'],
+                'runtime' => null,
+                'database' => null,
+                'entityCounts' => null,
+                'queueMetrics' => null,
+                'status' => $probe['status'],
+            ];
         }
 
         return [
@@ -951,6 +968,9 @@ class InfrastructureTelemetryService
             'status' => ($decoded['status'] ?? '') === 'healthy' ? 'healthy' : 'degraded',
             'runtime' => is_array($decoded['runtime'] ?? null) ? $decoded['runtime'] : null,
             'checks' => is_array($decoded['checks'] ?? null) ? $decoded['checks'] : null,
+            'database' => is_array($decoded['database'] ?? null) ? $decoded['database'] : null,
+            'entityCounts' => is_array($decoded['entityCounts'] ?? null) ? $decoded['entityCounts'] : null,
+            'queueMetrics' => is_array($decoded['queueMetrics'] ?? null) ? $decoded['queueMetrics'] : null,
         ];
     }
 
@@ -1150,35 +1170,10 @@ class InfrastructureTelemetryService
             'codebridge-minio',
         ]);
 
-        // 1. Auth DB (live)
+        // 1. Auth DB (live — owned by auth-service)
         $authDb = $this->collectDatabaseMetrics();
 
-        // 2. Operations DB (live)
-        $opsDb = $this->collectDatabaseMetrics('operations');
-        $opsEntityCounts = [
-            'products' => 0,
-            'sales' => 0,
-            'categories' => 0,
-            'brands' => 0,
-            'discounts' => 0,
-            'coupons' => 0,
-        ];
-        if ($opsDb['connected']) {
-            foreach (array_keys($opsEntityCounts) as $tbl) {
-                try {
-                    $opsEntityCounts[$tbl] = DB::connection('operations')->table($tbl)->count();
-                } catch (\Throwable) {
-                }
-            }
-        }
-
-        // 3. Redis Clusters (live INFO)
-        $authRedis = $this->probeAuthRedis();
-        $opsRedisHost = (string) env('OPERATIONS_REDIS_HOST', 'operations-redis');
-        $opsRedisPort = (int) env('OPERATIONS_REDIS_PORT', 6379);
-        $opsRedis = $this->probeRemoteRedis($opsRedisHost, $opsRedisPort, 0.6);
-
-        // 4. Gateway (live HTTP + internal stub_status), Operations Service (live internal runtime), and MinIO Storage
+        // 2. Gateway (live HTTP + internal stub_status), Operations Service + Operations DB (clean microservice HTTP boundary)
         $gwProbe = $this->probeHttp('http://codebridge-api-gateway:80/api/health', 0.6);
         if ($gwProbe['status'] === 'offline') {
             $gwProbe = $this->probeHttp('http://127.0.0.1:8080/api/health', 0.4);
@@ -1190,6 +1185,48 @@ class InfrastructureTelemetryService
             ? ['status' => $opsRuntimeProbe['status'], 'latency' => $opsRuntimeProbe['latency']]
             : $this->pingSocket('codebridge-operations-service', 9000, 0.6);
 
+        $rawOpsDb = is_array($opsRuntimeProbe['database'] ?? null) ? $opsRuntimeProbe['database'] : null;
+        $opsDbConnected = (bool) ($rawOpsDb['connected'] ?? false);
+        $opsDbTables = is_array($rawOpsDb['tables'] ?? null) ? $rawOpsDb['tables'] : [];
+        $opsDbSizeMb = (float) ($rawOpsDb['sizeMb'] ?? 0.0);
+        $opsDbUptimeSec = isset($rawOpsDb['uptimeSeconds']) ? (int) $rawOpsDb['uptimeSeconds'] : null;
+        $opsThreadsRunning = (int) ($rawOpsDb['threadsRunning'] ?? 0);
+
+        $opsDb = [
+            'name' => (string) ($rawOpsDb['name'] ?? 'codebridge_operations'),
+            'connected' => $opsDbConnected,
+            'status' => $opsDbConnected ? 'healthy' : 'offline',
+            'version' => $opsDbConnected ? (string) ($rawOpsDb['version'] ?? 'MySQL') : 'Unavailable',
+            'latency' => $opsDbConnected ? (float) ($rawOpsDb['latency'] ?? 0.0) : 0.0,
+            'sizeMb' => $opsDbSizeMb,
+            'threadsConnected' => $opsDbConnected ? (int) ($rawOpsDb['threadsConnected'] ?? 0) : 0,
+            'threadsRunning' => $opsThreadsRunning,
+            'uptimeSeconds' => $opsDbUptimeSec,
+            'uptime' => $opsDbConnected ? $this->formatUptime($opsDbUptimeSec) : 'Offline',
+            'cpu' => $opsDbConnected ? $opsThreadsRunning.' active threads' : 'N/A',
+            'memory' => $opsDbConnected ? $opsDbSizeMb.' MB ('.count($opsDbTables).' tables)' : 'Unavailable',
+            'tables' => $opsDbTables,
+        ];
+
+        $rawOpsEntities = is_array($opsRuntimeProbe['entityCounts'] ?? null) ? $opsRuntimeProbe['entityCounts'] : [];
+        $opsEntityCounts = [
+            'products' => (int) ($rawOpsEntities['products'] ?? 0),
+            'sales' => (int) ($rawOpsEntities['sales'] ?? 0),
+            'categories' => (int) ($rawOpsEntities['categories'] ?? 0),
+            'brands' => (int) ($rawOpsEntities['brands'] ?? 0),
+            'discounts' => (int) ($rawOpsEntities['discounts'] ?? 0),
+            'coupons' => (int) ($rawOpsEntities['coupons'] ?? 0),
+        ];
+
+        $rawOpsQueue = is_array($opsRuntimeProbe['queueMetrics'] ?? null) ? $opsRuntimeProbe['queueMetrics'] : [];
+
+        // 3. Redis Clusters (live INFO)
+        $authRedis = $this->probeAuthRedis();
+        $opsRedisHost = (string) env('OPERATIONS_REDIS_HOST', 'operations-redis');
+        $opsRedisPort = (int) env('OPERATIONS_REDIS_PORT', 6379);
+        $opsRedis = $this->probeRemoteRedis($opsRedisHost, $opsRedisPort, 0.6);
+
+        // 4. MinIO Storage (live S3)
         $storage = $this->collectStorageStatus();
 
         // 5. Real Entity Counts (Auth + Operations)
@@ -1212,12 +1249,8 @@ class InfrastructureTelemetryService
         $queueMetrics = [
             'auth_pending_jobs' => DB::getSchemaBuilder()->hasTable('jobs') ? DB::table('jobs')->count() : 0,
             'auth_failed_jobs' => DB::getSchemaBuilder()->hasTable('failed_jobs') ? DB::table('failed_jobs')->count() : 0,
-            'ops_pending_jobs' => $opsDb['connected'] && DB::connection('operations')->getSchemaBuilder()->hasTable('jobs')
-                ? DB::connection('operations')->table('jobs')->count()
-                : 0,
-            'ops_failed_jobs' => $opsDb['connected'] && DB::connection('operations')->getSchemaBuilder()->hasTable('failed_jobs')
-                ? DB::connection('operations')->table('failed_jobs')->count()
-                : 0,
+            'ops_pending_jobs' => (int) ($rawOpsQueue['pending_jobs'] ?? 0),
+            'ops_failed_jobs' => (int) ($rawOpsQueue['failed_jobs'] ?? 0),
         ];
 
         $authMemLabel = $hostMetrics['container_memory_mb'] !== null
