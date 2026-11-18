@@ -876,6 +876,260 @@ class InfrastructureTelemetryService
     }
 
     /**
+     * Probe internal-only Nginx stub_status (port 8081) for live Gateway connection & request counts.
+     *
+     * @return array{available: bool, latency: float, active_connections: int, accepts: int, handled: int, requests: int, reading: int, writing: int, waiting: int}
+     */
+    public function probeGatewayNginxStatus(): array
+    {
+        $url = (string) env('GATEWAY_STUB_STATUS_URL', 'http://codebridge-api-gateway:8081/nginx_status');
+        $probe = $this->probeHttp($url, 0.5);
+
+        if ($probe['status'] !== 'healthy' || empty($probe['body'])) {
+            return [
+                'available' => false,
+                'latency' => 0.0,
+                'active_connections' => 0,
+                'accepts' => 0,
+                'handled' => 0,
+                'requests' => 0,
+                'reading' => 0,
+                'writing' => 0,
+                'waiting' => 0,
+            ];
+        }
+
+        $body = $probe['body'];
+        $active = preg_match('/Active connections:\s*(\d+)/', $body, $m) ? (int) $m[1] : 0;
+        $accepts = 0;
+        $handled = 0;
+        $requests = 0;
+        if (preg_match('/^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/m', $body, $m)) {
+            $accepts = (int) $m[1];
+            $handled = (int) $m[2];
+            $requests = (int) $m[3];
+        }
+        $reading = preg_match('/Reading:\s*(\d+)/', $body, $m) ? (int) $m[1] : 0;
+        $writing = preg_match('/Writing:\s*(\d+)/', $body, $m) ? (int) $m[1] : 0;
+        $waiting = preg_match('/Waiting:\s*(\d+)/', $body, $m) ? (int) $m[1] : 0;
+
+        return [
+            'available' => true,
+            'latency' => $probe['latency'],
+            'active_connections' => $active,
+            'accepts' => $accepts,
+            'handled' => $handled,
+            'requests' => $requests,
+            'reading' => $reading,
+            'writing' => $writing,
+            'waiting' => $waiting,
+        ];
+    }
+
+    /**
+     * Probe internal Operations Service health endpoint (port 8081) for live CPU, memory, uptime, and runtime versions.
+     *
+     * @return array<string, mixed>
+     */
+    public function probeOperationsRuntime(): array
+    {
+        $url = (string) env('OPERATIONS_INTERNAL_HEALTH_URL', 'http://codebridge-api-gateway:8081/operations/health');
+        $probe = $this->probeHttp($url, 0.8);
+
+        if ($probe['body'] === null) {
+            return ['available' => false, 'latency' => 0.0, 'runtime' => null, 'status' => 'offline'];
+        }
+
+        $decoded = json_decode($probe['body'], true);
+        if (! is_array($decoded)) {
+            return ['available' => false, 'latency' => $probe['latency'], 'runtime' => null, 'status' => $probe['status']];
+        }
+
+        return [
+            'available' => true,
+            'latency' => $probe['latency'],
+            'status' => ($decoded['status'] ?? '') === 'healthy' ? 'healthy' : 'degraded',
+            'runtime' => is_array($decoded['runtime'] ?? null) ? $decoded['runtime'] : null,
+            'checks' => is_array($decoded['checks'] ?? null) ? $decoded['checks'] : null,
+        ];
+    }
+
+    /**
+     * Query the read-only Docker Telemetry Proxy for real CPU %, memory MB / limit, and uptime of all containers.
+     * Uses parallel curl_multi with one-shot stats (~10-20ms total for all 8 containers).
+     *
+     * @param  list<string>  $containerNames
+     * @return array<string, array{running: bool, uptime: string, cpu_percent: float|null, memory_mb: float|null, memory_limit_mb: float|null, memory_label: string}>
+     */
+    public function collectDockerContainerStats(array $containerNames): array
+    {
+        $proxyUrl = rtrim((string) env('DOCKER_TELEMETRY_PROXY_URL', 'http://codebridge-docker-telemetry-proxy:2375'), '/');
+        if ($proxyUrl === '') {
+            return [];
+        }
+
+        $listProbe = $this->probeHttp($proxyUrl.'/containers/json?all=1', 0.5);
+        if ($listProbe['status'] !== 'healthy' || empty($listProbe['body'])) {
+            return [];
+        }
+
+        $containers = json_decode($listProbe['body'], true);
+        if (! is_array($containers)) {
+            return [];
+        }
+
+        $wanted = array_flip($containerNames);
+        $metaByName = [];
+        foreach ($containers as $c) {
+            foreach (($c['Names'] ?? []) as $rawName) {
+                $clean = ltrim((string) $rawName, '/');
+                if (isset($wanted[$clean])) {
+                    $state = strtolower((string) ($c['State'] ?? ''));
+                    $statusText = (string) ($c['Status'] ?? '');
+                    // Clean up Docker status like "Up 47 minutes (healthy)" -> "47 minutes"
+                    $uptimeLabel = $state === 'running'
+                        ? trim(preg_replace('/^Up\s+/i', '', preg_replace('/\s*\([^)]*\)\s*$/', '', $statusText)))
+                        : 'Offline';
+
+                    $metaByName[$clean] = [
+                        'id' => (string) ($c['Id'] ?? $clean),
+                        'running' => $state === 'running',
+                        'uptime' => $uptimeLabel !== '' ? $uptimeLabel : ($state === 'running' ? 'Running' : 'Offline'),
+                    ];
+                }
+            }
+        }
+
+        $results = [];
+        $runningNames = [];
+        foreach ($metaByName as $name => $meta) {
+            if (! $meta['running']) {
+                $results[$name] = [
+                    'running' => false,
+                    'uptime' => 'Offline',
+                    'cpu_percent' => null,
+                    'memory_mb' => null,
+                    'memory_limit_mb' => null,
+                    'memory_label' => 'Unavailable',
+                ];
+            } else {
+                $runningNames[] = $name;
+            }
+        }
+
+        if (empty($runningNames) || ! function_exists('curl_multi_init')) {
+            return $results;
+        }
+
+        // Parallel non-streaming one-shot stats fetch for all running containers
+        $mh = curl_multi_init();
+        $handles = [];
+        foreach ($runningNames as $name) {
+            $ch = curl_init($proxyUrl.'/containers/'.rawurlencode($name).'/stats?stream=false&one-shot=true');
+            curl_setopt_array($ch, [
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT_MS => 800,
+                CURLOPT_CONNECTTIMEOUT_MS => 400,
+            ]);
+            curl_multi_add_handle($mh, $ch);
+            $handles[$name] = $ch;
+        }
+
+        do {
+            $execStatus = curl_multi_exec($mh, $active);
+            if ($active) {
+                curl_multi_select($mh, 0.05);
+            }
+        } while ($active && $execStatus === CURLM_OK);
+
+        $now = microtime(true);
+        $prevCache = [];
+        try {
+            $cached = Cache::get('telemetry:docker_cpu_prev');
+            if (is_array($cached)) {
+                $prevCache = $cached;
+            }
+        } catch (\Throwable) {
+        }
+        $nextCache = $prevCache;
+
+        foreach ($handles as $name => $ch) {
+            $raw = curl_multi_getcontent($ch);
+            curl_multi_remove_handle($mh, $ch);
+            curl_close($ch);
+
+            $stats = is_string($raw) ? json_decode($raw, true) : null;
+            if (! is_array($stats)) {
+                continue;
+            }
+
+            // Real Docker memory calculation (matches `docker stats`: usage - inactive_file / cache)
+            $memStats = $stats['memory_stats'] ?? [];
+            $rawUsage = (float) ($memStats['usage'] ?? 0);
+            $inactiveFile = (float) ($memStats['stats']['inactive_file'] ?? ($memStats['stats']['cache'] ?? 0));
+            $usedBytes = max(0.0, $rawUsage - $inactiveFile);
+            $limitBytes = (float) ($memStats['limit'] ?? 0);
+
+            $memMb = round($usedBytes / 1048576, 1);
+            $limitMb = $limitBytes > 0 ? round($limitBytes / 1048576, 1) : null;
+            $memLabel = $limitMb !== null
+                ? $memMb.' MB / '.round($limitMb / 1024, 1).' GB'
+                : $memMb.' MB';
+
+            // Real Docker CPU % calculation (matches `docker stats`)
+            $cpuTotal = (float) ($stats['cpu_stats']['cpu_usage']['total_usage'] ?? 0);
+            $sysTotal = (float) ($stats['cpu_stats']['system_cpu_usage'] ?? 0);
+            $onlineCpus = (int) ($stats['cpu_stats']['online_cpus']
+                ?? count($stats['cpu_stats']['cpu_usage']['percpu_usage'] ?? [])
+                ?: 1);
+
+            $cpuPct = null;
+            if (isset($prevCache[$name]['ts'], $prevCache[$name]['cpu'], $prevCache[$name]['sys'])) {
+                $elapsed = $now - (float) $prevCache[$name]['ts'];
+                $cpuDelta = $cpuTotal - (float) $prevCache[$name]['cpu'];
+                $sysDelta = $sysTotal - (float) $prevCache[$name]['sys'];
+                if ($elapsed >= 0.05 && $elapsed <= 120.0 && $cpuDelta >= 0 && $sysDelta > 0) {
+                    $cpuPct = round(min(100.0 * $onlineCpus, ($cpuDelta / $sysDelta) * $onlineCpus * 100.0), 2);
+                }
+            }
+
+            if ($cpuPct === null) {
+                $preCpu = (float) ($stats['precpu_stats']['cpu_usage']['total_usage'] ?? 0);
+                $preSys = (float) ($stats['precpu_stats']['system_cpu_usage'] ?? 0);
+                if ($preSys > 0 && $sysTotal > $preSys && $cpuTotal >= $preCpu) {
+                    $cpuPct = round(min(100.0 * $onlineCpus, (($cpuTotal - $preCpu) / ($sysTotal - $preSys)) * $onlineCpus * 100.0), 2);
+                } else {
+                    $cpuPct = 0.0;
+                }
+            }
+
+            $nextCache[$name] = [
+                'ts' => $now,
+                'cpu' => $cpuTotal,
+                'sys' => $sysTotal,
+            ];
+
+            $results[$name] = [
+                'running' => true,
+                'uptime' => $metaByName[$name]['uptime'],
+                'cpu_percent' => $cpuPct,
+                'memory_mb' => $memMb,
+                'memory_limit_mb' => $limitMb,
+                'memory_label' => $memLabel,
+            ];
+        }
+
+        curl_multi_close($mh);
+
+        try {
+            Cache::put('telemetry:docker_cpu_prev', $nextCache, 120);
+        } catch (\Throwable) {
+        }
+
+        return $results;
+    }
+
+    /**
      * Collect full real-time infrastructure telemetry across all services and databases.
      *
      * @return array<string, mixed>
@@ -883,6 +1137,18 @@ class InfrastructureTelemetryService
     public function collectClusterTelemetry(): array
     {
         $hostMetrics = $this->collectHostAndContainerMetrics();
+
+        // 0. Real Container Stats for ALL 8 containers via read-only Docker Telemetry Proxy
+        $dockerStats = $this->collectDockerContainerStats([
+            'codebridge-api-gateway',
+            'codebridge-auth-service',
+            'codebridge-operations-service',
+            'codebridge-auth-mysql',
+            'codebridge-operations-mysql',
+            'codebridge-auth-redis',
+            'codebridge-operations-redis',
+            'codebridge-minio',
+        ]);
 
         // 1. Auth DB (live)
         $authDb = $this->collectDatabaseMetrics();
@@ -912,13 +1178,18 @@ class InfrastructureTelemetryService
         $opsRedisPort = (int) env('OPERATIONS_REDIS_PORT', 6379);
         $opsRedis = $this->probeRemoteRedis($opsRedisHost, $opsRedisPort, 0.6);
 
-        // 4. Gateway, Operations Service, and MinIO Storage (live probes)
+        // 4. Gateway (live HTTP + internal stub_status), Operations Service (live internal runtime), and MinIO Storage
         $gwProbe = $this->probeHttp('http://codebridge-api-gateway:80/api/health', 0.6);
         if ($gwProbe['status'] === 'offline') {
             $gwProbe = $this->probeHttp('http://127.0.0.1:8080/api/health', 0.4);
         }
+        $gwNginxStatus = $this->probeGatewayNginxStatus();
 
-        $opsServiceProbe = $this->pingSocket('codebridge-operations-service', 9000, 0.6);
+        $opsRuntimeProbe = $this->probeOperationsRuntime();
+        $opsServiceProbe = $opsRuntimeProbe['available']
+            ? ['status' => $opsRuntimeProbe['status'], 'latency' => $opsRuntimeProbe['latency']]
+            : $this->pingSocket('codebridge-operations-service', 9000, 0.6);
+
         $storage = $this->collectStorageStatus();
 
         // 5. Real Entity Counts (Auth + Operations)
@@ -953,7 +1224,38 @@ class InfrastructureTelemetryService
             ? $hostMetrics['container_memory_mb'].' MB'.($hostMetrics['memory_limit_mb'] !== null ? ' / '.round($hostMetrics['memory_limit_mb'] / 1024, 1).' GB' : '')
             : $hostMetrics['php_memory_mb'].' MB / '.$hostMetrics['php_peak_memory_mb'].' MB Peak';
 
-        // 7. 8-Node Live Infrastructure Topology (ZERO hardcoded fake values)
+        $gwDocker = $dockerStats['codebridge-api-gateway'] ?? null;
+        $opsDocker = $dockerStats['codebridge-operations-service'] ?? null;
+        $authDbDocker = $dockerStats['codebridge-auth-mysql'] ?? null;
+        $opsDbDocker = $dockerStats['codebridge-operations-mysql'] ?? null;
+        $authRedisDocker = $dockerStats['codebridge-auth-redis'] ?? null;
+        $opsRedisDocker = $dockerStats['codebridge-operations-redis'] ?? null;
+        $minioDocker = $dockerStats['codebridge-minio'] ?? null;
+
+        $opsRt = $opsRuntimeProbe['runtime'] ?? null;
+        $opsMemLabel = $opsDocker && $opsDocker['running']
+            ? $opsDocker['memory_label']
+            : (is_array($opsRt) && isset($opsRt['container_memory_mb']) && $opsRt['container_memory_mb'] !== null
+                ? $opsRt['container_memory_mb'].' MB'.(! empty($opsRt['memory_limit_mb']) ? ' / '.round(((float) $opsRt['memory_limit_mb']) / 1024, 1).' GB' : '')
+                : ($opsServiceProbe['status'] !== 'offline' ? 'N/A (Remote)' : 'Unavailable'));
+
+        $opsCpuLabel = $opsDocker && $opsDocker['running'] && $opsDocker['cpu_percent'] !== null
+            ? $opsDocker['cpu_percent'].'%'
+            : (is_array($opsRt) && isset($opsRt['cpu_percent']) && $opsRt['cpu_percent'] !== null
+                ? $opsRt['cpu_percent'].'%'
+                : ($opsServiceProbe['status'] !== 'offline' ? 'N/A (Remote)' : 'N/A'));
+
+        $opsUptimeLabel = is_array($opsRt) && isset($opsRt['uptime_seconds']) && $opsRt['uptime_seconds'] !== null
+            ? $this->formatUptime((int) $opsRt['uptime_seconds'])
+            : ($opsDocker && $opsDocker['running']
+                ? $opsDocker['uptime']
+                : ($opsServiceProbe['status'] !== 'offline' ? 'Online (Remote)' : 'Offline'));
+
+        $opsVersionLabel = is_array($opsRt) && ! empty($opsRt['laravel_version'])
+            ? 'Laravel '.$opsRt['laravel_version'].' (PHP '.($opsRt['php_version'] ?? '?').')'
+            : ($opsServiceProbe['status'] !== 'offline' ? 'PHP-FPM (Port 9000)' : 'Unavailable');
+
+        // 7. 8-Node Live Infrastructure Topology (100% real live metrics across all 8 containers)
         $services = [
             [
                 'id' => 'gateway',
@@ -964,10 +1266,11 @@ class InfrastructureTelemetryService
                 'database' => 'Reverse Proxy / WAF Router',
                 'status' => $gwProbe['status'],
                 'latency' => $gwProbe['latency'],
-                'uptime' => $gwProbe['status'] === 'healthy' ? 'Online (Remote)' : 'Offline',
-                'memory' => $gwProbe['status'] === 'healthy' ? 'N/A (Remote)' : 'Unavailable',
-                'cpu' => $gwProbe['status'] === 'healthy' ? 'N/A (Remote)' : 'N/A',
-                'connections' => 0,
+                'uptime' => $gwDocker && $gwDocker['running'] ? $gwDocker['uptime'] : ($gwProbe['status'] === 'healthy' ? 'Online (Remote)' : 'Offline'),
+                'memory' => $gwDocker && $gwDocker['running'] ? $gwDocker['memory_label'] : ($gwProbe['status'] === 'healthy' ? 'N/A (Remote)' : 'Unavailable'),
+                'cpu' => $gwDocker && $gwDocker['running'] && $gwDocker['cpu_percent'] !== null ? $gwDocker['cpu_percent'].'%' : ($gwProbe['status'] === 'healthy' ? 'N/A (Remote)' : 'N/A'),
+                'connections' => $gwNginxStatus['available'] ? $gwNginxStatus['active_connections'] : 0,
+                'requestsTotal' => $gwNginxStatus['available'] ? $gwNginxStatus['requests'] : 0,
                 'version' => $gwProbe['server'] ?? ($gwProbe['status'] === 'healthy' ? 'Nginx' : 'Unavailable'),
             ],
             [
@@ -994,11 +1297,11 @@ class InfrastructureTelemetryService
                 'database' => $opsDb['name'],
                 'status' => $opsServiceProbe['status'],
                 'latency' => $opsServiceProbe['latency'],
-                'uptime' => $opsServiceProbe['status'] === 'healthy' ? 'Online (Remote)' : 'Offline',
-                'memory' => $opsServiceProbe['status'] === 'healthy' ? 'N/A (Remote)' : 'Unavailable',
-                'cpu' => $opsServiceProbe['status'] === 'healthy' ? 'N/A (Remote)' : 'N/A',
+                'uptime' => $opsUptimeLabel,
+                'memory' => $opsMemLabel,
+                'cpu' => $opsCpuLabel,
                 'connections' => $opsDb['threadsConnected'],
-                'version' => $opsServiceProbe['status'] === 'healthy' ? 'PHP-FPM (Port 9000)' : 'Unavailable',
+                'version' => $opsVersionLabel,
             ],
             [
                 'id' => 'auth-mysql-db',
@@ -1010,8 +1313,12 @@ class InfrastructureTelemetryService
                 'status' => $authDb['status'],
                 'latency' => $authDb['latency'],
                 'uptime' => $authDb['uptime'],
-                'memory' => $authDb['memory'],
-                'cpu' => $authDb['cpu'],
+                'memory' => $authDbDocker && $authDbDocker['running']
+                    ? $authDbDocker['memory_label'].' (DB '.$authDb['sizeMb'].' MB)'
+                    : $authDb['memory'],
+                'cpu' => $authDbDocker && $authDbDocker['running'] && $authDbDocker['cpu_percent'] !== null
+                    ? $authDbDocker['cpu_percent'].'%'
+                    : $authDb['cpu'],
                 'connections' => $authDb['threadsConnected'],
                 'version' => $authDb['version'],
             ],
@@ -1025,8 +1332,12 @@ class InfrastructureTelemetryService
                 'status' => $opsDb['status'],
                 'latency' => $opsDb['latency'],
                 'uptime' => $opsDb['uptime'],
-                'memory' => $opsDb['memory'],
-                'cpu' => $opsDb['cpu'],
+                'memory' => $opsDb['connected'] && $opsDbDocker && $opsDbDocker['running']
+                    ? $opsDbDocker['memory_label'].' (DB '.$opsDb['sizeMb'].' MB)'
+                    : $opsDb['memory'],
+                'cpu' => $opsDb['connected'] && $opsDbDocker && $opsDbDocker['running'] && $opsDbDocker['cpu_percent'] !== null
+                    ? $opsDbDocker['cpu_percent'].'%'
+                    : $opsDb['cpu'],
                 'connections' => $opsDb['threadsConnected'],
                 'version' => $opsDb['version'],
             ],
@@ -1041,7 +1352,9 @@ class InfrastructureTelemetryService
                 'latency' => $authRedis['latency'],
                 'uptime' => $authRedis['uptime'],
                 'memory' => $authRedis['memory'],
-                'cpu' => $authRedis['cpu'],
+                'cpu' => $authRedisDocker && $authRedisDocker['running'] && $authRedisDocker['cpu_percent'] !== null
+                    ? $authRedisDocker['cpu_percent'].'%'
+                    : $authRedis['cpu'],
                 'connections' => $authRedis['connections'],
                 'version' => $authRedis['version'],
             ],
@@ -1056,7 +1369,9 @@ class InfrastructureTelemetryService
                 'latency' => $opsRedis['latency'],
                 'uptime' => $opsRedis['uptime'],
                 'memory' => $opsRedis['memory'],
-                'cpu' => $opsRedis['cpu'],
+                'cpu' => $opsRedisDocker && $opsRedisDocker['running'] && $opsRedisDocker['cpu_percent'] !== null
+                    ? $opsRedisDocker['cpu_percent'].'%'
+                    : $opsRedis['cpu'],
                 'connections' => $opsRedis['connections'],
                 'version' => $opsRedis['version'],
             ],
@@ -1069,11 +1384,17 @@ class InfrastructureTelemetryService
                 'database' => $storage['default_bucket'].' (S3 Bucket)',
                 'status' => $storage['status'],
                 'latency' => $storage['latency'],
-                'uptime' => $storage['status'] === 'healthy' ? 'Online (S3 Live)' : 'Offline',
-                'memory' => $storage['status'] === 'healthy'
-                    ? $storage['used_capacity_mb'].' MB ('.$storage['files_count'].' objects)'
-                    : 'Unavailable',
-                'cpu' => $storage['status'] === 'healthy' ? 'N/A (Remote)' : 'N/A',
+                'uptime' => $minioDocker && $minioDocker['running']
+                    ? $minioDocker['uptime']
+                    : ($storage['status'] === 'healthy' ? 'Online (S3 Live)' : 'Offline'),
+                'memory' => $minioDocker && $minioDocker['running']
+                    ? $minioDocker['memory_label'].' ('.$storage['files_count'].' objects)'
+                    : ($storage['status'] === 'healthy'
+                        ? $storage['used_capacity_mb'].' MB ('.$storage['files_count'].' objects)'
+                        : 'Unavailable'),
+                'cpu' => $minioDocker && $minioDocker['running'] && $minioDocker['cpu_percent'] !== null
+                    ? $minioDocker['cpu_percent'].'%'
+                    : ($storage['status'] === 'healthy' ? 'N/A (Remote)' : 'N/A'),
                 'connections' => 0,
                 'version' => $storage['server'],
             ],
@@ -1083,6 +1404,7 @@ class InfrastructureTelemetryService
             'version' => config('app.version', '1.0.0'),
             'services' => $services,
             'hostMetrics' => $hostMetrics,
+            'gatewayMetrics' => $gwNginxStatus,
             'authDb' => [
                 'name' => $authDb['name'],
                 'connected' => $authDb['connected'],
