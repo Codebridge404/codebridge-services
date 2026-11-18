@@ -16,3 +16,5 @@ storage/app/private/backups/*
 deploy/backup/storage/*
 k8s/secret.yaml
 tests/
+vendor/
+bootstrap/cache/*.php

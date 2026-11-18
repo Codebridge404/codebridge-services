@@ -2136,6 +2136,442 @@ Step 2 (Exact 1-to-1 Title Harmonization): Updated all disparate page headers so
 Step 3 (Compilation & Build Verification): Successfully executed full Next.js Turbopack production build verifying 122/122 routes with 0 errors.
 
 
+--------------------------------------------------------------------------------
+TICKET: BD-0153 - Organization Workspace Dynamic Roles & RBAC Studio
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0153
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/app/organization/roles/page.tsx, codebridgesfront/components/security/roles/OrganizationRolesView.tsx, codebridgesfront/components/security/roles/RolePermissionsMatrix.tsx, codebridgesfront/components/sidebars/OrganizationSidebar.tsx, codebridgesfront/app/organization/staff/page.tsx, codebridgesfront/components/security/roles/index.ts
+Related Model / Service:OrganizationRolesView, RolePermissionsMatrix, getRolesApi, getPermissionsApi, createRoleApi, updateRoleApi, deleteRoleApi, WorkspaceStaffCreateForm, WorkspaceStaffInviteSearch
+Method / Entry Point:   /organization/roles, /organization/staff
+Command / API Route:    GET  /api/v1/roles
+                        POST /api/v1/roles
+                        PUT  /api/v1/roles/{id}
+                        DELETE /api/v1/roles/{id}
+                        GET  /api/v1/permissions
+Date & Time:            2026-11-06T15:10:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Organization Dynamic Roles & RBAC Page): Created /organization/roles route and OrganizationRolesView component enabling tenant administrators to define custom enterprise roles, configure granular permissions across business modules (POS, Inventory, HRM, Finance, CRM, Meetings), and assign permissions dynamically.
+Step 2 (Protected System Role Templates & Cloning Engine): Added protective safeguards for built-in system roles (Cashier, Store Manager, Supervisor, etc.) with read-only badges and an instant "Clone as Custom Role" engine that pre-populates the role creator modal with the template's baseline permissions.
+Step 3 (Sidebar Navigation & 1-to-1 Title Harmonization): Updated OrganizationSidebar to include "Dynamic Roles & RBAC" (/organization/roles) and "Staff Directory" (/organization/staff) under Store Operations & Fleet, ensuring exact 1-to-1 matching with destination page <h1> titles.
+Step 4 (Dynamic Role Selection in Staff Onboarding): Refactored /organization/staff to dynamically fetch roles from getRolesApi() and broadcast/listen for cb_roles_updated events. Passing dynamic roles to WorkspaceStaffCreateForm, WorkspaceStaffInviteSearch, and UserFormModal ensures newly created custom roles immediately appear in role dropdowns when onboarding or updating staff.
+Step 5 (Strict Frontend Boundary & Build Verification): Maintained 100% frontend implementation without altering backend services. Verified via Turbopack build (123/123 routes, 0 errors).
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0154 - Multi-Device Active User Sessions & Remote Revocation Studio
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0154
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/sessions.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/security/sessions/ActiveSessionsStudioView.tsx, codebridgesfront/components/security/sessions/index.ts, codebridgesfront/app/super-admin/security/sessions/page.tsx, codebridgesfront/components/sidebars/SuperAdminSidebar.tsx
+Related Model / Service:UserSessionItem, UserSessionStats, getUserSessionsApi, getUserSessionStatsApi, revokeUserSessionApi, revokeAllUserSessionsApi
+Method / Entry Point:   /super-admin/security/sessions
+Command / API Route:    GET  /api/v1/user-sessions
+                        GET  /api/v1/user-sessions/stats
+                        GET  /api/v1/user-sessions/{id}
+                        POST /api/v1/user-sessions/{id}/revoke
+                        POST /api/v1/user-sessions/revoke-all
+Date & Time:            2026-11-13T10:15:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (API Client Contract Implementation): Created lib/api/sessions.ts implementing full typed contracts for UserSessionItem, UserSessionStats, paginated queries, single session revocation, and bulk session termination.
+Step 2 (Active Sessions Studio Architecture): Built components/security/sessions/ActiveSessionsStudioView.tsx featuring live session metric counters, real-time device type classification (POS terminal, mobile, tablet, desktop), network IP badges with copy utility, status filters (Active, Revoked, Expired), and last seen relative timestamping.
+Step 3 (Forensic Telemetry Inspector & Revocation Workflows): Integrated an in-depth forensic inspector modal displaying device UUID, full user agent, refresh token family rotation counts, and scoped permissions. Engineered single-session revocation and bulk "Revoke All Other Sessions" confirmation dialogues with audit reason logging.
+Step 4 (Sidebar Harmonization & Route Registration): Mounted /super-admin/security/sessions route with exact 1-to-1 title matching (<h1>Active User Sessions</h1>) under Security & Governance in SuperAdminSidebar with a "Live" badge and MonitorSmartphone icon.
+Step 5 (Strict Frontend Boundary & Build Verification): Maintained 100% frontend implementation without modifying backend services. Verified via full Turbopack build with 0 errors across 124/124 routes.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0155 - Forensic Security Events, Threat Monitoring & Banned IPs Studio
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0155
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/securityEvents.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/security/events/SecurityEventsStudioView.tsx, codebridgesfront/components/security/events/index.ts, codebridgesfront/app/super-admin/security/events/page.tsx, codebridgesfront/components/sidebars/SuperAdminSidebar.tsx
+Related Model / Service:SecurityEventItem, SecurityEventStats, BannedIpItem, ThreatDefenseSettings, getSecurityEventsApi, getSecurityEventStatsApi, getBannedIpsApi, banIpApi, unbanIpApi, getThreatDefenseSettingsApi, updateThreatDefenseSettingsApi
+Method / Entry Point:   /super-admin/security/events
+Command / API Route:    GET  /api/v1/security-events
+                        GET  /api/v1/security-events/stats
+                        GET  /api/v1/security-events/{id}
+                        GET  /api/v1/security-events/banned-ips
+                        POST /api/v1/security-events/ban-ip
+                        POST /api/v1/security-events/unban-ip
+                        GET  /api/v1/security-events/settings
+                        PUT  /api/v1/security-events/settings
+Date & Time:            2026-11-13T10:25:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Forensic API Contract Implementation): Created lib/api/securityEvents.ts implementing full typed interfaces for SecurityEventItem, SecurityEventStats, BannedIpItem, and ThreatDefenseSettings, supporting forensic event queries, stats aggregation, manual IP quarantine, and automated threat defense tuning.
+Step 2 (3-Tab Security Studio Architecture): Built components/security/events/SecurityEventsStudioView.tsx with three specialized tabs: Incidents & Forensics (event severity indicators, WAF outcomes, route telemetry), Banned Attacker IPs (active quarantine table, duration countdowns, 1-click unban), and Automated Defense Rules (offense decay thresholds and auto-ban duration controls).
+Step 3 (Forensic Telemetry Inspector & Manual IP Banning): Engineered forensic drawer displaying Request ID, Trace ID, Session Ref Hash, and raw sanitized metadata payloads. Added manual IP ban workflow supporting configurable quarantine duration windows (1h, 6h, 24h, 7d).
+Step 4 (Sidebar Harmonization & Route Registration): Mounted /super-admin/security/events with 1-to-1 exact title matching (<h1>Security Events & Threat Defense</h1>) in SuperAdminSidebar under Security & Governance with a "WAF" badge and ShieldAlert icon.
+Step 5 (Strict Frontend Boundary & Build Verification): Maintained 100% frontend implementation without modifying backend services. Verified via full Turbopack build with 0 errors across 125/125 routes.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0156 - Enterprise API Clients & Gateway Tokens Studio
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0156
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/apiClients.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/api-keys/CreateApiClientModal.tsx, codebridgesfront/components/api-keys/RevealClientKeyModal.tsx, codebridgesfront/components/api-keys/SuperAdminApiKeysView.tsx
+Related Model / Service:ApiClientItem, ApiClientPayload, getApiClientsApi, createApiClientApi, toggleApiClientApi, regenerateApiClientKeyApi, deleteApiClientApi
+Method / Entry Point:   /super-admin/api-keys
+Command / API Route:    GET    /api/v1/api-clients
+                        POST   /api/v1/api-clients
+                        PUT    /api/v1/api-clients/{id}/toggle
+                        POST   /api/v1/api-clients/{id}/regenerate-key
+                        DELETE /api/v1/api-clients/{id}
+Date & Time:            2026-11-13T10:35:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (API Client Contract Implementation): Created lib/api/apiClients.ts implementing strongly typed interfaces for ApiClientItem and ApiClientPayload, wiring endpoints for client listing, creation, active/inactive state toggling, secure key regeneration, and deletion.
+Step 2 (Dual-Tab Enterprise Studio Architecture): Transformed components/api-keys/SuperAdminApiKeysView.tsx into a comprehensive dual-tab architecture: Tab 1 manages Platform Client Apps (POS, Mobile, Web Apps with X-App-Key SHA-256 tokens) and Tab 2 retains Developer Personal Secret Keys.
+Step 3 (Client Provisioning & One-Time Secret Reveal): Built CreateApiClientModal.tsx supporting client name, type selection (web, mobile, pos, desktop, integration), and auto-generation vs custom 64-char keys. Built RevealClientKeyModal.tsx enforcing secure one-time key display with 1-click clipboard utility and safety notice.
+Step 4 (Cryptographic Key Regeneration & Lifecycle Management): Implemented instant toggle switch for immediate access cutoff, key regeneration dialog with warning regarding connected sessions, and deletion handling with session count indicators.
+Step 5 (Strict Frontend Boundary & Build Verification): Maintained 100% frontend boundary without editing backend microservices. Verified via full Turbopack build with 0 errors across 125/125 routes.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0157 - Unified Multi-Tenant Notification Providers Studio
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0157
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/notificationProviders.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/settings/notifications/CreateNotificationProviderModal.tsx, codebridgesfront/components/settings/notifications/TestNotificationProviderModal.tsx, codebridgesfront/components/settings/notifications/NotificationProvidersStudioTab.tsx, codebridgesfront/components/settings/notifications/index.ts, codebridgesfront/components/settings/PlatformSettingsSubSidebar.tsx, codebridgesfront/components/settings/SuperAdminPlatformSettingsView.tsx, codebridgesfront/components/settings/SettingsSubSidebar.tsx, codebridgesfront/app/organization/settings/page.tsx
+Related Model / Service:NotificationProviderItem, NotificationProviderStats, getNotificationProvidersApi, getNotificationProviderStatsApi, createNotificationProviderApi, updateNotificationProviderApi, toggleNotificationProviderApi, testNotificationProviderApi, deleteNotificationProviderApi
+Method / Entry Point:   /super-admin/settings?tab=notification-providers, /organization/settings?tab=notifications
+Command / API Route:    GET    /api/v1/notification-providers
+                        GET    /api/v1/notification-providers/stats
+                        POST   /api/v1/notification-providers
+                        GET    /api/v1/notification-providers/{id}
+                        PUT    /api/v1/notification-providers/{id}
+                        PATCH  /api/v1/notification-providers/{id}/toggle
+                        POST   /api/v1/notification-providers/{id}/test
+                        DELETE /api/v1/notification-providers/{id}
+Date & Time:            2026-11-13T10:50:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Notification API Contract Implementation): Created lib/api/notificationProviders.ts with typed contracts for NotificationProviderItem, NotificationProviderStats, CreateNotificationProviderPayload, and TestNotificationProviderResponse covering full provider lifecycle and diagnostic probes.
+Step 2 (Notification Studio Architecture): Built components/settings/notifications/NotificationProvidersStudioTab.tsx featuring real-time statistics counters (Total Providers, Active Live with animated radar pulse, Disabled, Protocol count), protocol search and multi-dimensional filters (Channel, Environment, Status).
+Step 3 (Encrypted Provisioning & Diagnostic Probes): Engineered CreateNotificationProviderModal.tsx supporting channel-specific forms (Telegram bot token/chat ID, SMTP host/port/auth, Webhook URLs/secrets, SMS gateways) and TestNotificationProviderModal.tsx for live simulated connectivity handshakes with instant telemetry inspection.
+Step 4 (Platform & Workspace Settings Integration): Mounted notification studio in SuperAdminPlatformSettingsView.tsx under "Notification Providers" and in OrganizationSettingsView.tsx for self-service tenant configuration, maintaining strict multi-tenant tenant_id scoping.
+Step 5 (Strict Frontend Boundary & Build Verification): Maintained 100% frontend boundary without editing backend microservices. Verified via full Turbopack build with 0 errors.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0158 - Web POS Terminal Acceleration with POS BFF & Dynamic Catalog Hydration
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0158
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/posBff.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/pos/terminal/usePosTerminalState.ts
+Related Model / Service:PosBffBootstrapData, PosBffCatalogData, PosBffCheckoutPayload, getPosBffBootstrapApi, getPosBffCatalogApi, getPosBffShiftSummaryApi, posBffCheckoutApi
+Method / Entry Point:   /pos/pos-terminal
+Command / API Route:    GET  /api/v1/pos-bff/bootstrap
+                        GET  /api/v1/pos-bff/catalog
+                        GET  /api/v1/pos-bff/shift-summary
+                        POST /api/v1/pos-bff/checkout
+Date & Time:            2026-11-13T10:55:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (POS BFF API Client Contract): Created lib/api/posBff.ts defining strongly typed interfaces for PosBffBootstrapData, PosBffCatalogData, PosBffExchangeRate, PosBffDiscount, and PosBffCheckoutPayload.
+Step 2 (Single-Roundtrip Bootstrap Orchestration): Replaced sequential 4-call HTTP waterfall in components/pos/terminal/usePosTerminalState.ts with getPosBffBootstrapApi() aggregating authenticated user, active outlet, open shift, USD-KHR active exchange rates, denomination presets, active discounts, and held cart counters in <150ms.
+Step 3 (Accelerated Catalog & Real-Time Stock Hydration): Connected getPosBffCatalogApi({ outlet_id }) to retrieve outlet-specific inventory balances, category trees, and cache version delta hashes, while synchronizing local IndexedDB cache for offline resilience.
+Step 4 (Fault-Tolerant Fallback Guarantee): Built resilient fallback matrix ensuring seamless failover to legacy modular endpoints (/api/v1/products, /api/v1/shifts/active, /api/v1/outlets) and IndexedDB offline cache in the event of temporary network disruption or older gateway instances.
+Step 5 (Strict Frontend Boundary & Build Verification): Maintained 100% frontend boundary without editing backend microservices. Verified via full Turbopack build with 0 errors across 125/125 routes.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0159 - API Request Traffic & Performance Telemetry Console
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0159
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/requestLogs.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/telemetry/ApiRequestLogsStudioView.tsx, codebridgesfront/components/telemetry/RequestLogDetailModal.tsx, codebridgesfront/components/telemetry/index.ts, codebridgesfront/components/api-keys/SuperAdminApiKeysView.tsx, codebridgesfront/app/super-admin/infrastructure/requests/page.tsx
+Related Model / Service:ApiRequestLogItem, RequestLogStats, RequestLogQueryParams, getRequestLogsApi, getRequestLogStatsApi, getRequestLogDetailApi
+Method / Entry Point:   /super-admin/api-keys (Tab 3: API Traffic & Telemetry), /super-admin/infrastructure/requests
+Command / API Route:    GET /api/v1/request-logs
+                        GET /api/v1/request-logs/stats
+                        GET /api/v1/request-logs/{id}
+Date & Time:            2026-11-13T14:30:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (API Client Contract Definition): Created lib/api/requestLogs.ts exporting strongly typed interfaces ApiRequestLogItem, RequestLogStats, and RequestLogQueryParams with getRequestLogsApi(), getRequestLogStatsApi(), and getRequestLogDetailApi() connecting to Laravel backend with full multi-tenant tenant_id scoping.
+Step 2 (Telemetry Forensic Modal): Created components/telemetry/RequestLogDetailModal.tsx with quick performance stats ribbon, formatted JSON inspectors for sanitized request payload, query/route parameters, user agent, request/trace/span IDs, and error message traces.
+Step 3 (Real-Time Studio Architecture): Built components/telemetry/ApiRequestLogsStudioView.tsx featuring live performance metrics (Total API Traffic, Average Latency ms, Slow Requests >500ms, 4xx/5xx Error Rates), interactive HTTP method filters (ALL, GET, POST, PUT, DELETE), status code filter pills, min latency selector, and debounced search.
+Step 4 (Navigation & Studio Mount): Mounted telemetry view as a third primary studio tab inside components/api-keys/SuperAdminApiKeysView.tsx alongside Platform Client Apps and Personal API Keys, and established dedicated deep-link route at app/super-admin/infrastructure/requests/page.tsx.
+Step 5 (Formatting & Production Build Verification): Formatted all created and modified TypeScript/React components with scripts/format.js and verified 100% build integrity via Next.js Turbopack across all 126 application routes with 0 errors.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0160 - POS Terminal & Current Order Dynamic Organization Receipt Template Integration
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0160
+Component / Service:    operations-service & codebridgesfront
+File Path:              services/operations-service/app/Services/PosBffService.php, services/operations-service/app/Services/CheckoutService.php, codebridgesfront/lib/api/posBff.ts, codebridgesfront/components/pos/terminal/usePosTerminalState.ts, codebridgesfront/components/pos/terminal/PosTerminalView.tsx, codebridgesfront/components/pos/terminal/PosCartPanel.tsx, codebridgesfront/components/receipt/ThermalReceiptModal.tsx, codebridgesfront/components/receipt/ThermalReceiptPaper.tsx
+Related Model / Service:PosBffService, CheckoutService, PosBffBootstrapData, PosBffReceiptTemplate, usePosTerminalState, PosTerminalView, PosCartPanel, ThermalReceiptModal, ThermalReceiptPaper
+Method / Entry Point:   /pos/pos-terminal (Section: "Current Order")
+Command / API Route:    GET  /api/v1/pos-bff/bootstrap
+                        POST /api/v1/sales/checkout
+Date & Time:            2026-11-17T08:58:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Backend BFF Receipt Template Resolution): Enhanced PosBffService with enrichOutletBranding() and buildReceiptTemplate() resolving customized receipt headers, footers, logos, paper widths, and VAT TINs across operations and auth databases. Enriched getBootstrap() return array with active_outlet, outlet, and structured receipt_template.
+Step 2 (Checkout Response Outlet Binding): Enhanced CheckoutService::processCheckout() to attach the enriched outlet with customized receipt branding in both new and duplicate checkout responses, guaranteeing completed sales carry real organization receipt metadata.
+Step 3 (Strongly Typed BFF API Contracts): Updated codebridgesfront/lib/api/posBff.ts to define PosBffReceiptTemplate and expand PosBffOutlet and PosBffBootstrapData to include receipt_template, active_outlet, and full branding properties.
+Step 4 (Client State Hydration & Storage Sync): Enhanced usePosTerminalState.ts to capture resolved outlet and receipt_template from BFF bootstrap, automatically syncing activeOutlet and receiptSettings into component state and localStorage ('cb_pos_receipt_header', 'cb_pos_receipt_footer', 'cb_active_org_logo', 'cb_pos_terminal_settings') while emitting 'cb_terminal_settings_updated'.
+Step 5 (Current Order Live Receipt Template & Modal Integration): Connected outlet and receiptSettings props from PosTerminalView into PosCartPanel and ThermalReceiptModal. In PosCartPanel, bound the "Current Order" branding bar and live Thermal Receipt Slip to the organization's customized store name, logo, slogan, return policy, and paper width, while persisting the cashier's view mode preference in localStorage.
+Step 6 (Verification & Build Quality Assurance): Validated PHP syntax via php -l with 0 syntax errors on all backend services, and verified Next.js 16 / React 19 Turbopack production build with 100% pass across all 126 application routes.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0161 - FIDO2 / WebAuthn Passkeys & Step-Up Reauthentication Frontend Integration
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0161
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/webauthn.ts, codebridgesfront/lib/api/passkeys.ts, codebridgesfront/lib/api/client.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/auth/LoginForm.tsx, codebridgesfront/components/profile/PasskeyManagerCard.tsx, codebridgesfront/components/profile/UserProfileView.tsx
+Related Model / Service:createPasskeyCredential, getPasskeyAssertion, getPasskeysApi, getPasskeyRegistrationOptionsApi, verifyPasskeyRegistrationApi, getPasskeyAuthOptionsApi, verifyPasskeyAuthApi, renamePasskeyApi, deletePasskeyApi, verifyReauthPasswordApi, verifyReauthPasskeyApi, PasskeyManagerCard
+Method / Entry Point:   /login (Passkey Sign-In), /profile?tab=security (Passkey Management)
+Command / API Route:    POST /api/v1/auth/passkeys/authentication/options, POST /api/v1/auth/passkeys/authentication/verify, POST /api/v1/auth/reauthenticate/options, POST /api/v1/auth/reauthenticate/verify, POST /api/v1/auth/passkeys/registration/options, POST /api/v1/auth/passkeys/registration/verify, GET /api/v1/auth/passkeys, PATCH /api/v1/auth/passkeys/{credential}, DELETE /api/v1/auth/passkeys/{credential}
+Date & Time:            2026-11-17T10:45:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (WebAuthn Browser Ceremony Helper): Created lib/webauthn.ts providing Base64URL/ArrayBuffer conversion and navigator.credentials.create/get wrappers with zero external dependencies.
+Step 2 (Passkeys & Step-Up Reauth API Client): Created lib/api/passkeys.ts and enhanced lib/api/client.ts to preserve HTTP status, error codes, and structured payloads on API errors.
+Step 3 (Passwordless Login & Profile Manager): Integrated Passkey Sign-In into LoginForm.tsx and built PasskeyManagerCard.tsx inside UserProfileView.tsx with step-up reauthentication (password or existing passkey), device naming, inline rename, and safe deletion.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0162 - Strict 2FA Login Challenge & Active 2FA Setup Password Confirmation UI
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0162
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/auth.ts, codebridgesfront/components/auth/LoginForm.tsx, codebridgesfront/components/profile/UserProfileView.tsx
+Related Model / Service:verify2faChallengeApi, setup2faApi, confirm2faApi, disable2faApi, LoginForm, UserProfileView
+Method / Entry Point:   /login (2FA Challenge Step), /profile?tab=security (2FA Reconfiguration)
+Command / API Route:    POST /api/v1/auth/2fa/challenge, POST /api/v1/auth/2fa/setup, POST /api/v1/auth/2fa/confirm, POST /api/v1/auth/2fa/disable
+Date & Time:            2026-11-17T10:45:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (2FA Challenge & Setup APIs): Added verify2faChallengeApi(), setup2faApi(password), confirm2faApi(code), and disable2faApi(password) in lib/api/auth.ts.
+Step 2 (Login 2FA Challenge Step): Updated LoginForm.tsx to intercept HTTP 403 TWO_FACTOR_REQUIRED responses, preserve challenge_id, and render a 6-digit TOTP / recovery code verification step.
+Step 3 (Active 2FA Reconfiguration Guard): Added password-confirmed 2FA reconfiguration UI in UserProfileView.tsx requiring current password verification before generating a replacement TOTP secret.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0163 - POS BFF Idempotent KHQR Checkout & Bank Scoping Frontend Integration
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0163
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/posBff.ts, codebridgesfront/components/pos/terminal/usePosTerminalState.ts
+Related Model / Service:PosBffCheckoutPayload, posBffCheckoutApi, usePosTerminalState
+Method / Entry Point:   /pos/pos-terminal (Checkout Flow)
+Command / API Route:    POST /api/v1/pos-bff/checkout
+Date & Time:            2026-11-17T10:45:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (BFF Checkout Contract Update): Expanded PosBffCheckoutPayload in lib/api/posBff.ts to include idempotency_key and bank_account_id.
+Step 2 (Idempotent KHQR Orchestration): Updated handleCompleteSale in usePosTerminalState.ts to dispatch checkout via posBffCheckoutApi() with stable idempotency_key, generate_khqr flag, and payment array while keeping fallback support for legacy routes.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0164 - Meeting Attachments Panel with Duplicate File Upload (409) Handling
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0164
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/meetings.ts, codebridgesfront/components/meetings/MeetingAttachmentsSection.tsx, codebridgesfront/components/meetings/MeetingMinutesView.tsx
+Related Model / Service:getMeetingAttachmentsApi, uploadMeetingAttachmentApi, deleteMeetingAttachmentApi, MeetingAttachmentsSection
+Method / Entry Point:   /meetings/minutes (Meeting Documents & Attachments)
+Command / API Route:    GET /api/v1/meetings/{id}/attachments, POST /api/v1/meetings/{id}/attachments, DELETE /api/v1/meetings/{id}/attachments/{attachmentId}
+Date & Time:            2026-11-17T10:45:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Meeting Attachments API Client): Added getMeetingAttachmentsApi(), uploadMeetingAttachmentApi(), and deleteMeetingAttachmentApi() to lib/api/meetings.ts.
+Step 2 (Attachments UI & 409 Feedback): Built MeetingAttachmentsSection.tsx with multipart file upload, file size display, deletion, and explicit HTTP 409 DUPLICATE_FILE_UPLOAD warning banner, mounted in MeetingMinutesView.tsx.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0165 - Pending Staff Invitations Management UI
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0165
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/auth.ts, codebridgesfront/components/organization/staff/PendingInvitationsCard.tsx, codebridgesfront/app/organization/staff/page.tsx
+Related Model / Service:getInvitationsApi, createInvitationApi, resendInvitationApi, revokeInvitationApi, PendingInvitationsCard
+Method / Entry Point:   /organization/staff
+Command / API Route:    GET /api/v1/invitations, POST /api/v1/invitations, POST /api/v1/invitations/{id}/resend, DELETE /api/v1/invitations/{id}
+Date & Time:            2026-11-17T11:20:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Invitations API Client): Added getInvitationsApi, createInvitationApi, resendInvitationApi, and revokeInvitationApi in lib/api/auth.ts.
+Step 2 (Pending Invitations Card): Built PendingInvitationsCard.tsx displaying unaccepted/expired invitations with 1-click Resend and Revoke actions, mounted on /organization/staff.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0166 - Refresh Tokens Lineage & Revocation Console
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0166
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/refreshTokens.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/security/sessions/RefreshTokensPanel.tsx, codebridgesfront/components/security/sessions/ActiveSessionsStudioView.tsx
+Related Model / Service:getRefreshTokenStatsApi, getRefreshTokensApi, getRefreshTokenDetailApi, revokeRefreshTokenApi, RefreshTokensPanel
+Method / Entry Point:   /super-admin/security/sessions (Tab: Refresh Tokens Lineage)
+Command / API Route:    GET /api/v1/refresh-tokens/stats, GET /api/v1/refresh-tokens, GET /api/v1/refresh-tokens/{id}, POST /api/v1/refresh-tokens/{id}/revoke
+Date & Time:            2026-11-17T11:20:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Refresh Tokens API Client): Created lib/api/refreshTokens.ts and exported via lib/api/index.ts.
+Step 2 (Refresh Tokens Console): Built RefreshTokensPanel.tsx with active/rotated/revoked KPIs, token family table, status filtering, and token family revocation inside ActiveSessionsStudioView.tsx.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0167 - Session Inactivity Timeout Settings & Heartbeat UI
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0167
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/sessions.ts, codebridgesfront/components/profile/SessionInactivityCard.tsx, codebridgesfront/components/profile/index.ts, codebridgesfront/components/profile/UserProfileView.tsx
+Related Model / Service:getSessionSettingsApi, updateSessionSettingsApi, pingSessionApi, SessionInactivityCard
+Method / Entry Point:   /profile?tab=security
+Command / API Route:    GET /api/v1/auth/sessions/settings, PUT /api/v1/auth/sessions/settings, POST /api/v1/auth/sessions/ping
+Date & Time:            2026-11-17T11:20:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Session Policy & Heartbeat APIs): Added getSessionSettingsApi, updateSessionSettingsApi, and pingSessionApi in lib/api/sessions.ts.
+Step 2 (Profile Security Card): Built SessionInactivityCard.tsx allowing users to configure idle retention windows (7/30/90/180/365 days) and send live heartbeats.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0168 - Security Telegram Alerts Studio UI
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0168
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/telegramAlerts.ts, codebridgesfront/lib/api/index.ts, codebridgesfront/components/security/TelegramAlertsStudioView.tsx, codebridgesfront/components/communications/SuperAdminCommunicationsView.tsx
+Related Model / Service:getTelegramAlertStatusApi, getTelegramAlertHistoryApi, sendTelegramAlertTestApi, previewTelegramAlertTemplateApi, getTelegramAlertTemplatesApi, updateTelegramAlertTemplateApi, resetTelegramAlertTemplateApi, TelegramAlertsStudioView
+Method / Entry Point:   /super-admin/communications (Tab: Security Telegram Alerts Studio)
+Command / API Route:    GET /api/v1/telegram-alerts/status, GET /api/v1/telegram-alerts/history, POST /api/v1/telegram-alerts/send-test, POST /api/v1/telegram-alerts/preview, GET /api/v1/telegram-alerts/templates, PUT /api/v1/telegram-alerts/templates/{type}, POST /api/v1/telegram-alerts/templates/{type}/reset
+Date & Time:            2026-11-17T11:20:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Telegram Alerts API Client): Created lib/api/telegramAlerts.ts covering status, history, test dispatch, template preview, update, and reset.
+Step 2 (Studio View): Built TelegramAlertsStudioView.tsx and mounted it as a dedicated tab inside SuperAdminCommunicationsView.tsx.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0169 - Currency Exchange Rate History & Converter Widget
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0169
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/lib/api/payments.ts, codebridgesfront/components/accounting/dashboard/ExchangeRateToolsCard.tsx, codebridgesfront/components/accounting/dashboard/AccountingSettingsTab.tsx
+Related Model / Service:getExchangeRateHistoryApi, convertCurrencyApi, ExchangeRateToolsCard
+Method / Entry Point:   /financial/settings
+Command / API Route:    GET /api/v1/currencies/exchange-rate/history, POST /api/v1/currencies/exchange-rate/convert
+Date & Time:            2026-11-17T11:20:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Exchange Rate APIs): Added getExchangeRateHistoryApi and convertCurrencyApi in lib/api/payments.ts.
+Step 2 (Converter & Audit History UI): Built ExchangeRateToolsCard.tsx with live USD <-> KHR conversion and historical rate log, mounted inside AccountingSettingsTab.tsx.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0170 - System-Wide Light, Dark & System Default Appearance Theme Engine
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0170
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/app/globals.css, codebridgesfront/app/layout.tsx, codebridgesfront/components/common/AppProviders.tsx, codebridgesfront/components/settings/UserSettingsModal.tsx
+Related Model / Service:AppProviders, UserSettingsModal, applyUserThemePreferences
+Method / Entry Point:   Header Settings -> Display & Experience Preferences (Light Mode, Dark Mode, System Default)
+Command / API Route:    N/A (Client CSS Custom Properties, OS MediaQuery Listener & LocalStorage Sync)
+Date & Time:            2026-11-17T11:36:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Root Hydration & Color-Scheme): Updated app/layout.tsx inline bootstrap script to synchronize html.dark, html.high-contrast, and document.documentElement.style.colorScheme before first paint.
+Step 2 (Live System Theme & Cross-Tab Sync): Updated AppProviders.tsx to listen for OS prefers-color-scheme changes (when theme === 'system'), storage events across tabs, and cb_theme_updated events.
+Step 3 (Full System Dark Mode CSS Architecture): Added comprehensive html.dark rules in app/globals.css covering body canvas, glassmorphic headers/search bars, sidebars, POS cart panels, buttons, inputs/selects, sticky table cells, and modals/popups/drawers while preserving #printable-thermal-receipt as crisp white paper.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0171 - Global Notification Center (Replacing Meeting Alerts Drawer)
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0171
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/components/header/GlobalNotificationsDrawer.tsx, codebridgesfront/components/header/AppHeader.tsx, codebridgesfront/components/module-shell/ModuleSuiteHeader.tsx
+Related Model / Service:GlobalNotificationsDrawer, AppHeader, ModuleSuiteHeader
+Method / Entry Point:   Global Header Bell Icon (All Modules & Launchpad)
+Command / API Route:    GET /api/v1/meetings/notifications, GET /api/v1/shifts/variance-alerts, GET /api/v1/announcements
+Date & Time:            2026-11-18T09:27:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Unified Notifications Drawer): Created GlobalNotificationsDrawer.tsx titled "Notifications" with category filters (All, Meetings, POS & Shifts, System) aggregating meeting alerts, POS shift variance alerts, and active platform announcements.
+Step 2 (Global Header Integration): Replaced MeetingNotificationsDrawer with GlobalNotificationsDrawer in AppHeader.tsx and ModuleSuiteHeader.tsx.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0172 - Light Mode Background Color & Tech Backdrop Override Fix
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0172
+Component / Service:    codebridgesfront
+File Path:              codebridgesfront/app/globals.css, codebridgesfront/components/launchpad/LaunchpadTechBackground.tsx
+Related Model / Service:LaunchpadTechBackground, bg-canvas
+Method / Entry Point:   Display & Experience Preferences -> Light Mode Background Color
+Command / API Route:    N/A (Client CSS Custom Properties & Canvas Style Sync)
+Date & Time:            2026-11-18T09:27:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Body Background Fix): Scoped .bg-canvas transparency in app/globals.css to inner module containers (main .bg-canvas, div.bg-canvas) so body renders var(--color-light-bg) (e.g. rgb(234, 235, 237)) without being forced transparent.
+Step 2 (Tech Backdrop Toggle): Updated LaunchpadTechBackground.tsx to listen for data-canvas-style updates and hide aurora blooms/tech grid when Minimal Flat (flat) is selected.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0173 - Cloudflare Workers Frontend Deployment Setup (@opennextjs/cloudflare)
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0173
+Component / Service:    codebridgesfront & services (auth-service, operations-service)
+File Path:              codebridgesfront/open-next.config.ts, codebridgesfront/wrangler.jsonc, codebridgesfront/package.json, codebridgesfront/next.config.ts, codebridgesfront/.gitignore, services/auth-service/config/cors.php, services/operations-service/config/cors.php
+Related Model / Service:OpenNext Cloudflare Adapter, Wrangler Worker Config, CORS Origin Patterns
+Method / Entry Point:   npm run preview, npm run deploy
+Command / API Route:    N/A (Cloudflare Workers Build & CORS Readiness)
+Date & Time:            2026-11-18T09:27:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Adapter & Wrangler Installation): Installed @opennextjs/cloudflare and wrangler devDependencies in codebridgesfront.
+Step 2 (Worker Configuration): Created open-next.config.ts and wrangler.jsonc (nodejs_compat + ASSETS binding), wired initOpenNextCloudflareForDev() in next.config.ts, added preview/deploy scripts in package.json, and ignored .open-next/ and .wrangler/ in .gitignore.
+Step 3 (Backend CORS Readiness): Added *.pages.dev and *.workers.dev regex patterns to CORS_ALLOWED_ORIGIN_PATTERNS in auth-service and operations-service cors.php.
+
+
+--------------------------------------------------------------------------------
+TICKET: BD-0174 - POS Terminal Cart Streamlining, Unified 4-Column Receipt Sync & Numeric Receipt Numbering
+--------------------------------------------------------------------------------
+Ticket ID:              BD-0174
+Component / Service:    codebridgesfront & services/operations-service
+File Path:              codebridgesfront/components/pos/header/PosSuiteHeader.tsx, codebridgesfront/components/pos/terminal/PosOrderContextBar.tsx, codebridgesfront/components/pos/terminal/PosTerminalView.tsx, codebridgesfront/components/pos/terminal/PosCartPanel.tsx, codebridgesfront/components/pos/terminal/usePosTerminalState.ts, codebridgesfront/components/pos/settings/PosReceiptSettingsTab.tsx, codebridgesfront/components/pos/settings/PosTerminalSettingsView.tsx, codebridgesfront/components/receipt/ThermalReceiptPaper.tsx, codebridgesfront/lib/posReceiptUtils.ts, codebridgesfront/lib/api/posBff.ts, services/operations-service/app/Services/PosBffService.php, services/operations-service/app/Services/CheckoutService.php
+Related Model / Service:PosSuiteHeader, PosCartPanel, ThermalReceiptPaper, PosReceiptSettingsTab, PosBffService, CheckoutService
+Method / Entry Point:   /pos/pos-terminal, /cashier/pos-terminal, /pos/settings?tab=receipt, POST /api/v1/sales/checkout
+Command / API Route:    GET /api/v1/pos/bff/bootstrap, POST /api/v1/sales/checkout, PATCH /api/v1/outlets/{id}/terminal-settings
+Date & Time:            2026-11-18T15:45:00+07:00
+Status:                 Completed & Tested (100% Pass)
+
+Process Steps in Code:
+Step 1 (Header Order Context & Spacious Cart): Moved Walk-in Customer and Dine-In/Takeaway/Table selector into PosSuiteHeader's sub-navigation row, removed redundant branding/policy/tender buttons from PosCartPanel, and added collapsible + Coupon entry.
+Step 2 (Unified 4-Column Receipt Template): Updated ThermalReceiptPaper.tsx to 4 columns (Item, QTY, Price, Total) with multi-line wrapping for long product names, deferred localStorage merge until mount to prevent hydration mismatch, and unified PosReceiptSettingsTab.tsx to render ThermalReceiptPaper directly (with hide_badge on previews while keeping Original/Reprint badges on completed receipts).
+Step 3 (Dynamic Branding & Numeric Receipt Numbering): Added editable Business Phone (Tel), Business Address, Receipt Starting Number, and Receipt Number Digits in PosReceiptSettingsTab/PosTerminalSettingsView; updated PosBffService::buildReceiptTemplate and CheckoutService to prioritize terminal_settings and generate collision-free zero-padded numeric receipt numbers (e.g., 00000, 00001).
+
+
 ================================================================================
 END OF CODEBRIDGE SYSTEM MASTER TICKETS SPECIFICATION
 ================================================================================

@@ -1,4 +1,9 @@
 <?php
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-17
+ * Task: BD-0160 - POS Terminal & Current Order Dynamic Organization Receipt Template Integration
+ */
 
 namespace App\Services;
 
@@ -45,9 +50,11 @@ class CheckoutService
             $existingSale = $existingQuery->first();
             if ($existingSale) {
                 $lines = DB::table('sale_lines')->where('sale_id', $existingSale->id)->get();
+                $existingOutlet = DB::table('outlets')->where('id', $existingSale->outlet_id)->first();
                 return [
                     'sale' => $existingSale,
                     'lines' => $lines,
+                    'outlet' => $existingOutlet,
                     'is_duplicate' => true,
                 ];
             }
@@ -56,6 +63,18 @@ class CheckoutService
             $outlet = DB::table('outlets')->where('id', $outletId)->first();
             if ($outlet && $effectiveTenantId !== null && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== $effectiveTenantId) {
                 throw new Exception('Unauthorized: Outlet belongs to another organization.');
+            }
+
+            if ($outlet && (empty($outlet->receipt_header) || empty($outlet->receipt_logo_url))) {
+                try {
+                    $authOutlet = DB::connection('auth_db')
+                        ->table('outlets')
+                        ->where('id', $outlet->id)
+                        ->first();
+                    if ($authOutlet) {
+                        $outlet = (object) array_merge((array) $outlet, array_filter((array) $authOutlet, fn ($v) => $v !== null && $v !== ''));
+                    }
+                } catch (\Throwable $e) {}
             }
 
             $registerId = (int) $data['register_id'];
@@ -116,18 +135,43 @@ class CheckoutService
             $grandTotal = round(($subtotal - $discountTotal) + $taxTotal, 2);
 
             // 4. Create Immutable Sale Header
-            $outletCode = $outlet ? strtoupper($outlet->code) : 'MAIN';
+            $outletSettings = [];
+            $rawTermSettings = $outlet->terminal_settings ?? null;
+            try {
+                $authOutlet = DB::connection('auth_db')->table('outlets')->where('id', $outletId)->first();
+                if ($authOutlet && !empty($authOutlet->terminal_settings)) {
+                    $rawTermSettings = $authOutlet->terminal_settings;
+                }
+            } catch (\Throwable $e) {}
 
-            $todayCountQuery = DB::table('sales')
-                ->where('outlet_id', $outletId)
-                ->whereDate('created_at', now()->toDateString());
-            if ($effectiveTenantId !== null) {
-                $todayCountQuery->where('tenant_id', $effectiveTenantId);
+            if (!empty($rawTermSettings)) {
+                $decodedSettings = is_string($rawTermSettings)
+                    ? json_decode($rawTermSettings, true)
+                    : (array) $rawTermSettings;
+                if (is_array($decodedSettings)) {
+                    $outletSettings = $decodedSettings;
+                }
             }
-            $todayCount = $todayCountQuery->count();
 
-            $seqStr = str_pad((string) ($todayCount + 1), 5, '0', STR_PAD_LEFT);
-            $receiptNumber = "REC-{$outletCode}-" . date('Ymd') . "-{$seqStr}";
+            $startNumber = max(0, (int) ($outletSettings['receiptStartNumber'] ?? 0));
+            $receiptDigits = min(12, max(1, (int) ($outletSettings['receiptDigits'] ?? 5)));
+
+            $outletCountQuery = DB::table('sales')->where('outlet_id', $outletId);
+            if ($effectiveTenantId !== null) {
+                $outletCountQuery->where('tenant_id', $effectiveTenantId);
+            }
+            $seqNum = $startNumber + $outletCountQuery->count();
+
+            $receiptNumber = str_pad((string) $seqNum, $receiptDigits, '0', STR_PAD_LEFT);
+            while (
+                DB::table('sales')
+                    ->when($effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
+                    ->where('receipt_number', $receiptNumber)
+                    ->exists()
+            ) {
+                $seqNum++;
+                $receiptNumber = str_pad((string) $seqNum, $receiptDigits, '0', STR_PAD_LEFT);
+            }
 
             $customerId = $data['customer_id'] ?? null;
             $customerName = $data['customer_name'] ?? null;
@@ -315,6 +359,7 @@ class CheckoutService
             return [
                 'sale' => $sale,
                 'lines' => $saleLines,
+                'outlet' => $outlet,
                 'is_duplicate' => false,
             ];
         });

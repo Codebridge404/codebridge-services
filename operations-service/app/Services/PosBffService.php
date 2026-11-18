@@ -1,4 +1,9 @@
 <?php
+/**
+ * Author: Antigravity Team
+ * Date: 2026-11-17
+ * Task: BD-0160 - POS Terminal & Current Order Dynamic Organization Receipt Template Integration
+ */
 
 namespace App\Services;
 
@@ -10,7 +15,7 @@ use Illuminate\Support\Facades\DB;
 /**
  * Aggregated POS Backend-for-Frontend (BFF) orchestration service.
  *
- * Combines screen-shaped payloads for Flutter POS clients while delegating
+ * Combines screen-shaped payloads for Flutter & Next.js POS clients while delegating
  * domain mutations and tenant rules to authoritative operations services.
  */
 class PosBffService
@@ -26,41 +31,161 @@ class PosBffService
      */
     public function resolveOutlet(?string $tenantId, ?int $requestedOutletId, ?int $userOutletId, bool $isSuperAdminAll): ?object
     {
-        if (!SchemaGuard::hasTable('outlets')) {
+        $effectiveTenantId = $tenantId === 'all' ? null : $tenantId;
+        $connections = ['mysql', 'auth_db'];
+
+        foreach ($connections as $conn) {
+            try {
+                if ($conn === 'mysql' && !SchemaGuard::hasTable('outlets')) {
+                    continue;
+                }
+                $table = $conn === 'mysql' ? DB::table('outlets') : DB::connection('auth_db')->table('outlets');
+
+                if ($requestedOutletId !== null) {
+                    $outlet = (clone $table)->where('id', $requestedOutletId)->first();
+                    if ($outlet) {
+                        if (!$isSuperAdminAll && $effectiveTenantId !== null && $outlet->tenant_id !== null && (string) $outlet->tenant_id !== (string) $effectiveTenantId) {
+                            abort(403, 'Unauthorized: Outlet belongs to another organization.');
+                        }
+                        return $outlet;
+                    }
+                }
+
+                if ($userOutletId !== null) {
+                    $userOutlet = (clone $table)->where('id', $userOutletId)->first();
+                    if ($userOutlet) {
+                        if ($isSuperAdminAll || $effectiveTenantId === null || $userOutlet->tenant_id === null || (string) $userOutlet->tenant_id === (string) $effectiveTenantId) {
+                            return $userOutlet;
+                        }
+                    }
+                }
+
+                $firstOutlet = (clone $table)
+                    ->when(!$isSuperAdminAll && $effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
+                    ->where('is_active', true)
+                    ->orderBy('id')
+                    ->first()
+                    ?? (clone $table)
+                        ->when(!$isSuperAdminAll && $effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
+                        ->orderBy('id')
+                        ->first();
+
+                if ($firstOutlet) {
+                    return $firstOutlet;
+                }
+            } catch (\Throwable $e) {
+                if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                    throw $e;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Enrich outlet object with receipt branding, logos, slogans and peripheral configurations.
+     */
+    public function enrichOutletBranding(?object $outlet, ?string $tenantId): ?object
+    {
+        if (!$outlet) {
             return null;
         }
 
         $effectiveTenantId = $tenantId === 'all' ? null : $tenantId;
 
-        if ($requestedOutletId !== null) {
-            $outlet = DB::table('outlets')->where('id', $requestedOutletId)->first();
-            if ($outlet && !$isSuperAdminAll && $effectiveTenantId !== null) {
-                if ($outlet->tenant_id !== null && (string) $outlet->tenant_id !== (string) $effectiveTenantId) {
-                    abort(403, 'Unauthorized: Outlet belongs to another organization.');
-                }
-            }
-
-            return $outlet;
-        }
-
-        if ($userOutletId !== null) {
-            $userOutlet = DB::table('outlets')->where('id', $userOutletId)->first();
-            if ($userOutlet) {
-                if ($isSuperAdminAll || $effectiveTenantId === null || $userOutlet->tenant_id === null || (string) $userOutlet->tenant_id === (string) $effectiveTenantId) {
-                    return $userOutlet;
-                }
-            }
-        }
-
-        return DB::table('outlets')
-            ->when(!$isSuperAdminAll && $effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
-            ->where('is_active', true)
-            ->orderBy('id')
-            ->first()
-            ?? DB::table('outlets')
-                ->when(!$isSuperAdminAll && $effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
-                ->orderBy('id')
+        // Always merge authoritative outlet branding & terminal_settings from auth_db
+        // so updates saved in POS Settings (/pos/settings -> auth-service) sync immediately.
+        try {
+            $authOutlet = DB::connection('auth_db')
+                ->table('outlets')
+                ->where('id', $outlet->id)
+                ->when($effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
                 ->first();
+            if ($authOutlet) {
+                $outlet = (object) array_merge((array) $outlet, array_filter((array) $authOutlet, fn ($v) => $v !== null && $v !== ''));
+            }
+        } catch (\Throwable $e) {}
+
+        return $outlet;
+    }
+
+    /**
+     * Build unified organization receipt template for POS Terminal and Current Order live slip.
+     */
+    public function buildReceiptTemplate(?object $outlet, ?string $tenantId): array
+    {
+        $effectiveTenantId = $tenantId === 'all' ? null : $tenantId;
+        $tenantDetails = null;
+
+        if ($effectiveTenantId !== null) {
+            try {
+                if (SchemaGuard::hasTable('tenants')) {
+                    $tenantDetails = DB::table('tenants')->where('id', $effectiveTenantId)->first();
+                }
+                if (!$tenantDetails) {
+                    $tenantDetails = DB::connection('auth_db')
+                        ->table('tenants')
+                        ->where('id', $effectiveTenantId)
+                        ->first();
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        $terminalSettings = [];
+        if (isset($outlet->terminal_settings)) {
+            $terminalSettings = is_string($outlet->terminal_settings)
+                ? json_decode($outlet->terminal_settings, true) ?: []
+                : (is_array($outlet->terminal_settings) ? $outlet->terminal_settings : []);
+        }
+
+        $storeName = !empty($terminalSettings['outletName'])
+            ? $terminalSettings['outletName']
+            : ($outlet->name ?? ($tenantDetails->name ?? 'CodeBridges Store'));
+
+        $storeAddress = !empty($terminalSettings['outletAddress'])
+            ? (string) $terminalSettings['outletAddress']
+            : ($outlet->address ?? ($tenantDetails->address ?? ''));
+
+        $storePhone = !empty($terminalSettings['outletPhone'])
+            ? (string) $terminalSettings['outletPhone']
+            : ($outlet->phone ?? ($tenantDetails->phone ?? ''));
+
+        $receiptHeader = array_key_exists('receiptHeader', $terminalSettings)
+            ? (string) ($terminalSettings['receiptHeader'] ?? '')
+            : ($outlet->receipt_header ?? '');
+
+        $receiptFooter = array_key_exists('receiptFooter', $terminalSettings)
+            ? (string) ($terminalSettings['receiptFooter'] ?? '')
+            : ($outlet->receipt_footer ?? ($tenantDetails->receipt_footer ?? 'Thank you for shopping with us! Please come again.'));
+
+        $receiptLogoUrl = array_key_exists('receiptLogoUrl', $terminalSettings)
+            ? (string) ($terminalSettings['receiptLogoUrl'] ?? '')
+            : ($outlet->receipt_logo_url ?? ($terminalSettings['receipt_logo_url'] ?? ($tenantDetails->logo_url ?? '')));
+
+        $paperWidth = $terminalSettings['paper_width'] ?? ($terminalSettings['paperWidth'] ?? '80mm');
+        $autoPrintReceipt = array_key_exists('autoPrintReceipt', $terminalSettings)
+            ? (bool) $terminalSettings['autoPrintReceipt']
+            : (isset($terminalSettings['auto_print_receipt']) ? (bool) $terminalSettings['auto_print_receipt'] : true);
+        $vatTin = $terminalSettings['vat_tin'] ?? ($terminalSettings['vatTin'] ?? ($tenantDetails->tax_id ?? ''));
+        $taxLabel = $terminalSettings['tax_label'] ?? ($terminalSettings['taxLabel'] ?? 'VAT');
+        $receiptStartNumber = max(0, (int) ($terminalSettings['receiptStartNumber'] ?? ($terminalSettings['receipt_start_number'] ?? 0)));
+        $receiptDigits = min(12, max(1, (int) ($terminalSettings['receiptDigits'] ?? ($terminalSettings['receipt_digits'] ?? 5))));
+
+        return [
+            'store_name' => $storeName,
+            'store_address' => $storeAddress,
+            'store_phone' => $storePhone,
+            'receipt_header' => $receiptHeader,
+            'receipt_footer' => $receiptFooter,
+            'receipt_logo_url' => $receiptLogoUrl,
+            'paper_width' => $paperWidth === '58mm' ? '58mm' : '80mm',
+            'auto_print_receipt' => $autoPrintReceipt,
+            'vat_tin' => $vatTin,
+            'tax_label' => $taxLabel,
+            'receipt_start_number' => $receiptStartNumber,
+            'receipt_digits' => $receiptDigits,
+        ];
     }
 
     /**
@@ -111,14 +236,25 @@ class PosBffService
             isset($user->outlet_id) && is_numeric($user->outlet_id) ? (int) $user->outlet_id : null,
             $isSuperAdminAll
         );
+        $outlet = $this->enrichOutletBranding($outlet, $tenantId);
         $activeOutletId = $outlet ? (int) $outlet->id : ($requestedOutletId ?? 1);
+        $receiptTemplate = $this->buildReceiptTemplate($outlet, $tenantId);
 
         $outlets = SchemaGuard::hasTable('outlets')
             ? DB::table('outlets')
                 ->when(!$isSuperAdminAll && $effectiveTenantId !== null, fn ($q) => $q->where('tenant_id', $effectiveTenantId))
                 ->where('is_active', true)
                 ->orderBy('id')
-                ->get(['id', 'name', 'code', 'address', 'phone', 'is_active'])
+                ->get(array_filter([
+                    'id',
+                    'name',
+                    'code',
+                    'address',
+                    'phone',
+                    SchemaGuard::hasColumn('outlets', 'receipt_header') ? 'receipt_header' : null,
+                    SchemaGuard::hasColumn('outlets', 'receipt_footer') ? 'receipt_footer' : null,
+                    'is_active',
+                ]))
                 ->values()
                 ->all()
             : [];
@@ -206,6 +342,8 @@ class PosBffService
             ],
             'tenant_id' => $tenantId,
             'outlet' => $outlet,
+            'active_outlet' => $outlet,
+            'receipt_template' => $receiptTemplate,
             'outlets' => $outlets,
             'registers' => $registers,
             'active_shift' => $activeShift,

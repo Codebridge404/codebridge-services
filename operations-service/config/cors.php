@@ -24,7 +24,7 @@ return [
 
     'allowed_origins_patterns' => array_values(array_filter(array_map('trim', explode(',', (string) env(
         'CORS_ALLOWED_ORIGIN_PATTERNS',
-        '#^https://([a-z0-9-]+\.)?servicefixit\.me$#'
+        '#^https://([a-z0-9-]+\.)?servicefixit\.me$#,#^https://([a-z0-9-]+\.)?(pages|workers)\.dev$#'
     ))))),
 
     'allowed_headers' => ['*'],
