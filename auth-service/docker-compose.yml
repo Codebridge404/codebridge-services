@@ -10,6 +10,8 @@ services:
 
     container_name: codebridge-auth-service
 
+    user: "33:33"
+
     restart: unless-stopped
 
     env_file:
@@ -50,6 +52,8 @@ services:
 
     container_name: codebridge-auth-horizon
 
+    user: "33:33"
+
     command: sh -c "if php artisan list | grep -q 'horizon'; then exec php artisan horizon; else exec php artisan queue:work --tries=3 --timeout=90; fi"
 
     restart: unless-stopped
@@ -78,6 +82,8 @@ services:
       dockerfile: Dockerfile
       args:
         INSTALL_DEV: "true"
+    container_name: codebridge-auth-scheduler
+    user: "33:33"
     restart: unless-stopped
     command: ["php", "artisan", "schedule:work"]
     env_file:
