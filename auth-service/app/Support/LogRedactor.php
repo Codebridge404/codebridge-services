@@ -46,6 +46,8 @@ final class LogRedactor
         'x-client-key' => true,
         'webhook_url' => true,
         'private_key' => true,
+        'client_key' => true,
+        'otp' => true,
     ];
 
     /** @var list<string> */
@@ -61,6 +63,7 @@ final class LogRedactor
         'authorization',
         'credential',
         'api_key',
+        'client_key',
         'recovery_code',
         'passcode',
     ];
@@ -92,6 +95,7 @@ final class LogRedactor
             $keyStr = (string) $key;
             if (self::isSensitiveKey($keyStr)) {
                 $sanitized[$key] = '********';
+
                 continue;
             }
 
@@ -121,8 +125,9 @@ final class LogRedactor
             static function (array $matches): string {
                 $param = urldecode($matches[2]);
                 if (self::isSensitiveKey($param)) {
-                    return $matches[1] . $matches[2] . '=********';
+                    return $matches[1].$matches[2].'=********';
                 }
+
                 return $matches[0];
             },
             $redacted
@@ -133,16 +138,16 @@ final class LogRedactor
 
     public static function sanitizePathAndQuery(Request $request): string
     {
-        $path = '/' . ltrim(self::redactString($request->path()), '/');
+        $path = '/'.ltrim(self::redactString($request->path()), '/');
         $query = $request->query();
-        if (!is_array($query) || count($query) === 0) {
+        if (! is_array($query) || count($query) === 0) {
             return $path;
         }
 
         $sanitizedQuery = self::sanitizeArray($query);
         $encoded = http_build_query($sanitizedQuery);
 
-        return $encoded !== '' ? ($path . '?' . $encoded) : $path;
+        return $encoded !== '' ? ($path.'?'.$encoded) : $path;
     }
 
     /**
@@ -150,7 +155,7 @@ final class LogRedactor
      */
     public static function sanitizePathWithMaskedQuery(Request $request): string
     {
-        $path = '/' . ltrim(self::redactString($request->path()), '/');
+        $path = '/'.ltrim(self::redactString($request->path()), '/');
         $rawQuery = $request->getQueryString();
         if (! is_string($rawQuery) || trim($rawQuery) === '') {
             $parsedQuery = parse_url($request->getRequestUri(), PHP_URL_QUERY);
@@ -171,11 +176,11 @@ final class LogRedactor
                 $pairs[] = '[REDACTED]';
             } else {
                 $key = self::redactString(urldecode(substr($segment, 0, $eqPos)));
-                $pairs[] = ($key !== '' ? $key : 'param') . '=[REDACTED]';
+                $pairs[] = ($key !== '' ? $key : 'param').'=[REDACTED]';
             }
         }
 
-        return count($pairs) > 0 ? ($path . '?' . implode('&', $pairs)) : $path;
+        return count($pairs) > 0 ? ($path.'?'.implode('&', $pairs)) : $path;
     }
 
     /**
@@ -191,7 +196,7 @@ final class LogRedactor
         // Mask all query parameter values in any URL included inside exception messages
         $sanitized = preg_replace_callback(
             '/([?&])([^=&#\s]+)=([^&#\s]*)/',
-            static fn (array $matches): string => $matches[1] . self::redactString(urldecode($matches[2])) . '=[REDACTED]',
+            static fn (array $matches): string => $matches[1].self::redactString(urldecode($matches[2])).'=[REDACTED]',
             $sanitized
         ) ?? $sanitized;
 
@@ -209,4 +214,3 @@ final class LogRedactor
         return substr($scrubbed, 0, 1000);
     }
 }
-

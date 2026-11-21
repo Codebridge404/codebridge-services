@@ -2,13 +2,17 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Auth\User;
 use App\Models\Security\ApiRequestLog;
 use App\Models\Security\AuditLog;
+use App\Models\Security\SecurityEvent;
+use App\Support\LogContext;
 use App\Support\LogRedactor;
 use App\Support\SchemaGuard;
 use App\Support\TelemetryEmitter;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
@@ -66,14 +70,10 @@ class LogRequestActivity
         $startTime = microtime(true);
 
         // Assign correlation request ID and trace ID if absent
-        if (!$request->headers->has('X-Request-ID')) {
-            $request->headers->set('X-Request-ID', (string) Str::uuid());
-        }
-        $requestId = (string) $request->header('X-Request-ID');
-        if (!$request->headers->has('X-Trace-ID')) {
-            $request->headers->set('X-Trace-ID', substr(md5($requestId), 0, 32));
-        }
-        $traceId = (string) $request->header('X-Trace-ID');
+        $requestId = substr(trim((string) $request->header('X-Request-ID')), 0, 64) ?: (string) Str::uuid();
+        $traceId = substr(trim((string) $request->header('X-Trace-ID')), 0, 32) ?: substr(md5($requestId), 0, 32);
+        $request->headers->set('X-Request-ID', $requestId);
+        $request->headers->set('X-Trace-ID', $traceId);
 
         TelemetryEmitter::beginRequest($requestId, $traceId);
 
@@ -89,11 +89,10 @@ class LogRequestActivity
         $sanitizedInput = $this->sanitizeInput($request->all());
 
         // Extract user and tenant context
-        $user = $request->user() ?? \Illuminate\Support\Facades\Auth::user();
-        $userId = $user?->id ?? ($request->attributes->has('auth_user_id') ? (int) $request->attributes->get('auth_user_id') : null);
-        $tenantId = $user?->tenant_id
-            ?? ($request->filled('tenant_id') ? (int) $request->input('tenant_id') : null)
-            ?? ($request->attributes->has('auth_tenant_id') ? (int) $request->attributes->get('auth_tenant_id') : null);
+        $user = $request->user() ?? Auth::user();
+        $context = LogContext::fromRequest($request);
+        $userId = $context['user_id'];
+        $tenantId = $context['tenant_id'];
 
         // Extract response status code, error code, error message, and dynamic user context
         $statusCode = $response->getStatusCode();
@@ -109,7 +108,7 @@ class LogRequestActivity
                         $errorMessage = $data['message'] ?? null;
                     } else {
                         // Extract user_id and tenant_id from successful auth response payloads (e.g., login, register, quickSwitch)
-                        if (!$userId) {
+                        if (! $userId) {
                             $userPayload = $data['data']['user'] ?? $data['user'] ?? null;
                             if (is_array($userPayload) && isset($userPayload['id'])) {
                                 $userId = (int) $userPayload['id'];
@@ -126,19 +125,19 @@ class LogRequestActivity
         }
 
         // Fallback: Check route parameters only for explicit user/email verification routes
-        if (!$userId && str_contains($request->path(), 'email/verify') && $request->route('id') && is_numeric($request->route('id'))) {
+        if (! $userId && str_contains($request->path(), 'email/verify') && $request->route('id') && is_numeric($request->route('id'))) {
             $candidateId = (int) $request->route('id');
-            if (\App\Models\Auth\User::where('id', $candidateId)->exists()) {
+            if (User::where('id', $candidateId)->exists()) {
                 $userId = $candidateId;
             }
         }
 
         // Verify that userId exists in users table before logging to prevent foreign key violations
-        if ($userId && !$user) {
-            $user = \App\Models\Auth\User::find($userId);
-            if (!$user) {
+        if ($userId && ! $user) {
+            $user = User::find($userId);
+            if (! $user) {
                 $userId = null;
-            } elseif (!$tenantId) {
+            } elseif (! $tenantId) {
                 $tenantId = $user->tenant_id;
             }
         }
@@ -160,7 +159,7 @@ class LogRequestActivity
         // 2. Automatically record audit log for successful mutations if not already explicitly logged
         $method = strtoupper($request->method());
         if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true) && $statusCode < 400) {
-            if (!$request->attributes->get('_audit_logged', false)) {
+            if (! $request->attributes->get('_audit_logged', false)) {
                 $this->logAuditMutation(
                     request: $request,
                     user: $user,
@@ -186,7 +185,7 @@ class LogRequestActivity
         }
 
         // 4. Log activity stream (with redacted path/query & correlation IDs)
-        $userInfo = $user ? "User #{$user->id} [{$user->role}]" : "Guest";
+        $userInfo = $user ? "User #{$user->id} [{$user->role}]" : 'Guest';
         $redactedTarget = LogRedactor::sanitizePathAndQuery($request);
         Log::info("HTTP ACTIVITY | {$method} {$redactedTarget} | Status: {$statusCode} | {$durationMs}ms | {$userInfo} | IP: {$request->ip()}", [
             'request_id' => $requestId,
@@ -231,7 +230,7 @@ class LogRequestActivity
         ?string $errorMessage
     ): void {
         try {
-            if (!SchemaGuard::hasTable('api_request_logs')) {
+            if (! SchemaGuard::hasTable('api_request_logs')) {
                 return;
             }
 
@@ -263,7 +262,7 @@ class LogRequestActivity
                 'created_at' => now(),
             ]);
         } catch (\Throwable $e) {
-            Log::warning('Failed to record api_request_log: ' . $e->getMessage());
+            Log::warning('Failed to record api_request_log', ['exception_class' => get_class($e), 'request_id' => $requestId]);
         }
     }
 
@@ -280,12 +279,12 @@ class LogRequestActivity
         array $payload
     ): void {
         try {
-            if (!SchemaGuard::hasTable('audit_logs')) {
+            if (! SchemaGuard::hasTable('audit_logs')) {
                 return;
             }
 
             $path = trim($request->path(), '/');
-            $action = strtolower($request->method()) . ' ' . $path;
+            $action = strtolower($request->method()).' '.$path;
             $module = 'system';
 
             $segments = explode('/', $path);
@@ -317,7 +316,7 @@ class LogRequestActivity
 
             AuditLog::create($auditData);
         } catch (\Throwable $e) {
-            Log::warning('Failed to record auto audit_log: ' . $e->getMessage());
+            Log::warning('Failed to record auto audit_log', ['exception_class' => get_class($e), 'request_id' => $requestId]);
         }
     }
 
@@ -338,7 +337,7 @@ class LogRequestActivity
                 return;
             }
 
-            if (!SchemaGuard::hasTable('security_events')) {
+            if (! SchemaGuard::hasTable('security_events')) {
                 return;
             }
 
@@ -364,7 +363,7 @@ class LogRequestActivity
                     default => "Access error encountered (HTTP {$statusCode})",
                 };
 
-            \App\Models\Security\SecurityEvent::record(
+            SecurityEvent::record(
                 eventType: $eventType,
                 ruleCode: $ruleCode,
                 summary: substr((string) $summary, 0, 255),
@@ -382,7 +381,7 @@ class LogRequestActivity
                 statusCode: $statusCode
             );
         } catch (\Throwable $e) {
-            Log::warning('Failed to record security_event in LogRequestActivity: ' . $e->getMessage());
+            Log::warning('Failed to record security_event in LogRequestActivity', ['exception_class' => get_class($e), 'request_id' => $request->header('X-Request-ID')]);
         }
     }
 }

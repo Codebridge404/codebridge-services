@@ -57,7 +57,7 @@ class ReviewDefectsRegressionTest extends TestCase
         $user = User::factory()->create();
         Sanctum::actingAs($user, ['*']);
 
-        $options = $this->passkeyService->generateRegistrationOptions($user);
+        $options = $this->passkeyService->generateRegistrationOptions($user, 'user_default:'.$user->id);
         $key = $this->generateEcKeyPair();
         $id = random_bytes(16);
         $attestation = $this->craftAttestationObject($id, $key['cose_bytes']);
@@ -122,7 +122,7 @@ class ReviewDefectsRegressionTest extends TestCase
         $user = User::factory()->create();
         Sanctum::actingAs($user, ['*']);
 
-        $options = $this->passkeyService->generateRegistrationOptions($user);
+        $options = $this->passkeyService->generateRegistrationOptions($user, 'user_default:'.$user->id);
         $key = $this->generateEcKeyPair();
         $id = random_bytes(16);
         $attestation = $this->craftAttestationObject($id, $key['cose_bytes']);

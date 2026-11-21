@@ -60,8 +60,12 @@ class PasskeyService
     /**
      * Generate WebAuthn passkey registration options for an authenticated user.
      */
-    public function generateRegistrationOptions(User $user, ?string $sessionId = null): array
+    public function generateRegistrationOptions(User $user, string $sessionId): array
     {
+        if ($sessionId === '') {
+            throw new \InvalidArgumentException('An authenticated session is required for passkey registration.');
+        }
+
         $rpId = config('webauthn.rp.id', 'localhost');
         $rpName = config('webauthn.rp.name', 'CodeBridges SmartPOS');
 
@@ -160,7 +164,7 @@ class PasskeyService
     /**
      * Verify WebAuthn attestation response and store the new passkey credential.
      */
-    public function verifyRegistration(User $user, array $data, string $origin): PasskeyCredential
+    public function verifyRegistration(User $user, array $data, string $origin, string $sessionId): PasskeyCredential
     {
         $challengeId = $data['challenge_id'] ?? null;
         if (! $challengeId) {
@@ -171,6 +175,10 @@ class PasskeyService
         $saved = $this->atomicCachePull("auth:passkey_reg_challenge:{$challengeId}");
         if (! $saved || (int) $saved['user_id'] !== (int) $user->id) {
             throw new \RuntimeException('Registration challenge is invalid, expired, or bound to another account.');
+        }
+
+        if ($sessionId === '' || empty($saved['session_id']) || ! hash_equals($saved['session_id'], $sessionId)) {
+            throw new \RuntimeException('Registration challenge is bound to another session.');
         }
 
         if (empty($saved['reauth_authorized'])) {
@@ -293,7 +301,7 @@ class PasskeyService
         $allowCredentials = [];
         $userId = null;
 
-        if ($email) {
+        if ($email !== null) {
             $user = User::where('email', strtolower(trim($email)))->first();
             if ($user) {
                 $userId = $user->id;
@@ -312,6 +320,8 @@ class PasskeyService
         Cache::put("auth:passkey_auth_challenge:{$challengeId}", [
             'challenge' => $encodedChallenge,
             'user_id' => $userId,
+            'identified' => $email !== null,
+            'allowed_credential_ids' => array_column($allowCredentials, 'id'),
             'created_at' => now()->timestamp,
         ], now()->addMinutes(5));
 
@@ -355,6 +365,24 @@ class PasskeyService
         $passkey = PasskeyCredential::where('credential_id', $credentialId)->active()->first();
         if (! $passkey) {
             throw new \RuntimeException('Unrecognized or revoked passkey credential.');
+        }
+
+        // Enforce the account and credential restrictions captured at ceremony creation.
+        $expectedUserId = $saved['user_id'] ?? null;
+        $allowedCredentialIds = $saved['allowed_credential_ids'] ?? [];
+        if (($expectedUserId !== null && (int) $passkey->user_id !== (int) $expectedUserId)
+            || (! empty($saved['identified']) && ($expectedUserId === null || ! in_array($credentialId, $allowedCredentialIds, true)))
+            || ($allowedCredentialIds !== [] && ! in_array($credentialId, $allowedCredentialIds, true))) {
+            throw new \RuntimeException('Passkey credential does not match the authentication challenge.');
+        }
+
+        // Browser user handles are base64url-encoded; compare the decoded opaque handle.
+        $userHandle = $response['userHandle'] ?? null;
+        if ($userHandle !== null) {
+            $decodedHandle = is_string($userHandle) ? base64_decode(strtr($userHandle, '-_', '+/'), true) : false;
+            if ($decodedHandle === false || ! hash_equals($passkey->user_handle, $decodedHandle)) {
+                throw new \RuntimeException('Passkey user handle does not match the registered account.');
+            }
         }
 
         $user = $passkey->user;

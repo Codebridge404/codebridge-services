@@ -4,34 +4,8 @@ namespace App\Models\Security;
 
 use App\Models\Auth\User;
 use App\Models\Organization\Tenant;
-use App\Models\System\Role;
-use App\Models\Organization\Outlet;
-use App\Models\Organization\Department;
-use App\Models\Organization\Employee;
-use App\Models\Organization\Supplier;
-use App\Models\Crm\Customer;
-use App\Models\Security\ApiKey;
-use App\Models\Security\AuditLog;
-use App\Models\Security\ApiClient;
-use App\Models\Security\NotificationProvider;
-use App\Models\Auth\UserSession;
-use App\Models\Auth\RefreshToken;
-use App\Models\Auth\PasskeyCredential;
-use App\Models\System\UserRole;
-use App\Models\System\Permission;
-use App\Models\Organization\TenantUser;
-use App\Models\Organization\TenantModule;
-use App\Models\Organization\TenantSubscription;
-use App\Models\Organization\TenantUserOutlet;
-use App\Models\Auth\UserInvitation;
-use App\Models\Auth\UserPosPin;
-use App\Models\Crm\DigitalVoucher;
-use App\Models\Crm\StoreCreditInvoice;
-use App\Models\Security\ApiRequestLog;
-use App\Models\Meeting\Meeting;
-use App\Models\Meeting\MeetingRoom;
-
-use DateTimeInterface;
+use App\Support\LogContext;
+use App\Support\LogRedactor;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -125,7 +99,7 @@ class SecurityEvent extends Model
             }
 
             if (empty($event->rule_code)) {
-                $event->rule_code = 'SEC_' . strtoupper($event->event_type ?? 'GENERIC');
+                $event->rule_code = 'SEC_'.strtoupper($event->event_type ?? 'GENERIC');
             }
 
             if (empty($event->service_name)) {
@@ -144,6 +118,9 @@ class SecurityEvent extends Model
                 $event->created_at = now();
             }
 
+        });
+
+        static::saving(function (SecurityEvent $event): void {
             if (is_array($event->metadata)) {
                 $event->metadata = static::redactSensitiveData($event->metadata);
             }
@@ -156,10 +133,12 @@ class SecurityEvent extends Model
     public static function redactSensitiveData(array $data): array
     {
         foreach ($data as $key => $value) {
-            if (in_array(strtolower((string) $key), static::$sensitiveKeys, true)) {
+            if (LogRedactor::isSensitiveKey((string) $key) || in_array(strtolower((string) $key), static::$sensitiveKeys, true)) {
                 $data[$key] = '[REDACTED]';
             } elseif (is_array($value)) {
                 $data[$key] = static::redactSensitiveData($value);
+            } elseif (is_string($value)) {
+                $data[$key] = LogRedactor::redactString($value);
             }
         }
 
@@ -185,8 +164,6 @@ class SecurityEvent extends Model
     ): static {
         $req = $request ?? (app()->bound('request') ? request() : null);
 
-        $req?->attributes->set('_security_event_recorded', true);
-
         $requestId = $req?->header('X-Request-ID')
             ?? $req?->header('CF-Ray')
             ?? (string) Str::uuid();
@@ -200,10 +177,11 @@ class SecurityEvent extends Model
         $userAgent = $req ? substr((string) $req->userAgent(), 0, 512) : null;
         $resolvedStatusCode = $statusCode ?? ($outcome === 'blocked' ? 401 : 200);
 
-        $resolvedUserId = $userId ?? ($req?->user()?->id ?? ($req?->attributes->has('auth_user_id') ? (int) $req->attributes->get('auth_user_id') : null));
-        $resolvedTenantId = $tenantId ?? ($req?->user()?->tenant_id ?? ($req?->attributes->has('auth_tenant_id') ? (int) $req->attributes->get('auth_tenant_id') : null));
+        $context = LogContext::fromRequest($req);
+        $resolvedUserId = LogContext::positiveId($userId) ?? $context['user_id'];
+        $resolvedTenantId = LogContext::positiveId($tenantId) ?? $context['tenant_id'];
 
-        return static::create([
+        $event = static::create([
             'uuid' => (string) Str::uuid(),
             'tenant_id' => $resolvedTenantId,
             'user_id' => $resolvedUserId,
@@ -226,6 +204,10 @@ class SecurityEvent extends Model
             'metadata' => $metadata,
             'occurred_at' => now()->format('Y-m-d H:i:s.u'),
         ]);
+
+        $req?->attributes->set('_security_event_recorded', true);
+
+        return $event;
     }
 
     /**

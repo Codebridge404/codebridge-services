@@ -42,9 +42,6 @@ abstract class Controller
         ?string $userName = null,
         ?int $tenantId = null
     ): ?AuditLog {
-        // Mark request as explicitly audited to avoid duplicate generic mutation logging
-        request()->attributes->set('_audit_logged', true);
-
         return AuditLog::record(
             action: $action,
             module: $module,

@@ -20,10 +20,14 @@ use Dedoc\Scramble\Support\Generator\Operation;
 use Dedoc\Scramble\Support\Generator\SecurityRequirement;
 use Dedoc\Scramble\Support\Generator\SecurityScheme;
 use Dedoc\Scramble\Support\RouteInfo;
+use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Database\Events\QueryExecuted;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Str;
@@ -43,6 +47,31 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        RateLimiter::for('reauthentication', static function (Request $request): array {
+            $response = static function (Request $request, array $headers): JsonResponse {
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'REAUTHENTICATION_RATE_LIMITED',
+                    'message' => 'Too many reauthentication attempts. Please try again later.',
+                    'retry_after_seconds' => (int) $headers['Retry-After'],
+                    'request_id' => $request->header('X-Request-ID')
+                        ?: $request->attributes->get('request_id')
+                        ?: (string) Str::uuid(),
+                ], 429, array_merge($headers, ['Cache-Control' => 'no-store']));
+            };
+
+            // Count all verification attempts before checking credentials. Caller-supplied
+            // identifiers, new sessions, and successful options requests cannot reset these limits.
+            return [
+                Limit::perMinutes(15, 5)
+                    ->by('user:'.$request->user()->getAuthIdentifier())
+                    ->response($response),
+                Limit::perMinute(30)
+                    ->by('ip:'.$request->ip())
+                    ->response($response),
+            ];
+        });
+
         if (app()->environment(['production', 'staging'])) {
             URL::forceScheme('https');
         }

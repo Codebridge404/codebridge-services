@@ -2,14 +2,15 @@
 
 namespace App\Services;
 
+use App\Models\Auth\User;
 use App\Models\Security\NotificationProvider;
 use App\Models\Security\SecurityEvent;
-use App\Models\Auth\User;
 use App\Support\LogRedactor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Laravel\Sanctum\PersonalAccessToken;
 
 /**
  * Real-Time IP Threat Defense, Repeat Attack Tracking & Auto-Jail Service.
@@ -18,8 +19,13 @@ use Illuminate\Support\Facades\Log;
 class IpThreatDefenseService
 {
     private const BAN_PREFIX = 'sec_ip_ban:';
+
     private const OFFENSE_PREFIX = 'sec_ip_offense:';
+
     private const BANNED_INDEX_KEY = 'sec_banned_ips_index';
+
+    private const BANNED_INDEX_LOCK = 'sec_banned_ips_index:lock';
+
     private const SETTINGS_KEY = 'sec_threat_defense_settings';
 
     /**
@@ -51,7 +57,8 @@ class IpThreatDefenseService
         $merged = array_merge($current, $newSettings);
         try {
             Cache::forever(self::SETTINGS_KEY, $merged);
-        } catch (\Throwable) {}
+        } catch (\Throwable) {
+        }
 
         return $merged;
     }
@@ -67,7 +74,7 @@ class IpThreatDefenseService
                 return null;
             }
 
-            return Cache::get(self::BAN_PREFIX . $ip);
+            return Cache::get(self::BAN_PREFIX.$ip);
         } catch (\Throwable) {
             return null;
         }
@@ -92,7 +99,7 @@ class IpThreatDefenseService
             return ['banned' => false, 'offense_count' => 0, 'threshold' => $settings['max_offenses'], 'ban_info' => null];
         }
 
-        $offenseKey = self::OFFENSE_PREFIX . $ip;
+        $offenseKey = self::OFFENSE_PREFIX.$ip;
         $decayMinutes = $settings['offense_decay_minutes'];
         $maxOffenses = $settings['max_offenses'];
 
@@ -151,12 +158,12 @@ class IpThreatDefenseService
             'duration_minutes' => $durationMinutes,
         ];
 
-        Cache::put(self::BAN_PREFIX . $ip, $banData, $expiresAt);
-
-        // Update banned IPs index
-        $index = Cache::get(self::BANNED_INDEX_KEY, []);
-        $index[$ip] = $banData;
-        Cache::forever(self::BANNED_INDEX_KEY, $index);
+        Cache::lock(self::BANNED_INDEX_LOCK, 10)->block(2, function () use ($ip, $banData, $expiresAt): void {
+            Cache::put(self::BAN_PREFIX.$ip, $banData, $expiresAt);
+            $index = self::activeBanIndex(Cache::get(self::BANNED_INDEX_KEY, []));
+            $index[$ip] = $banData;
+            self::storeBanIndex($index);
+        });
 
         // Record a Critical Forensic Security Event
         $verifiedAuth = self::extractVerifiedAuthContext($request);
@@ -175,7 +182,7 @@ class IpThreatDefenseService
                 statusCode: 403
             );
         } catch (\Throwable $e) {
-            Log::warning('Failed to record IP ban security event: ' . LogRedactor::sanitizeTelegramSecrets($e->getMessage()));
+            Log::warning('Failed to record IP ban security event: '.LogRedactor::sanitizeTelegramSecrets($e->getMessage()));
         }
 
         // Send High-Priority Telegram Alert
@@ -189,14 +196,13 @@ class IpThreatDefenseService
      */
     public static function unbanIp(string $ip): bool
     {
-        Cache::forget(self::BAN_PREFIX . $ip);
-        Cache::forget(self::OFFENSE_PREFIX . $ip);
-
-        $index = Cache::get(self::BANNED_INDEX_KEY, []);
-        if (isset($index[$ip])) {
+        Cache::lock(self::BANNED_INDEX_LOCK, 10)->block(2, function () use ($ip): void {
+            Cache::forget(self::BAN_PREFIX.$ip);
+            Cache::forget(self::OFFENSE_PREFIX.$ip);
+            $index = self::activeBanIndex(Cache::get(self::BANNED_INDEX_KEY, []));
             unset($index[$ip]);
-            Cache::forever(self::BANNED_INDEX_KEY, $index);
-        }
+            self::storeBanIndex($index);
+        });
 
         return true;
     }
@@ -206,17 +212,35 @@ class IpThreatDefenseService
      */
     public static function getBannedIps(): array
     {
-        $index = Cache::get(self::BANNED_INDEX_KEY, []);
-        $activeBans = [];
-        $now = now();
+        return Cache::lock(self::BANNED_INDEX_LOCK, 10)->block(2, function (): array {
+            $index = Cache::get(self::BANNED_INDEX_KEY, []);
+            $active = self::activeBanIndex($index);
+            if ($active !== $index || $active === []) {
+                self::storeBanIndex($active);
+            }
 
+            return array_values($active);
+        });
+    }
+
+    private static function activeBanIndex(array $index): array
+    {
         foreach ($index as $ip => $data) {
-            if (Cache::has(self::BAN_PREFIX . $ip)) {
-                $activeBans[] = $data;
+            if (! Cache::has(self::BAN_PREFIX.$ip)) {
+                unset($index[$ip]);
             }
         }
 
-        return $activeBans;
+        return $index;
+    }
+
+    private static function storeBanIndex(array $index): void
+    {
+        if ($index === []) {
+            Cache::forget(self::BANNED_INDEX_KEY);
+        } else {
+            Cache::forever(self::BANNED_INDEX_KEY, $index);
+        }
     }
 
     /**
@@ -289,7 +313,7 @@ class IpThreatDefenseService
             }
         } elseif (str_contains($token, '|')) {
             try {
-                $pat = \Laravel\Sanctum\PersonalAccessToken::findToken($token);
+                $pat = PersonalAccessToken::findToken($token);
                 if ($pat && (! $pat->expires_at || $pat->expires_at->isFuture())) {
                     $verifiedUser = $pat->tokenable;
                     if ($verifiedUser instanceof User && $verifiedUser->is_active) {
@@ -418,14 +442,14 @@ class IpThreatDefenseService
             $time = now()->toDateTimeString();
 
             $message = "🚨 <b>CRITICAL: ATTACKER IP AUTO-BANNED</b>\n\n"
-                . "━━━━━━━━━━━━━━━━━━━━━━\n"
-                . "• <b>Banned IP:</b> <code>{$safeIp}</code>\n"
-                . "• <b>Reason:</b> {$safeReason}\n"
-                . "• <b>Duration:</b> <b>{$durationMinutes} minutes</b> (until {$expiresAt})\n"
-                . "• <b>Targeted Route:</b> <code>{$uri}</code>\n"
-                . "• <b>Action:</b> ALL TRAFFIC BLOCKED (HTTP 403)\n"
-                . "• <b>Timestamp:</b> {$time}\n"
-                . "━━━━━━━━━━━━━━━━━━━━━━";
+                ."━━━━━━━━━━━━━━━━━━━━━━\n"
+                ."• <b>Banned IP:</b> <code>{$safeIp}</code>\n"
+                ."• <b>Reason:</b> {$safeReason}\n"
+                ."• <b>Duration:</b> <b>{$durationMinutes} minutes</b> (until {$expiresAt})\n"
+                ."• <b>Targeted Route:</b> <code>{$uri}</code>\n"
+                ."• <b>Action:</b> ALL TRAFFIC BLOCKED (HTTP 403)\n"
+                ."• <b>Timestamp:</b> {$time}\n"
+                .'━━━━━━━━━━━━━━━━━━━━━━';
 
             $response = Http::timeout(3)->post("https://api.telegram.org/bot{$token}/sendMessage", [
                 'chat_id' => $chatId,
@@ -434,10 +458,10 @@ class IpThreatDefenseService
             ]);
 
             if (! $response->successful()) {
-                Log::warning('Failed to send Telegram IP ban alert: HTTP ' . $response->status() . ' ' . LogRedactor::sanitizeTelegramSecrets((string) $response->body(), is_string($token) ? $token : null));
+                Log::warning('Failed to send Telegram IP ban alert: HTTP '.$response->status().' '.LogRedactor::sanitizeTelegramSecrets((string) $response->body(), is_string($token) ? $token : null));
             }
         } catch (\Throwable $e) {
-            Log::warning('Failed to send Telegram IP ban alert: ' . LogRedactor::sanitizeTelegramSecrets($e->getMessage(), is_string($token) ? $token : null));
+            Log::warning('Failed to send Telegram IP ban alert: '.LogRedactor::sanitizeTelegramSecrets($e->getMessage(), is_string($token) ? $token : null));
         }
     }
 }

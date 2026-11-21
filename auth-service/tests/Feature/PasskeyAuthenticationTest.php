@@ -169,7 +169,7 @@ class PasskeyAuthenticationTest extends TestCase
         Sanctum::actingAs($user, ['*']);
 
         $this->passkeyService->createReauthGrant($user, 'passkey_enrollment');
-        $options = $this->passkeyService->generateRegistrationOptions($user);
+        $options = $this->passkeyService->generateRegistrationOptions($user, 'user_default:'.$user->id);
         $keyData = $this->generateEcKeyPair();
 
         $credIdRaw = random_bytes(16);
@@ -202,7 +202,7 @@ class PasskeyAuthenticationTest extends TestCase
         Sanctum::actingAs($user, ['*']);
 
         $this->passkeyService->createReauthGrant($user, 'passkey_enrollment');
-        $options = $this->passkeyService->generateRegistrationOptions($user);
+        $options = $this->passkeyService->generateRegistrationOptions($user, 'user_default:'.$user->id);
         $keyData = $this->generateEcKeyPair();
 
         $credIdRaw = random_bytes(16);
@@ -238,7 +238,7 @@ class PasskeyAuthenticationTest extends TestCase
         Sanctum::actingAs($user, ['*']);
 
         $this->passkeyService->createReauthGrant($user, 'passkey_enrollment');
-        $options = $this->passkeyService->generateRegistrationOptions($user);
+        $options = $this->passkeyService->generateRegistrationOptions($user, 'user_default:'.$user->id);
         $keyData = $this->generateEcKeyPair();
 
         $credIdRaw = random_bytes(16);
@@ -299,7 +299,7 @@ class PasskeyAuthenticationTest extends TestCase
 
         Sanctum::actingAs($user2, ['*']);
         $this->passkeyService->createReauthGrant($user2, 'passkey_enrollment');
-        $options = $this->passkeyService->generateRegistrationOptions($user2);
+        $options = $this->passkeyService->generateRegistrationOptions($user2, 'user_default:'.$user2->id);
 
         $attObj = $this->craftAttestationObject($credIdRaw, $keyData['cose_bytes'], true);
         $clientDataJSON = json_encode([

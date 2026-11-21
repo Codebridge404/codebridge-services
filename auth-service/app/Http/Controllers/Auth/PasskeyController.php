@@ -4,24 +4,21 @@ namespace App\Http\Controllers\Auth;
 
 use App\Http\Controllers\Controller;
 use App\Http\Resources\User\UserResource;
-use App\Http\Responses\HttpStatus;
-use App\Http\Responses\ResponseCode;
-use App\Models\Security\ApiClient;
 use App\Models\Auth\PasskeyCredential;
 use App\Models\Auth\RefreshToken;
 use App\Models\Auth\User;
 use App\Models\Auth\UserSession;
+use App\Models\Security\ApiClient;
 use App\Services\DeviceDetectorService;
 use App\Services\JwtService;
 use App\Services\PasskeyService;
-use App\Support\SchemaGuard;
 use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
-use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Str;
 
 class PasskeyController extends Controller
 {
@@ -93,10 +90,10 @@ class PasskeyController extends Controller
 
         try {
             $origin = $request->header('Origin') ?? $request->root();
-            $credential = $this->passkeyService->verifyRegistration($user, $validated, $origin);
+            $sessionId = $this->passkeyService->resolveSessionId($request, $user);
+            $credential = $this->passkeyService->verifyRegistration($user, $validated, $origin, $sessionId);
 
             // Clean up any lingering reauth state for this session
-            $sessionId = $this->passkeyService->resolveSessionId($request, $user);
             $this->passkeyService->consumeReauthGrant($user, 'passkey_enrollment', $sessionId);
 
             return response()->json([
@@ -154,12 +151,14 @@ class PasskeyController extends Controller
             'response.clientDataJSON' => 'required_with:response|string',
             'response.authenticatorData' => 'required_with:response|string',
             'response.signature' => 'required_with:response|string',
+            'response.userHandle' => 'nullable|string',
             'credential' => 'nullable|array',
             'credential.id' => 'nullable|string',
             'credential.response' => 'nullable|array',
             'credential.response.clientDataJSON' => 'nullable|string',
             'credential.response.authenticatorData' => 'nullable|string',
             'credential.response.signature' => 'nullable|string',
+            'credential.response.userHandle' => 'nullable|string',
         ]);
 
         try {
@@ -191,7 +190,7 @@ class PasskeyController extends Controller
             }
             if (! $client) {
                 $client = ApiClient::create([
-                    'uuid' => (string) \Illuminate\Support\Str::uuid(),
+                    'uuid' => (string) Str::uuid(),
                     'name' => 'Default Platform Client',
                     'client_key' => 'client_web_admin_cb2026',
                     'client_type' => 'first_party',
@@ -419,6 +418,7 @@ class PasskeyController extends Controller
      * Verify reauthentication via password or passkey and issue short-lived step-up grant.
      * POST /api/v1/auth/reauthenticate/verify
      */
+    #[OpenApiResponse(status: 429, description: 'Limited to 5 verification attempts per account per 15 minutes and 30 per IP per minute.', type: 'array{status: string, code: string, message: string, retry_after_seconds: int, request_id: string}')]
     public function reauthVerify(Request $request): JsonResponse
     {
         /** @var User $user */

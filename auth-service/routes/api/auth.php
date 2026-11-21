@@ -67,7 +67,7 @@ Route::middleware('auth_throttle:10,1')->group(function () {
 |--------------------------------------------------------------------------
 */
 Route::middleware(['auth:sanctum', 'pos_scope'])->group(function () {
-    require __DIR__ . '/sessions.php';
+    require __DIR__.'/sessions.php';
     Route::get('/auth/authorize-context', [AuthController::class, 'authorizeContext']);
     Route::get('/me', [AuthController::class, 'me']);
     Route::match(['put', 'post'], '/auth/profile', [AuthController::class, 'update']);
@@ -86,7 +86,8 @@ Route::middleware(['auth:sanctum', 'pos_scope'])->group(function () {
 
     /* Step-Up Reauthentication Grants */
     Route::post('/auth/reauthenticate/options', [PasskeyController::class, 'reauthOptions']);
-    Route::post('/auth/reauthenticate/verify', [PasskeyController::class, 'reauthVerify']);
+    Route::post('/auth/reauthenticate/verify', [PasskeyController::class, 'reauthVerify'])
+        ->middleware('throttle:reauthentication');
 
     /* Passkey Registration & Management */
     Route::post('/auth/passkeys/registration/options', [PasskeyController::class, 'registrationOptions']);

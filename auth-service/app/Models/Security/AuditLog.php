@@ -3,34 +3,10 @@
 namespace App\Models\Security;
 
 use App\Models\Auth\User;
-use App\Models\Organization\Tenant;
-use App\Models\System\Role;
 use App\Models\Organization\Outlet;
-use App\Models\Organization\Department;
-use App\Models\Organization\Employee;
-use App\Models\Organization\Supplier;
-use App\Models\Crm\Customer;
-use App\Models\Security\SecurityEvent;
-use App\Models\Security\ApiKey;
-use App\Models\Security\ApiClient;
-use App\Models\Security\NotificationProvider;
-use App\Models\Auth\UserSession;
-use App\Models\Auth\RefreshToken;
-use App\Models\Auth\PasskeyCredential;
-use App\Models\System\UserRole;
-use App\Models\System\Permission;
-use App\Models\Organization\TenantUser;
-use App\Models\Organization\TenantModule;
-use App\Models\Organization\TenantSubscription;
-use App\Models\Organization\TenantUserOutlet;
-use App\Models\Auth\UserInvitation;
-use App\Models\Auth\UserPosPin;
-use App\Models\Crm\DigitalVoucher;
-use App\Models\Crm\StoreCreditInvoice;
-use App\Models\Security\ApiRequestLog;
-use App\Models\Meeting\Meeting;
-use App\Models\Meeting\MeetingRoom;
-
+use App\Models\Organization\Tenant;
+use App\Support\LogContext;
+use App\Support\LogRedactor;
 use App\Support\SchemaGuard;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
@@ -67,6 +43,15 @@ class AuditLog extends Model
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
+
+    protected static function booted(): void
+    {
+        static::saving(function (AuditLog $log): void {
+            if (is_array($log->payload)) {
+                $log->payload = LogRedactor::sanitizeArray($log->payload);
+            }
+        });
+    }
 
     /**
      * Get the user who performed this action.
@@ -109,16 +94,17 @@ class AuditLog extends Model
         ?string $userAgent = null
     ): ?self {
         try {
-            if (!SchemaGuard::hasTable('audit_logs')) {
+            if (! SchemaGuard::hasTable('audit_logs')) {
                 return null;
             }
 
             $user = request()->user();
+            $context = LogContext::fromRequest(request());
 
             $logData = [
                 'uuid' => (string) Str::uuid(),
-                'tenant_id' => $tenantId ?? $user?->tenant_id,
-                'user_id' => $userId ?? $user?->id,
+                'tenant_id' => LogContext::positiveId($tenantId) ?? $context['tenant_id'],
+                'user_id' => LogContext::positiveId($userId) ?? $context['user_id'],
                 'action' => $action,
                 'module' => $module,
                 'request_id' => request()->header('X-Request-ID') ?? (string) Str::uuid(),
@@ -135,9 +121,13 @@ class AuditLog extends Model
                 $logData['user_name'] = $userName ?? $user?->name ?? 'System';
             }
 
-            return self::create($logData);
+            $log = self::create($logData);
+            request()->attributes->set('_audit_logged', true);
+
+            return $log;
         } catch (\Throwable $e) {
-            Log::warning('Failed to record audit log: ' . $e->getMessage());
+            Log::warning('Failed to record audit log', ['exception_class' => get_class($e), 'request_id' => request()->header('X-Request-ID')]);
+
             return null;
         }
     }
