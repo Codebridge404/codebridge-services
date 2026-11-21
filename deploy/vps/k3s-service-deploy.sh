@@ -299,22 +299,40 @@ echo ">>> Configuring application and documentation caches across all active rep
 ACTIVE_PODS=()
 while IFS= read -r pod_name; do
     [ -n "${pod_name}" ] && ACTIVE_PODS+=("${pod_name}")
-done < <(kubectl -n "${NAMESPACE}" get pods -l "app.kubernetes.io/name=${DEPLOY_API}" -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}')
+done < <(kubectl -n "${NAMESPACE}" get pods -l "app.kubernetes.io/name=${DEPLOY_API}" --field-selector=status.phase=Running -o jsonpath='{range .items[?(!.metadata.deletionTimestamp)]}{.metadata.name}{"\n"}{end}')
 
 if [ ${#ACTIVE_PODS[@]} -eq 0 ]; then
     echo "WARNING: No running pods found for deployment/${DEPLOY_API}."
 else
+    WARMED_COUNT=0
     for pod in "${ACTIVE_PODS[@]}"; do
+        # Verify pod is still present and not terminating
+        if ! kubectl -n "${NAMESPACE}" get pod "${pod}" >/dev/null 2>&1; then
+            echo "Notice: Pod ${pod} is no longer running, skipping cache warming."
+            continue
+        fi
+
+        is_terminating=$(kubectl -n "${NAMESPACE}" get pod "${pod}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || true)
+        if [ -n "${is_terminating}" ]; then
+            echo "Notice: Pod ${pod} is terminating, skipping cache warming."
+            continue
+        fi
+
         echo "Configuring caches on pod ${pod}..."
-        kubectl -n "${NAMESPACE}" exec "${pod}" -c "${CONTAINER_API}" -- php artisan optimize
+        if ! kubectl -n "${NAMESPACE}" exec "${pod}" -c "${CONTAINER_API}" -- php artisan optimize; then
+            echo "Warning: Could not optimize cache on pod ${pod} (it may have terminated or restarted)."
+            continue
+        fi
 
         # Check if scramble:cache command is registered in this service
         if kubectl -n "${NAMESPACE}" exec "${pod}" -c "${CONTAINER_API}" -- php artisan list 2>/dev/null | grep -q "scramble:cache"; then
             echo "Warming OpenAPI documentation cache on pod ${pod} (scramble:cache)..."
-            kubectl -n "${NAMESPACE}" exec "${pod}" -c "${CONTAINER_API}" -- php artisan scramble:cache
+            kubectl -n "${NAMESPACE}" exec "${pod}" -c "${CONTAINER_API}" -- php artisan scramble:cache 2>&1 || true
         fi
+
+        WARMED_COUNT=$((WARMED_COUNT + 1))
     done
-    echo "✔ Multi-replica cache warming complete across ${#ACTIVE_PODS[@]} pod(s)."
+    echo "✔ Multi-replica cache warming complete across ${WARMED_COUNT} active pod(s)."
 fi
 
 # ------------------------------------------------------------------------------
