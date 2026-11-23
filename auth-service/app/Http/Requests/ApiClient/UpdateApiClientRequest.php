@@ -25,6 +25,7 @@ class UpdateApiClientRequest extends FormRequest
         return [
             'name' => ['sometimes', 'string', 'max:100'],
             'client_type' => ['sometimes', 'string', 'in:web,pos,mobile,server,first_party,public,confidential,other'],
+            'uuid' => ['sometimes', 'string', 'uuid'],
             'is_active' => ['sometimes', 'boolean'],
         ];
     }

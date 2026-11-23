@@ -25,6 +25,7 @@ class StoreApiClientRequest extends FormRequest
         return [
             'name' => ['required', 'string', 'max:100'],
             'client_type' => ['required', 'string', 'in:web,pos,mobile,server,first_party,public,confidential,other'],
+            'uuid' => ['nullable', 'string', 'uuid', 'unique:api_clients,uuid'],
             'client_key' => ['nullable', 'string', 'max:64', 'unique:api_clients,client_key'],
             'is_active' => ['nullable', 'boolean'],
         ];

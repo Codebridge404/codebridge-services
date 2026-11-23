@@ -3,34 +3,7 @@
 namespace App\Models\Security;
 
 use App\Models\Auth\User;
-use App\Models\Organization\Tenant;
-use App\Models\System\Role;
-use App\Models\Organization\Outlet;
-use App\Models\Organization\Department;
-use App\Models\Organization\Employee;
-use App\Models\Organization\Supplier;
-use App\Models\Crm\Customer;
-use App\Models\Security\SecurityEvent;
-use App\Models\Security\ApiKey;
-use App\Models\Security\AuditLog;
-use App\Models\Security\NotificationProvider;
 use App\Models\Auth\UserSession;
-use App\Models\Auth\RefreshToken;
-use App\Models\Auth\PasskeyCredential;
-use App\Models\System\UserRole;
-use App\Models\System\Permission;
-use App\Models\Organization\TenantUser;
-use App\Models\Organization\TenantModule;
-use App\Models\Organization\TenantSubscription;
-use App\Models\Organization\TenantUserOutlet;
-use App\Models\Auth\UserInvitation;
-use App\Models\Auth\UserPosPin;
-use App\Models\Crm\DigitalVoucher;
-use App\Models\Crm\StoreCreditInvoice;
-use App\Models\Security\ApiRequestLog;
-use App\Models\Meeting\Meeting;
-use App\Models\Meeting\MeetingRoom;
-
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -81,10 +54,10 @@ class ApiClient extends Model
     public static function generateClientKey(?string $clientType = 'app'): string
     {
         $typeSlug = Str::slug($clientType ?: 'app', '_');
-        $prefix = 'ck_' . ($typeSlug ? $typeSlug . '_' : '');
+        $prefix = 'ck_'.($typeSlug ? $typeSlug.'_' : '');
 
         do {
-            $key = substr($prefix . Str::random(32), 0, 64);
+            $key = substr($prefix.Str::random(32), 0, 64);
         } while (static::where('client_key', $key)->exists());
 
         return $key;
@@ -99,6 +72,28 @@ class ApiClient extends Model
     }
 
     /**
+     * Fast indexed lookup by primary integer ID or unique UUID.
+     * Directly utilizes B-Tree indexes (PRIMARY or api_clients_uuid_unique)
+     * avoiding full table scans caused by loose type OR queries.
+     *
+     * @param  array<int, string>  $withCount
+     */
+    public static function findByIdOrUuid(string|int $identifier, array $withCount = []): ?self
+    {
+        $query = static::query();
+
+        if (! empty($withCount)) {
+            $query->withCount($withCount);
+        }
+
+        if (is_numeric($identifier)) {
+            return $query->where('id', (int) $identifier)->first();
+        }
+
+        return $query->where('uuid', (string) $identifier)->first();
+    }
+
+    /**
      * User sessions associated with this client.
      */
     public function userSessions(): HasMany
@@ -106,4 +101,3 @@ class ApiClient extends Model
         return $this->hasMany(UserSession::class, 'api_client_id');
     }
 }
-

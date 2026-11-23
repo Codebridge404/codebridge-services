@@ -43,7 +43,7 @@ class ApiClientController extends Controller
     {
         $validated = $request->validated();
 
-        $clientKey = !empty($validated['client_key'])
+        $clientKey = ! empty($validated['client_key'])
             ? $validated['client_key']
             : ApiClient::generateClientKey($validated['client_type']);
 
@@ -75,12 +75,9 @@ class ApiClientController extends Controller
      */
     public function show(string $id): JsonResponse
     {
-        $client = ApiClient::where('id', $id)
-            ->orWhere('uuid', $id)
-            ->withCount('userSessions')
-            ->first();
+        $client = ApiClient::findByIdOrUuid($id, ['userSessions']);
 
-        if (!$client) {
+        if (! $client) {
             return $this->notFoundResponse('API client not found.');
         }
 
@@ -96,13 +93,14 @@ class ApiClientController extends Controller
      */
     public function update(UpdateApiClientRequest $request, string $id): JsonResponse
     {
-        $client = ApiClient::where('id', $id)->orWhere('uuid', $id)->first();
+        $client = ApiClient::findByIdOrUuid($id);
 
-        if (!$client) {
+        if (! $client) {
             return $this->notFoundResponse('API client not found.');
         }
 
         $validated = $request->validated();
+        unset($validated['uuid']);
         $client->update($validated);
 
         $this->recordAuditLog(
@@ -126,13 +124,13 @@ class ApiClientController extends Controller
      */
     public function toggle(string $id): JsonResponse
     {
-        $client = ApiClient::where('id', $id)->orWhere('uuid', $id)->first();
+        $client = ApiClient::findByIdOrUuid($id);
 
-        if (!$client) {
+        if (! $client) {
             return $this->notFoundResponse('API client not found.');
         }
 
-        $client->update(['is_active' => !$client->is_active]);
+        $client->update(['is_active' => ! $client->is_active]);
 
         $this->recordAuditLog(
             action: 'toggle',
@@ -140,7 +138,7 @@ class ApiClientController extends Controller
             entityType: ApiClient::class,
             entityId: (string) $client->id,
             payload: ['is_active' => $client->is_active],
-            details: "API Client '{$client->name}' " . ($client->is_active ? 'activated' : 'deactivated')
+            details: "API Client '{$client->name}' ".($client->is_active ? 'activated' : 'deactivated')
         );
 
         return $this->successResponse(
@@ -155,9 +153,9 @@ class ApiClientController extends Controller
      */
     public function regenerateKey(string $id): JsonResponse
     {
-        $client = ApiClient::where('id', $id)->orWhere('uuid', $id)->first();
+        $client = ApiClient::findByIdOrUuid($id);
 
-        if (!$client) {
+        if (! $client) {
             return $this->notFoundResponse('API client not found.');
         }
 
@@ -184,9 +182,9 @@ class ApiClientController extends Controller
      */
     public function destroy(string $id): JsonResponse
     {
-        $client = ApiClient::where('id', $id)->orWhere('uuid', $id)->first();
+        $client = ApiClient::findByIdOrUuid($id);
 
-        if (!$client) {
+        if (! $client) {
             return $this->notFoundResponse('API client not found.');
         }
 

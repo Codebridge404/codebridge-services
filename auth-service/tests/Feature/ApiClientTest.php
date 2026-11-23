@@ -232,4 +232,47 @@ class ApiClientTest extends TestCase
         $this->assertEquals('original_key_111', $client->client_key);
         $this->assertEquals('original_key_111', $response->json('data.client_key'));
     }
+
+    public function test_admin_can_interact_with_api_client_via_uuid(): void
+    {
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
+        Sanctum::actingAs($user, ['*']);
+
+        $client = ApiClient::create([
+            'name' => 'UUID Target Client',
+            'client_type' => 'web',
+            'client_key' => 'uuid_target_client_key',
+        ]);
+
+        $this->assertNotEmpty($client->uuid);
+
+        // Show via UUID
+        $this->getJson("/api/v1/api-clients/{$client->uuid}")
+            ->assertStatus(200)
+            ->assertJsonPath('data.uuid', $client->uuid)
+            ->assertJsonPath('data.name', 'UUID Target Client');
+
+        // Update via UUID with valid UUID in body
+        $this->putJson("/api/v1/api-clients/{$client->uuid}", [
+            'name' => 'Renamed Via UUID',
+            'uuid' => $client->uuid,
+        ])->assertStatus(200);
+
+        $client->refresh();
+        $this->assertEquals('Renamed Via UUID', $client->name);
+
+        // Toggle via UUID
+        $this->putJson("/api/v1/api-clients/{$client->uuid}/toggle")
+            ->assertStatus(200)
+            ->assertJsonPath('data.is_active', false);
+
+        // Regenerate key via UUID
+        $this->postJson("/api/v1/api-clients/{$client->uuid}/regenerate-key")
+            ->assertStatus(200);
+
+        // Reject invalid UUID format in update
+        $this->putJson("/api/v1/api-clients/{$client->uuid}", [
+            'uuid' => 'not-a-valid-uuid-format',
+        ])->assertStatus(422)->assertJsonValidationErrors(['uuid']);
+    }
 }
