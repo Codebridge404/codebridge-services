@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Security\SecurityEvent;
 use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
@@ -33,10 +34,10 @@ class EnsureApiClient
             ? $clientKey
             : ($appKey ?? $clientKey);
 
-        if (!is_string($key) || $key === '' || strlen($key) > 100) {
+        if (! is_string($key) || $key === '' || strlen($key) > 100) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\Security\SecurityEvent::record(
+                    SecurityEvent::record(
                         eventType: 'app_key_missing',
                         ruleCode: 'SEC_APP_KEY_REQUIRED',
                         summary: 'API request rejected: missing or invalid X-App-Key header format',
@@ -60,14 +61,29 @@ class EnsureApiClient
         $hashedKey = hash('sha256', $key);
 
         $client = DB::table('api_clients')
-            ->where('client_key', $hashedKey)
+            ->where(function ($query) use ($hashedKey, $key) {
+                $query->where('client_key', $hashedKey)
+                    ->orWhere('client_key', $key);
+            })
             ->where('is_active', true)
             ->first();
 
-        if (!$client || !hash_equals((string) $client->client_key, $hashedKey)) {
+        $matched = false;
+        if ($client) {
+            $dbKey = (string) $client->client_key;
+            $isDbKeyHashed = strlen($dbKey) === 64 && ctype_xdigit($dbKey);
+
+            if ($isDbKeyHashed) {
+                $matched = hash_equals($dbKey, $hashedKey);
+            } else {
+                $matched = hash_equals($dbKey, $key);
+            }
+        }
+
+        if (! $client || ! $matched) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\Security\SecurityEvent::record(
+                    SecurityEvent::record(
                         eventType: 'app_key_invalid',
                         ruleCode: 'SEC_APP_KEY_INVALID',
                         summary: 'API request rejected: invalid or disabled application client key',

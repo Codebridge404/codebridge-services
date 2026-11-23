@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\Security\ApiClient;
+use App\Models\Security\SecurityEvent;
 use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
@@ -17,7 +18,7 @@ class ApiClientMiddleware
     /**
      * Handle an incoming request with an X-Client-Key or X-App-Key header.
      *
-     * @param  \Closure(Request): (Response)  $next
+     * @param  Closure(Request): (Response)  $next
      * @param  string  $mode  'optional' or 'required'
      */
     public function handle(Request $request, Closure $next, string $mode = 'optional'): Response
@@ -31,7 +32,7 @@ class ApiClientMiddleware
             if ($mode === 'required') {
                 try {
                     if (SchemaGuard::hasTable('security_events')) {
-                        \App\Models\Security\SecurityEvent::record(
+                        SecurityEvent::record(
                             eventType: 'app_key_missing',
                             ruleCode: 'SEC_CLIENT_KEY_MISSING',
                             summary: 'Missing API Client Key in required mode',
@@ -42,7 +43,8 @@ class ApiClientMiddleware
                             statusCode: 401
                         );
                     }
-                } catch (\Throwable) {}
+                } catch (\Throwable) {
+                }
 
                 return response()->json([
                     'status' => 'error',
@@ -66,14 +68,25 @@ class ApiClientMiddleware
         $rawKey = trim((string) $rawKey);
         $hashedKey = hash('sha256', $rawKey);
 
-        $client = ApiClient::where('client_key', $hashedKey)
-            ->orWhere('uuid', $rawKey)
-            ->first();
+        $client = ApiClient::where(function ($query) use ($hashedKey, $rawKey) {
+            $query->where('client_key', $hashedKey)
+                ->orWhere('client_key', $rawKey)
+                ->orWhere('uuid', $rawKey);
+        })->first();
 
-        if (!$client) {
+        // Reject raw stored SHA-256 hash if DB key is hashed
+        if ($client) {
+            $dbKey = (string) $client->client_key;
+            $isDbKeyHashed = strlen($dbKey) === 64 && ctype_xdigit($dbKey);
+            if ($isDbKeyHashed && ! hash_equals($dbKey, $hashedKey) && ! hash_equals((string) $client->uuid, $rawKey)) {
+                $client = null;
+            }
+        }
+
+        if (! $client) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\Security\SecurityEvent::record(
+                    SecurityEvent::record(
                         eventType: 'app_key_invalid',
                         ruleCode: 'SEC_INVALID_CLIENT_KEY',
                         summary: 'Invalid API client key',
@@ -85,7 +98,8 @@ class ApiClientMiddleware
                         statusCode: 401
                     );
                 }
-            } catch (\Throwable) {}
+            } catch (\Throwable) {
+            }
 
             return response()->json([
                 'status' => 'error',
@@ -94,10 +108,10 @@ class ApiClientMiddleware
             ], 401);
         }
 
-        if (!$client->is_active) {
+        if (! $client->is_active) {
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\Security\SecurityEvent::record(
+                    SecurityEvent::record(
                         eventType: 'app_key_disabled',
                         ruleCode: 'SEC_CLIENT_INACTIVE',
                         summary: 'Deactivated API client attempted access',
@@ -108,7 +122,8 @@ class ApiClientMiddleware
                         statusCode: 401
                     );
                 }
-            } catch (\Throwable) {}
+            } catch (\Throwable) {
+            }
 
             return response()->json([
                 'status' => 'error',
@@ -124,4 +139,3 @@ class ApiClientMiddleware
         return $next($request);
     }
 }
-

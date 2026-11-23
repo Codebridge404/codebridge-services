@@ -2,9 +2,10 @@
 
 namespace Tests\Feature;
 
-use App\Models\Security\ApiClient;
 use App\Models\Auth\User;
+use App\Models\Security\ApiClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
 use Tests\TestCase;
 
 class EnsureApiClientTest extends TestCase
@@ -98,7 +99,7 @@ class EnsureApiClientTest extends TestCase
 
         $user = User::factory()->create([
             'email' => 'terminal.cashier@sunnycafe.kh',
-            'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
+            'password' => Hash::make('Password123!'),
         ]);
 
         $response = $this->withHeader('X-App-Key', $plainKey)
@@ -123,7 +124,7 @@ class EnsureApiClientTest extends TestCase
 
         $user = User::factory()->create([
             'email' => 'courier@sunnycafe.kh',
-            'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
+            'password' => Hash::make('Password123!'),
         ]);
 
         $response = $this->withoutHeader('X-App-Key')
@@ -149,7 +150,7 @@ class EnsureApiClientTest extends TestCase
 
         $user = User::factory()->create([
             'email' => 'kiosk.staff@sunnycafe.kh',
-            'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
+            'password' => Hash::make('Password123!'),
         ]);
 
         $response = $this->withHeader('X-App-Key', $plainKey)
@@ -182,7 +183,7 @@ class EnsureApiClientTest extends TestCase
 
         $user = User::factory()->create([
             'email' => 'admin.frontend@sunnycafe.kh',
-            'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
+            'password' => Hash::make('Password123!'),
         ]);
 
         // Caller sends plain public key in X-App-Key header
@@ -210,7 +211,7 @@ class EnsureApiClientTest extends TestCase
 
         $user = User::factory()->create([
             'email' => 'admin.hashcheck@sunnycafe.kh',
-            'password' => \Illuminate\Support\Facades\Hash::make('Password123!'),
+            'password' => Hash::make('Password123!'),
         ]);
 
         // Sending raw stored SHA-256 hash in X-App-Key is REJECTED with 401 Invalid app key
@@ -255,5 +256,29 @@ class EnsureApiClientTest extends TestCase
             ->assertJsonPath('status', 'healthy')
             ->assertJsonPath('service', 'auth-service');
     }
-}
 
+    public function test_plaintext_generated_client_key_authenticates_successfully(): void
+    {
+        $plainKey = 'ck_first_party_x89gFswps3UWLKkyK8U19GP5GzO2Mqav';
+        $client = ApiClient::create([
+            'name' => 'Web Admin Plain Key Test',
+            'client_type' => 'first_party',
+            'client_key' => $plainKey,
+            'is_active' => true,
+        ]);
+
+        $user = User::factory()->create([
+            'email' => 'admin.plainkey@sunnycafe.kh',
+            'password' => Hash::make('Password123!'),
+        ]);
+
+        $response = $this->withHeader('X-App-Key', $plainKey)
+            ->postJson('/api/v1/auth/login', [
+                'email' => $user->email,
+                'password' => 'Password123!',
+            ]);
+
+        $response->assertStatus(200)
+            ->assertJsonStructure(['access_token', 'token_type']);
+    }
+}
