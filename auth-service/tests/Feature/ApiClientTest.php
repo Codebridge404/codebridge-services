@@ -2,8 +2,9 @@
 
 namespace Tests\Feature;
 
-use App\Models\Security\ApiClient;
 use App\Models\Auth\User;
+use App\Models\Auth\UserSession;
+use App\Models\Security\ApiClient;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -196,7 +197,7 @@ class ApiClientTest extends TestCase
         ]);
 
         // Attach a user session
-        \App\Models\Auth\UserSession::create([
+        UserSession::create([
             'user_id' => $user->id,
             'api_client_id' => $client->id,
             'tenant_id' => $user->tenant_id,
@@ -209,5 +210,59 @@ class ApiClientTest extends TestCase
             ->assertJsonFragment(['status' => 'error'])
             ->assertJsonFragment(['code' => 'VALIDATION_ERROR']);
     }
-}
 
+    public function test_admin_can_update_client_key_explicitly(): void
+    {
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
+        Sanctum::actingAs($user, ['*']);
+
+        $client = ApiClient::create([
+            'name' => 'Custom Key Client',
+            'client_type' => 'pos',
+            'client_key' => 'old_key_val_111',
+        ]);
+
+        $response = $this->putJson("/api/v1/api-clients/{$client->id}", [
+            'client_key' => 'ck_first_party_custom_new_key_123',
+        ])->assertStatus(200);
+
+        $this->assertEquals('ck_first_party_custom_new_key_123', $response->json('data.client_key'));
+        $this->assertDatabaseHas('api_clients', [
+            'id' => $client->id,
+            'client_key' => 'ck_first_party_custom_new_key_123',
+        ]);
+    }
+
+    public function test_validation_errors_on_invalid_update_payload(): void
+    {
+        $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
+        Sanctum::actingAs($user, ['*']);
+
+        $client1 = ApiClient::create([
+            'name' => 'Client One',
+            'client_type' => 'web',
+            'client_key' => 'client_one_key',
+        ]);
+
+        ApiClient::create([
+            'name' => 'Client Two',
+            'client_type' => 'web',
+            'client_key' => 'client_two_key',
+        ]);
+
+        // Empty string client_key when provided
+        $this->putJson("/api/v1/api-clients/{$client1->id}", [
+            'client_key' => '',
+        ])->assertStatus(422)->assertJsonValidationErrors(['client_key']);
+
+        // Duplicate client_key taken by client2
+        $this->putJson("/api/v1/api-clients/{$client1->id}", [
+            'client_key' => 'client_two_key',
+        ])->assertStatus(422)->assertJsonValidationErrors(['client_key']);
+
+        // Same client_key ignored on own client
+        $this->putJson("/api/v1/api-clients/{$client1->id}", [
+            'client_key' => 'client_one_key',
+        ])->assertStatus(200);
+    }
+}

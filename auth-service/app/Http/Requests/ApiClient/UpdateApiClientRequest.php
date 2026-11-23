@@ -2,7 +2,10 @@
 
 namespace App\Http\Requests\ApiClient;
 
+use App\Models\Security\ApiClient;
+use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class UpdateApiClientRequest extends FormRequest
 {
@@ -17,15 +20,26 @@ class UpdateApiClientRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
+        $clientId = $this->route('id');
+        $client = is_numeric($clientId)
+            ? ApiClient::find($clientId)
+            : ApiClient::where('uuid', $clientId)->first();
+
         return [
             'name' => ['sometimes', 'string', 'max:100'],
-            'client_type' => ['sometimes', 'string', 'in:web,pos,mobile,server,other'],
+            'client_type' => ['sometimes', 'string', 'in:web,pos,mobile,server,first_party,public,confidential,other'],
+            'client_key' => [
+                'sometimes',
+                'required',
+                'string',
+                'max:64',
+                Rule::unique('api_clients', 'client_key')->ignore($client?->id),
+            ],
             'is_active' => ['sometimes', 'boolean'],
         ];
     }
 }
-

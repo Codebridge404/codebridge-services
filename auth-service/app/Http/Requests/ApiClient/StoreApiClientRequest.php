@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\ApiClient;
 
+use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 
 class StoreApiClientRequest extends FormRequest
@@ -17,16 +18,15 @@ class StoreApiClientRequest extends FormRequest
     /**
      * Get the validation rules that apply to the request.
      *
-     * @return array<string, \Illuminate\Contracts\Validation\ValidationRule|array<mixed>|string>
+     * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
         return [
             'name' => ['required', 'string', 'max:100'],
-            'client_type' => ['required', 'string', 'in:web,pos,mobile,server,other'],
+            'client_type' => ['required', 'string', 'in:web,pos,mobile,server,first_party,public,confidential,other'],
             'client_key' => ['nullable', 'string', 'max:64', 'unique:api_clients,client_key'],
             'is_active' => ['nullable', 'boolean'],
         ];
     }
 }
-
