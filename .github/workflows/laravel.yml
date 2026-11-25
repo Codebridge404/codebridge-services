@@ -15,7 +15,7 @@ jobs:
       auth: ${{ steps.filter.outputs.auth }}
       operations: ${{ steps.filter.outputs.operations }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -31,7 +31,7 @@ jobs:
     if: needs.changes.outputs.auth == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
@@ -65,7 +65,7 @@ jobs:
     if: needs.changes.outputs.operations == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: shivammathur/setup-php@v2
         with:
