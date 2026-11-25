@@ -267,6 +267,7 @@ data:
         map $uri $is_exempt_api {
             default 0;
             ~*^/api/v1/health$ 1;
+            ~*^/api/v1/maintenance/status$ 1;
             ~*^/health$ 1;
             ~*^/up$ 1;
             ~*^/docs 1;
@@ -515,6 +516,10 @@ data:
                 include /etc/nginx/fastcgi_php.conf;
             }
             location /api/v1/platform-modules {
+                fastcgi_pass auth_service;
+                include /etc/nginx/fastcgi_php.conf;
+            }
+            location = /api/v1/maintenance/status {
                 fastcgi_pass auth_service;
                 include /etc/nginx/fastcgi_php.conf;
             }

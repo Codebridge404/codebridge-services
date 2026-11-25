@@ -131,8 +131,8 @@ class EnsureApiClient
             return true;
         }
 
-        // System health probes
-        if ($request->is('health') || $request->is('api/v1/health') || $request->is('up')) {
+        // System health probes & public maintenance banner status
+        if ($request->is('health') || $request->is('api/v1/health') || $request->is('api/v1/maintenance/status') || $request->is('up')) {
             return true;
         }
 
