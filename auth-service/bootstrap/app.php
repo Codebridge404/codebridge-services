@@ -4,6 +4,7 @@ use App\Http\Middleware\ApiClientMiddleware;
 use App\Http\Middleware\ApiKeyMiddleware;
 use App\Http\Middleware\AuthenticateJwt;
 use App\Http\Middleware\AuthorizeMeetingAccess;
+use App\Http\Middleware\CheckMaintenanceMode;
 use App\Http\Middleware\EnsureApiClient;
 use App\Http\Middleware\EnsureRole;
 use App\Http\Middleware\EnsureWorkspace;
@@ -51,6 +52,9 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api(prepend: [
             EnsureApiClient::class,
             AuthenticateJwt::class,
+        ]);
+        $middleware->api(append: [
+            CheckMaintenanceMode::class,
         ]);
         $middleware->alias([
             'role' => EnsureRole::class,

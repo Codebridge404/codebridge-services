@@ -138,12 +138,6 @@ class AuthenticateJwt
                             $pat = PersonalAccessToken::where('id', $session->personal_access_token_id)
                                 ->where('tokenable_id', $user->id)
                                 ->first();
-                        } elseif ($session->device_name) {
-                            $pat = PersonalAccessToken::where('tokenable_id', $user->id)
-                                ->whereIn('tokenable_type', [get_class($user), 'App\Models\User', 'user'])
-                                ->where('name', $session->device_name)
-                                ->latest('id')
-                                ->first();
                         }
 
                         if ($pat) {

@@ -374,6 +374,8 @@ class DeviceSessionService
             $entry = [
                 'id' => $device->uuid,
                 'device_uuid' => $device->uuid,
+                'user_id' => $user->id,
+                'account_email' => $user->email,
                 'name' => $device->device_name,
                 'device_name' => $device->device_name,
                 'device_type' => $device->device_type,
@@ -381,7 +383,9 @@ class DeviceSessionService
                 'platform' => $device->platform ?? 'Unknown OS',
                 'ip_address' => $device->last_ip ?? '127.0.0.1',
                 'last_ip' => $device->last_ip ?? '127.0.0.1',
+                'last_ip_address' => $device->last_ip ?? '127.0.0.1',
                 'user_agent' => $activeSessions->first()?->user_agent,
+                'status' => 'Active',
                 'is_current' => $isCurrentDevice,
                 'is_active' => true,
                 'active_sessions_count' => $activeSessions->count(),
@@ -469,10 +473,14 @@ class DeviceSessionService
             $browser = $token->browser ?? $this->detector->parseBrowser($token->user_agent);
             $platform = $token->platform ?? $this->detector->parsePlatform($token->user_agent);
             $deviceName = $token->device_name ?? $this->detector->parseDeviceName($token->user_agent);
-            $isCurrent = $currentPatId !== null && (string) $token->id === (string) $currentPatId;
+            $isCurrent = $currentSession === null
+                && $currentPatId !== null
+                && (string) $token->id === (string) $currentPatId;
 
             $entry = [
                 'id' => (string) $token->id,
+                'user_id' => $user->id,
+                'account_email' => $user->email,
                 'name' => $token->name,
                 'device_name' => $deviceName,
                 'device_type' => $this->inferDeviceType($token->user_agent, (string) $deviceName),
@@ -480,7 +488,9 @@ class DeviceSessionService
                 'platform' => $platform,
                 'ip_address' => $token->ip_address ?? '127.0.0.1',
                 'last_ip' => $token->ip_address ?? '127.0.0.1',
+                'last_ip_address' => $token->ip_address ?? '127.0.0.1',
                 'user_agent' => $token->user_agent,
+                'status' => 'Active',
                 'is_current' => $isCurrent,
                 'is_active' => true,
                 'active_sessions_count' => 1,

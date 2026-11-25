@@ -1,10 +1,11 @@
 <?php
 
+use App\Http\Controllers\HealthController;
 use App\Http\Controllers\Meeting\MeetingController;
 use App\Http\Controllers\Meeting\MeetingIssueController;
-use App\Http\Controllers\System\PlatformModuleController;
 use App\Http\Controllers\Organization\TenantController;
-use App\Http\Controllers\HealthController;
+use App\Http\Controllers\System\MaintenanceController;
+use App\Http\Controllers\System\PlatformModuleController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -14,6 +15,7 @@ Route::prefix('v1')->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::get('/health', [HealthController::class, 'health']);
+    Route::get('/maintenance/status', [MaintenanceController::class, 'publicStatus']);
 
     /*
     |--------------------------------------------------------------------------
@@ -32,7 +34,7 @@ Route::prefix('v1')->group(function () {
     | Authentication & Identity Routes
     |--------------------------------------------------------------------------
     */
-    require __DIR__ . '/api/auth.php';
+    require __DIR__.'/api/auth.php';
 
     /*
     |--------------------------------------------------------------------------
@@ -49,25 +51,25 @@ Route::prefix('v1')->group(function () {
     |--------------------------------------------------------------------------
     */
     Route::middleware(['auth:sanctum', 'pos_scope', 'workspace'])->group(function () {
-        require __DIR__ . '/api/users.php';
-        require __DIR__ . '/api/roles.php';
-        require __DIR__ . '/api/permissions.php';
-        require __DIR__ . '/api/pos_pins.php';
-        require __DIR__ . '/api/tenants.php';
-        require __DIR__ . '/api/api_keys.php';
-        require __DIR__ . '/api/api_clients.php';
-        require __DIR__ . '/api/organization.php';
-        require __DIR__ . '/api/notification_providers.php';
-        require __DIR__ . '/api/crm.php';
-        require __DIR__ . '/api/security_events.php';
-        require __DIR__ . '/api/request_logs.php';
-        require __DIR__ . '/api/refresh_tokens.php';
-        require __DIR__ . '/api/user_sessions.php';
-        require __DIR__ . '/api/telegram_alerts.php';
+        require __DIR__.'/api/users.php';
+        require __DIR__.'/api/roles.php';
+        require __DIR__.'/api/permissions.php';
+        require __DIR__.'/api/pos_pins.php';
+        require __DIR__.'/api/tenants.php';
+        require __DIR__.'/api/api_keys.php';
+        require __DIR__.'/api/api_clients.php';
+        require __DIR__.'/api/organization.php';
+        require __DIR__.'/api/notification_providers.php';
+        require __DIR__.'/api/crm.php';
+        require __DIR__.'/api/security_events.php';
+        require __DIR__.'/api/request_logs.php';
+        require __DIR__.'/api/refresh_tokens.php';
+        require __DIR__.'/api/user_sessions.php';
+        require __DIR__.'/api/telegram_alerts.php';
         Route::middleware('meeting_access')->group(function () {
-            require __DIR__ . '/api/meetings.php';
+            require __DIR__.'/api/meetings.php';
         });
-        require __DIR__ . '/api/super_admin.php';
-        require __DIR__ . '/api/admin.php';
+        require __DIR__.'/api/super_admin.php';
+        require __DIR__.'/api/admin.php';
     });
 });

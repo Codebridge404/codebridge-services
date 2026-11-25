@@ -65,10 +65,15 @@ class DeviceSessionGroupingTest extends TestCase
 
         $this->assertNotNull($macDevice);
         $this->assertNotNull($iphoneDevice);
+        $this->assertEquals($user->email, $macDevice['account_email']);
+        $this->assertEquals('Active', $macDevice['status']);
+        $this->assertEquals('187.14.114.16', $macDevice['last_ip_address']);
         $this->assertTrue($macDevice['is_current']);
         $this->assertFalse($iphoneDevice['is_current']);
         $this->assertEquals('187.14.114.16', $macDevice['ip_address']);
         $this->assertEquals('192.0.2.25', $iphoneDevice['ip_address']);
+        $this->assertTrue($macDevice['sessions'][0]['is_current']);
+        $this->assertFalse($iphoneDevice['sessions'][0]['is_current']);
     }
 
     public function test_same_installation_relogin_with_changed_ip_updates_single_device_and_retains_login_history(): void

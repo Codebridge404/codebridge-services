@@ -1,9 +1,10 @@
 <?php
 
+use App\Http\Controllers\Organization\TenantController;
+use App\Http\Controllers\System\MaintenanceController;
 use App\Http\Controllers\System\PlatformModuleController;
 use App\Http\Controllers\System\SupportController;
 use App\Http\Controllers\System\TelemetryController;
-use App\Http\Controllers\Organization\TenantController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -40,4 +41,8 @@ Route::middleware('role:super_admin')->prefix('super-admin')->group(function () 
     Route::post('/platform-modules', [PlatformModuleController::class, 'store']);
     Route::put('/platform-modules/{id}', [PlatformModuleController::class, 'update']);
     Route::delete('/platform-modules/{id}', [PlatformModuleController::class, 'destroy']);
+
+    // Platform Maintenance Mode & Scheduled Downtime
+    Route::get('/maintenance', [MaintenanceController::class, 'show']);
+    Route::put('/maintenance', [MaintenanceController::class, 'update']);
 });
