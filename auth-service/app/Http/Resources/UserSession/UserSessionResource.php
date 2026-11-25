@@ -19,7 +19,7 @@ class UserSessionResource extends JsonResource
     public function toArray(Request $request): array
     {
         $now = now();
-        $isRevoked = !empty($this->revoked_at);
+        $isRevoked = ! empty($this->revoked_at);
         $isExpired = $this->expires_at ? $this->expires_at->isPast() : false;
 
         $status = 'active';
@@ -40,8 +40,10 @@ class UserSessionResource extends JsonResource
             'api_client_id' => $this->api_client_id,
             'client_name' => $this->apiClient?->name,
             'client_type' => $this->apiClient?->client_type,
-            'device_uuid' => $this->device_uuid,
+            'user_device_id' => $this->user_device_id,
+            'device_uuid' => $this->device?->uuid ?? $this->device_uuid,
             'device_name' => $this->device_name,
+            'login_ip' => $this->login_ip ?? $this->ip_address,
             'ip_address' => $this->ip_address,
             'user_agent' => $this->user_agent,
             'permissions' => $this->permissions ?? [],
@@ -57,4 +59,3 @@ class UserSessionResource extends JsonResource
         ];
     }
 }
-

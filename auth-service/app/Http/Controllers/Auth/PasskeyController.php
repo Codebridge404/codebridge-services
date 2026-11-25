@@ -5,11 +5,9 @@ namespace App\Http\Controllers\Auth;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\User\UserResource;
 use App\Models\Auth\PasskeyCredential;
-use App\Models\Auth\RefreshToken;
 use App\Models\Auth\User;
-use App\Models\Auth\UserSession;
 use App\Models\Security\ApiClient;
-use App\Services\DeviceDetectorService;
+use App\Services\DeviceSessionService;
 use App\Services\JwtService;
 use App\Services\PasskeyService;
 use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
@@ -199,38 +197,24 @@ class PasskeyController extends Controller
             }
         }
 
-        /** @var DeviceDetectorService $detector */
-        $detector = app(DeviceDetectorService::class);
-        $rawDevice = $request->device_name ?? $detector->parseDeviceName($request->userAgent());
-        $deviceName = substr($rawDevice ?: 'Web Browser', 0, 100);
-
         $sessionPermissions = method_exists($user, 'getAllPermissions')
             ? $user->getAllPermissions()->pluck('name')->values()->toArray()
             : [];
 
-        // Create enterprise UserSession
-        $userSession = UserSession::create([
-            'user_id' => $user->id,
-            'api_client_id' => $client->id,
-            'tenant_id' => $user->tenant_id,
-            'device_uuid' => $request->header('X-Device-Id') ?? $request->input('device_uuid'),
-            'device_name' => $deviceName,
-            'ip_address' => $request->ip(),
-            'user_agent' => substr($request->userAgent() ?? '', 0, 512),
-            'permissions' => array_values($sessionPermissions),
-            'expires_at' => now()->addDays(30),
-        ]);
+        $sessionBundle = app(DeviceSessionService::class)->createAuthenticatedSession(
+            user: $user,
+            client: $client,
+            request: $request,
+            tenantId: $user->tenant_id,
+            permissions: $sessionPermissions,
+            amr: ['passkey', 'user_verified'],
+            createPat: false
+        );
 
-        // Issue rotating refresh token
-        $rootPair = RefreshToken::issueRoot($userSession);
-        $refreshToken = $rootPair['credential'];
-
-        // Mint access JWT with sid = user_sessions.uuid and passkey assurance flag
-        $jwtToken = $this->jwtService->generateTokenForUser($user, [
-            'sid' => $userSession->uuid,
-            'client_id' => $client->uuid,
-            'amr' => ['passkey', 'user_verified'],
-        ]);
+        $userSession = $sessionBundle['session'];
+        $jwtToken = $sessionBundle['access_token'];
+        $refreshToken = $sessionBundle['refresh_token'];
+        $deviceCookie = $sessionBundle['cookie'];
 
         if ($user->tenant_id) {
             $tenant = DB::table('tenants')->where('id', $user->tenant_id)->first();
@@ -240,13 +224,14 @@ class PasskeyController extends Controller
             }
         }
 
-        return response()->json([
+        $response = response()->json([
             'status' => 'success',
             'message' => 'Passkey authentication successful.',
             'access_token' => $jwtToken,
             'refresh_token' => $refreshToken,
             'session_id' => $userSession->uuid,
             'session_uuid' => $userSession->uuid,
+            'device_id' => $sessionBundle['device']->uuid,
             'token_type' => 'Bearer',
             'expires_in' => $this->jwtService->getTtlSeconds(),
             'user' => new UserResource($user),
@@ -254,6 +239,12 @@ class PasskeyController extends Controller
             'Cache-Control' => 'no-store',
             'Pragma' => 'no-cache',
         ]);
+
+        if ($deviceCookie) {
+            $response->withCookie($deviceCookie);
+        }
+
+        return $response;
     }
 
     /**

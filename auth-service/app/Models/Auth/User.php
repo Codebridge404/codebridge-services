@@ -853,6 +853,14 @@ class User extends Authenticatable implements MustVerifyEmail
     }
 
     /**
+     * Get persistent recognized device installations for this user.
+     */
+    public function userDevices()
+    {
+        return $this->hasMany(UserDevice::class, 'user_id');
+    }
+
+    /**
      * Get user session families for this user.
      */
     public function userSessions()

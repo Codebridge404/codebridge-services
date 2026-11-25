@@ -16,11 +16,9 @@ use App\Http\Requests\Auth\TwoFactorSetupRequest;
 use App\Http\Resources\User\UserResource;
 use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
-use App\Models\Auth\RefreshToken;
 use App\Models\Auth\User;
-use App\Models\Auth\UserSession;
 use App\Models\Security\ApiClient;
-use App\Services\DeviceDetectorService;
+use App\Services\DeviceSessionService;
 use App\Services\JwtService;
 use App\Services\TwoFactorService;
 use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
@@ -302,37 +300,24 @@ class TwoFactorController extends Controller
             }
         }
 
-        /** @var DeviceDetectorService $detector */
-        $detector = app(DeviceDetectorService::class);
-        $deviceName = $request->input('device_name') ?? $detector->parseDeviceName($request->userAgent());
-
         $sessionPermissions = method_exists($user, 'getAllPermissions')
             ? $user->getAllPermissions()->pluck('name')->values()->toArray()
             : [];
 
-        // Create Enterprise UserSession
-        $userSession = UserSession::create([
-            'user_id' => $user->id,
-            'api_client_id' => $client->id,
-            'tenant_id' => $user->tenant_id,
-            'device_uuid' => $request->header('X-Device-Id') ?? $request->input('device_uuid'),
-            'device_name' => $deviceName,
-            'ip_address' => $request->ip(),
-            'user_agent' => substr($request->userAgent() ?? '', 0, 512),
-            'permissions' => array_values($sessionPermissions),
-            'expires_at' => now()->addDays(30),
-        ]);
+        $sessionBundle = app(DeviceSessionService::class)->createAuthenticatedSession(
+            user: $user,
+            client: $client,
+            request: $request,
+            tenantId: $user->tenant_id,
+            permissions: $sessionPermissions,
+            amr: ['pwd', 'mfa'],
+            createPat: false
+        );
 
-        // Issue root rotating refresh token
-        $rootPair = RefreshToken::issueRoot($userSession);
-        $refreshToken = $rootPair['credential'];
-
-        // Mint access JWT with sid = user_sessions.uuid and MFA AMR assurance
-        $jwtToken = $this->jwtService->generateTokenForUser($user, [
-            'sid' => $userSession->uuid,
-            'client_id' => $client->uuid,
-            'amr' => ['pwd', 'mfa'],
-        ]);
+        $userSession = $sessionBundle['session'];
+        $jwtToken = $sessionBundle['access_token'];
+        $refreshToken = $sessionBundle['refresh_token'];
+        $deviceCookie = $sessionBundle['cookie'];
 
         // Resolve workspace branding
         if ($user->tenant_id) {
@@ -361,7 +346,7 @@ class TwoFactorController extends Controller
             tenantId: $user->tenant_id
         );
 
-        return $this->successResponse(
+        $response = $this->successResponse(
             message: 'Two-factor authentication verified successfully.',
             headers: [
                 'Cache-Control' => 'no-store',
@@ -372,11 +357,18 @@ class TwoFactorController extends Controller
                 'refresh_token' => $refreshToken,
                 'session_id' => $userSession->uuid,
                 'session_uuid' => $userSession->uuid,
+                'device_id' => $sessionBundle['device']->uuid,
                 'token_type' => 'Bearer',
                 'expires_in' => $this->jwtService->getTtlSeconds(),
                 'user' => new UserResource($user),
             ]
         );
+
+        if ($deviceCookie) {
+            $response->withCookie($deviceCookie);
+        }
+
+        return $response;
     }
 
     /**

@@ -133,11 +133,18 @@ class AuthenticateJwt
                         $request->attributes->set('user_session', $session);
 
                         $inactivityDays = $user->session_inactivity_days ?: 180;
-                        $pat = PersonalAccessToken::where('tokenable_id', $user->id)
-                            ->whereIn('tokenable_type', [get_class($user), 'App\Models\User', 'user'])
-                            ->where('name', $session->device_name)
-                            ->latest('id')
-                            ->first();
+                        $pat = null;
+                        if ($session->personal_access_token_id) {
+                            $pat = PersonalAccessToken::where('id', $session->personal_access_token_id)
+                                ->where('tokenable_id', $user->id)
+                                ->first();
+                        } elseif ($session->device_name) {
+                            $pat = PersonalAccessToken::where('tokenable_id', $user->id)
+                                ->whereIn('tokenable_type', [get_class($user), 'App\Models\User', 'user'])
+                                ->where('name', $session->device_name)
+                                ->latest('id')
+                                ->first();
+                        }
 
                         if ($pat) {
                             $lastActive = $pat->last_used_at ? Carbon::parse($pat->last_used_at) : ($pat->created_at ? Carbon::parse($pat->created_at) : null);

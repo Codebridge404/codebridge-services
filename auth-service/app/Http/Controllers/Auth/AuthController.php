@@ -23,6 +23,7 @@ use App\Http\Responses\HttpStatus;
 use App\Http\Responses\ResponseCode;
 use App\Models\Auth\RefreshToken;
 use App\Models\Auth\User;
+use App\Models\Auth\UserDevice;
 use App\Models\Auth\UserPosPin;
 use App\Models\Auth\UserSession;
 use App\Models\Organization\Outlet;
@@ -33,6 +34,7 @@ use App\Models\Security\ApiClient;
 use App\Models\Security\SecurityEvent;
 use App\Notifications\VerifyEmailNotification;
 use App\Services\DeviceDetectorService;
+use App\Services\DeviceSessionService;
 use App\Services\ImageService;
 use App\Services\JwtService;
 use App\Services\PinService;
@@ -40,7 +42,6 @@ use App\Services\TwoFactorService;
 use App\Support\SchemaGuard;
 use Dedoc\Scramble\Attributes\Response as OpenApiResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -255,79 +256,25 @@ class AuthController extends Controller
             ? $user->getAllPermissions()->pluck('name')->values()->toArray()
             : [];
 
-        // Detect device telemetry
-        /** @var DeviceDetectorService $detector */
-        $detector = app(DeviceDetectorService::class);
-        $deviceName = $request->device_name ?? $detector->parseDeviceName($request->userAgent());
-        $browser = $detector->parseBrowser($request->userAgent());
-        $platform = $detector->parsePlatform($request->userAgent());
-        $location = $detector->parseLocation($request);
+        /** @var DeviceSessionService $deviceSessionService */
+        $deviceSessionService = app(DeviceSessionService::class);
+        $sessionBundle = $deviceSessionService->createAuthenticatedSession(
+            user: $user,
+            client: $client,
+            request: $request,
+            tenantId: $sessionTenantId,
+            permissions: $sessionPermissions,
+            amr: ['pwd'],
+            createPat: true
+        );
 
-        // Create Enterprise UserSession
-        $userSession = UserSession::create([
-            'user_id' => $user->id,
-            'api_client_id' => $client->id,
-            'tenant_id' => $sessionTenantId,
-            'device_uuid' => $request->header('X-Device-Id') ?? $request->input('device_uuid'),
-            'device_name' => $deviceName,
-            'ip_address' => $request->ip(),
-            'user_agent' => substr($request->userAgent() ?? '', 0, 512),
-            'permissions' => array_values($sessionPermissions),
-            'expires_at' => now()->addDays(30),
-        ]);
-
-        // Issue root rotating refresh token
-        $rootPair = RefreshToken::issueRoot($userSession);
-        $rotatingRefreshToken = $rootPair['credential'];
+        $userSession = $sessionBundle['session'];
+        $jwtToken = $sessionBundle['access_token'];
+        $refreshToken = $sessionBundle['refresh_token'];
+        $deviceCookie = $sessionBundle['cookie'];
 
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
-
-        // Generate Sanctum token with client device telemetry (scoped to full refresh session lifecycle)
-        $expiresAt = now()->addSeconds($jwtService->getRefreshTtlSeconds());
-        $tokenResult = $user->createToken($deviceName, ['*'], $expiresAt);
-        $jwtService->bindSession($tokenResult->accessToken);
-
-        // Mint access JWT with sid = user_sessions.uuid
-        $jwtToken = $jwtService->generateTokenForUser($user, [
-            'sid' => $userSession->uuid,
-            'client_id' => $client->uuid,
-        ]);
-        $refreshToken = $rotatingRefreshToken;
-
-        $tokenMetadata = [
-            'ip_address' => $request->ip(),
-            'user_agent' => substr($request->userAgent() ?? '', 0, 500),
-            'device_name' => $deviceName,
-            'last_used_at' => now(),
-        ];
-        if (SchemaGuard::hasColumn('personal_access_tokens', 'browser')) {
-            $tokenMetadata['browser'] = $browser;
-        }
-        if (SchemaGuard::hasColumn('personal_access_tokens', 'platform')) {
-            $tokenMetadata['platform'] = $platform;
-        }
-        if (SchemaGuard::hasColumn('personal_access_tokens', 'location') && ! empty($location)) {
-            $tokenMetadata['location'] = $location;
-        }
-
-        try {
-            DB::table('personal_access_tokens')
-                ->where('id', $tokenResult->accessToken->id)
-                ->update($tokenMetadata);
-        } catch (\Throwable $e) {
-            try {
-                DB::table('personal_access_tokens')
-                    ->where('id', $tokenResult->accessToken->id)
-                    ->update([
-                        'ip_address' => $request->ip(),
-                        'user_agent' => substr($request->userAgent() ?? '', 0, 500),
-                        'device_name' => $deviceName,
-                        'last_used_at' => now(),
-                    ]);
-            } catch (\Throwable $ignored) {
-            }
-        }
 
         // Resolve workspace branding
         if ($user->tenant_id) {
@@ -356,7 +303,7 @@ class AuthController extends Controller
             tenantId: $user->tenant_id
         );
 
-        return $this->successResponse(
+        $response = $this->successResponse(
             message: 'Login successful.',
             headers: [
                 'Cache-Control' => 'no-store',
@@ -367,11 +314,18 @@ class AuthController extends Controller
                 'refresh_token' => $refreshToken,
                 'session_id' => $userSession->uuid,
                 'session_uuid' => $userSession->uuid,
+                'device_id' => $sessionBundle['device']->uuid,
                 'token_type' => 'Bearer',
                 'expires_in' => $jwtService->getTtlSeconds(),
                 'user' => new UserResource($user),
             ]
         );
+
+        if ($deviceCookie) {
+            $response->withCookie($deviceCookie);
+        }
+
+        return $response;
     }
 
     /**
@@ -617,6 +571,7 @@ class AuthController extends Controller
             }
 
             $session = $rotated['session'];
+            $session->touchLastSeen($request->ip(), $request->userAgent(), force: true);
             $user = $session->user;
 
             if (! $user) {
@@ -758,7 +713,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Active Devices & Sessions Listing.
+     * Active Devices & Sessions Listing (grouped by recognized device installation).
      * GET /api/v1/auth/sessions
      */
     #[OpenApiResponse(status: 200, description: 'Sessions retrieved successfully', type: 'array{status: string, message: string, data: array<int, array{id: string, name: string, device_name: string, browser: string, platform: string, ip_address: ?string, user_agent: ?string, is_current: bool, last_used_at: ?string, created_at: ?string, location?: ?string}>}')]
@@ -766,48 +721,28 @@ class AuthController extends Controller
     {
         $user = $request->user();
         $currentTokenId = $user->currentAccessToken()?->id;
-
-        /** @var DeviceDetectorService $detector */
-        $detector = app(DeviceDetectorService::class);
-        $inactivityDays = $user->session_inactivity_days ?: 180;
-
-        $tokens = DB::table('personal_access_tokens')
-            ->where('tokenable_id', $user->id)
-            ->whereIn('tokenable_type', [get_class($user), 'App\Models\User', 'user'])
-            ->orderBy('last_used_at', 'desc')
-            ->get()
-            ->map(function ($token) use ($currentTokenId, $detector) {
-                $browser = $token->browser ?? $detector->parseBrowser($token->user_agent);
-                $platform = $token->platform ?? $detector->parsePlatform($token->user_agent);
-                $deviceName = $token->device_name ?? $detector->parseDeviceName($token->user_agent);
-                $location = $token->location ?? null;
-
-                $data = [
-                    'id' => (string) $token->id,
-                    'name' => $token->name,
-                    'device_name' => $deviceName,
-                    'browser' => $browser,
-                    'platform' => $platform,
-                    'ip_address' => $token->ip_address ?? '127.0.0.1',
-                    'user_agent' => $token->user_agent,
-                    'is_current' => (string) $token->id === (string) $currentTokenId,
-                    'last_used_at' => $token->last_used_at
-                        ? Carbon::parse($token->last_used_at)->toIso8601String()
-                        : ($token->created_at ? Carbon::parse($token->created_at)->toIso8601String() : null),
-                    'created_at' => $token->created_at
-                        ? Carbon::parse($token->created_at)->toIso8601String()
-                        : null,
-                ];
-
-                if (! empty($location)) {
-                    $data['location'] = $location;
+        $currentSession = $request->attributes->get('user_session');
+        if (! $currentSession instanceof UserSession) {
+            $bearer = $request->bearerToken();
+            if ($bearer && substr_count($bearer, '.') === 2) {
+                $payload = app(JwtService::class)->verify($bearer);
+                if (! empty($payload['sid']) && is_string($payload['sid'])) {
+                    $currentSession = UserSession::where('user_id', $user->id)
+                        ->where('uuid', $payload['sid'])
+                        ->first();
                 }
+            }
+        }
 
-                return $data;
-            });
+        $inactivityDays = $user->session_inactivity_days ?: 180;
+        $devices = app(DeviceSessionService::class)->listDevicesWithSessions(
+            $user,
+            $currentSession instanceof UserSession ? $currentSession : null,
+            $currentTokenId ? (int) $currentTokenId : null
+        );
 
         return $this->successResponse(
-            data: $tokens,
+            data: $devices,
             message: 'Sessions retrieved successfully.',
             extra: [
                 'session_inactivity_days' => $inactivityDays,
@@ -863,9 +798,17 @@ class AuthController extends Controller
     public function pingSession(Request $request)
     {
         $user = $request->user();
+        $currentSession = $request->attributes->get('user_session');
+        if ($currentSession instanceof UserSession) {
+            $currentSession->touchLastSeen($request->ip(), $request->userAgent(), force: true);
+        }
+
         $currentToken = $user->currentAccessToken();
-        if ($currentToken) {
-            $currentToken->forceFill(['last_used_at' => now()])->save();
+        if ($currentToken && method_exists($currentToken, 'forceFill')) {
+            $currentToken->forceFill([
+                'last_used_at' => now(),
+                'ip_address' => $request->ip(),
+            ])->save();
         }
 
         return $this->successResponse(
@@ -878,7 +821,7 @@ class AuthController extends Controller
     }
 
     /**
-     * Remote Session Revocation.
+     * Remote Device or Session Revocation.
      * DELETE /api/v1/auth/sessions/{id}
      */
     #[OpenApiResponse(status: 200, description: 'Session terminated successfully', type: 'array{status: string, message: string}')]
@@ -888,20 +831,37 @@ class AuthController extends Controller
         $user = $request->user();
         $deleted = false;
 
-        // 1. Revoke UserSession if UUID
-        $userSession = UserSession::where('user_id', $user->id)
-            ->where(function ($q) use ($id) {
-                $q->where('uuid', (string) $id)->orWhere('id', (string) $id);
-            })->first();
+        // 1. Revoke all active sessions under an owned UserDevice if {id} is a device UUID
+        $device = UserDevice::where('user_id', $user->id)
+            ->where('uuid', (string) $id)
+            ->first();
 
-        if ($userSession) {
-            $userSession->revoke('remote_revocation');
-            $user->tokens()->where('name', 'jwt_session_'.$userSession->uuid)->delete();
-            $deleted = true;
+        if ($device) {
+            $revoked = app(DeviceSessionService::class)->revokeDevice($device, 'device_logout');
+            if ($revoked > 0) {
+                $deleted = true;
+            }
         }
 
-        // 2. Revoke Sanctum token if numeric ID
-        if (is_numeric($id)) {
+        // 2. Revoke specific UserSession if {id} is a session UUID or numeric ID
+        if (! $deleted) {
+            $userSession = UserSession::where('user_id', $user->id)
+                ->where(function ($q) use ($id) {
+                    $q->where('uuid', (string) $id);
+                    if (is_numeric($id)) {
+                        $q->orWhere('id', (int) $id);
+                    }
+                })->first();
+
+            if ($userSession) {
+                $userSession->revoke('remote_revocation');
+                $user->tokens()->where('name', 'jwt_session_'.$userSession->uuid)->delete();
+                $deleted = true;
+            }
+        }
+
+        // 3. Legacy fallback: revoke Sanctum PersonalAccessToken if numeric ID
+        if (! $deleted && is_numeric($id)) {
             $session = PersonalAccessToken::where('id', (int) $id)
                 ->where('tokenable_id', $user->id)
                 ->whereIn('tokenable_type', [get_class($user), 'App\Models\User', 'user'])
@@ -932,20 +892,25 @@ class AuthController extends Controller
         $user = $request->user();
         $currentTokenId = $user->currentAccessToken()?->id;
 
-        // Revoke all active UserSessions for this user except current
-        $currentSid = null;
-        $token = $request->bearerToken();
-        if ($token && substr_count($token, '.') === 2) {
-            $payload = app(JwtService::class)->verify($token);
-            $currentSid = $payload['sid'] ?? null;
+        // Resolve current session UUID (from middleware attribute or JWT sid)
+        $currentSession = $request->attributes->get('user_session');
+        $currentSid = $currentSession instanceof UserSession ? $currentSession->uuid : null;
+        if (! $currentSid) {
+            $token = $request->bearerToken();
+            if ($token && substr_count($token, '.') === 2) {
+                $payload = app(JwtService::class)->verify($token);
+                $currentSid = $payload['sid'] ?? null;
+            }
         }
 
+        $revokedSessions = 0;
         $sessionQuery = UserSession::where('user_id', $user->id)->whereNull('revoked_at');
         if ($currentSid && ! $request->boolean('include_current')) {
             $sessionQuery->where('uuid', '!=', $currentSid);
         }
         foreach ($sessionQuery->get() as $s) {
             $s->revoke('logout_all_devices');
+            $revokedSessions++;
         }
 
         $query = $user->tokens();
@@ -954,12 +919,13 @@ class AuthController extends Controller
             $query->where('id', '!=', $currentTokenId);
         }
 
-        $revokedCount = $query->delete();
+        $revokedTokens = $query->delete();
+        $revokedCount = max($revokedSessions, $revokedTokens);
 
-        // Globally invalidate all existing stateless JWT tokens for this user
+        // Globally invalidate all existing stateless JWT tokens only if no current session is preserved
         /** @var JwtService $jwtService */
         $jwtService = app(JwtService::class);
-        if (! $currentTokenId || $request->boolean('include_current')) {
+        if ((! $currentTokenId && ! $currentSid) || $request->boolean('include_current')) {
             $jwtService->revokeAllUserTokens($user->id);
         }
 
