@@ -3,6 +3,7 @@
 use App\Http\Controllers\Organization\TenantController;
 use App\Http\Controllers\System\MaintenanceController;
 use App\Http\Controllers\System\PlatformModuleController;
+use App\Http\Controllers\System\QueueMonitorController;
 use App\Http\Controllers\System\SupportController;
 use App\Http\Controllers\System\TelemetryController;
 use Illuminate\Support\Facades\Route;
@@ -26,6 +27,8 @@ Route::middleware('role:super_admin')->prefix('super-admin')->group(function () 
     Route::get('/infrastructure/telemetry', [TelemetryController::class, 'index']);
     Route::get('/infrastructure/storage', [TelemetryController::class, 'storageConfig']);
     Route::post('/infrastructure/storage/test', [TelemetryController::class, 'testStorageConnection']);
+    Route::get('/infrastructure/queues', [QueueMonitorController::class, 'index']);
+    Route::post('/infrastructure/queues/{service}/retry/{job_id}', [QueueMonitorController::class, 'retry']);
 
     // Platform Support Desk & Broadcast Announcements
     Route::get('/support/tickets', [SupportController::class, 'tickets']);
