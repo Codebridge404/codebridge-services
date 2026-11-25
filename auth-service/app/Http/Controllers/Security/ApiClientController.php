@@ -101,6 +101,9 @@ class ApiClientController extends Controller
 
         $validated = $request->validated();
         unset($validated['uuid']);
+        if (empty($validated['client_key'])) {
+            unset($validated['client_key']);
+        }
         $client->update($validated);
 
         $this->recordAuditLog(

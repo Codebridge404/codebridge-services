@@ -211,7 +211,7 @@ class ApiClientTest extends TestCase
             ->assertJsonFragment(['code' => 'VALIDATION_ERROR']);
     }
 
-    public function test_client_key_is_immutable_via_update_endpoint(): void
+    public function test_admin_can_update_client_key_with_validation(): void
     {
         $user = User::factory()->inWorkspace()->create(['role' => 'admin']);
         Sanctum::actingAs($user, ['*']);
@@ -222,15 +222,40 @@ class ApiClientTest extends TestCase
             'client_key' => 'original_key_111',
         ]);
 
-        $response = $this->putJson("/api/v1/api-clients/{$client->id}", [
+        ApiClient::create([
+            'name' => 'Other Client',
+            'client_type' => 'web',
+            'client_key' => 'taken_key_999',
+        ]);
+
+        // Updating with null keeps existing key
+        $this->putJson("/api/v1/api-clients/{$client->id}", [
             'name' => 'Renamed Client',
-            'client_key' => 'attempted_modified_key_999',
+            'client_key' => null,
         ])->assertStatus(200);
 
         $client->refresh();
         $this->assertEquals('Renamed Client', $client->name);
         $this->assertEquals('original_key_111', $client->client_key);
-        $this->assertEquals('original_key_111', $response->json('data.client_key'));
+
+        // Updating with own existing key succeeds (unique ignore)
+        $this->putJson("/api/v1/api-clients/{$client->id}", [
+            'client_key' => 'original_key_111',
+        ])->assertStatus(200);
+
+        // Updating with another client's key fails with 422
+        $this->putJson("/api/v1/api-clients/{$client->id}", [
+            'client_key' => 'taken_key_999',
+        ])->assertStatus(422)->assertJsonValidationErrors(['client_key']);
+
+        // Updating with a new unique key succeeds
+        $response = $this->putJson("/api/v1/api-clients/{$client->id}", [
+            'client_key' => 'updated_unique_key_222',
+        ])->assertStatus(200);
+
+        $client->refresh();
+        $this->assertEquals('updated_unique_key_222', $client->client_key);
+        $this->assertEquals('updated_unique_key_222', $response->json('data.client_key'));
     }
 
     public function test_admin_can_interact_with_api_client_via_uuid(): void
