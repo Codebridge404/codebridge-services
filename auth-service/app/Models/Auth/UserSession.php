@@ -2,35 +2,10 @@
 
 namespace App\Models\Auth;
 
-use App\Models\Auth\User;
 use App\Models\Organization\Tenant;
-use App\Models\System\Role;
-use App\Models\Organization\Outlet;
-use App\Models\Organization\Department;
-use App\Models\Organization\Employee;
-use App\Models\Organization\Supplier;
-use App\Models\Crm\Customer;
-use App\Models\Security\SecurityEvent;
-use App\Models\Security\ApiKey;
-use App\Models\Security\AuditLog;
-use App\Models\Security\ApiClient;
-use App\Models\Security\NotificationProvider;
-use App\Models\Auth\RefreshToken;
-use App\Models\Auth\PasskeyCredential;
-use App\Models\System\UserRole;
-use App\Models\System\Permission;
 use App\Models\Organization\TenantUser;
-use App\Models\Organization\TenantModule;
-use App\Models\Organization\TenantSubscription;
-use App\Models\Organization\TenantUserOutlet;
-use App\Models\Auth\UserInvitation;
-use App\Models\Auth\UserPosPin;
-use App\Models\Crm\DigitalVoucher;
-use App\Models\Crm\StoreCreditInvoice;
-use App\Models\Security\ApiRequestLog;
-use App\Models\Meeting\Meeting;
-use App\Models\Meeting\MeetingRoom;
-
+use App\Models\Security\ApiClient;
+use App\Services\JwtService;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -55,10 +30,16 @@ class UserSession extends Model
         'user_id',
         'api_client_id',
         'tenant_id',
+        'user_device_id',
+        'personal_access_token_id',
         'device_uuid',
         'device_name',
+        'login_ip',
         'ip_address',
         'user_agent',
+        'browser',
+        'platform',
+        'location',
         'permissions',
         'expires_at',
         'revoked_at',
@@ -124,6 +105,14 @@ class UserSession extends Model
     public function activeRefreshToken(): HasOne
     {
         return $this->currentRefreshToken();
+    }
+
+    /**
+     * Persistent device installation to which this session belongs.
+     */
+    public function device(): BelongsTo
+    {
+        return $this->belongsTo(UserDevice::class, 'user_device_id');
     }
 
     /**
@@ -195,7 +184,7 @@ class UserSession extends Model
     }
 
     /**
-     * Revoke this session family and all child refresh tokens.
+     * Revoke this session family, all child refresh tokens, JWT session cache, and linked PAT.
      */
     public function revoke(string $reason = 'manual_revocation'): void
     {
@@ -210,11 +199,17 @@ class UserSession extends Model
             $this->refreshTokens()
                 ->whereNull('revoked_at')
                 ->update(['revoked_at' => $now]);
+
+            if (! empty($this->personal_access_token_id)) {
+                DB::table('personal_access_tokens')
+                    ->where('id', $this->personal_access_token_id)
+                    ->delete();
+            }
         });
 
-        if (!empty($this->uuid)) {
+        if (! empty($this->uuid)) {
             try {
-                app(\App\Services\JwtService::class)->revokeSessionUuid((string) $this->uuid);
+                app(JwtService::class)->revokeSessionUuid((string) $this->uuid);
             } catch (\Throwable) {
                 // Safe fall-through if cache is transiently unavailable
             }
@@ -223,17 +218,20 @@ class UserSession extends Model
 
     /**
      * Touch session last seen timestamp and client telemetry (throttled to at most once every 60s unless forced or IP changed).
+     * Never mutates login_ip (preserved as login history).
      */
     public function touchLastSeen(?string $ip = null, ?string $userAgent = null, bool $force = false, int $throttleSeconds = 60): bool
     {
-        if (!$force && $this->last_seen_at !== null) {
-            $ipUnchanged = ($ip === null || $ip === $this->ip_address);
-            if ($ipUnchanged && $this->last_seen_at->gt(Carbon::now()->subSeconds($throttleSeconds))) {
+        $now = Carbon::now();
+        $ipChanged = $ip !== null && $ip !== $this->ip_address;
+
+        if (! $force && ! $ipChanged && $this->last_seen_at !== null) {
+            if ($this->last_seen_at->gt($now->copy()->subSeconds($throttleSeconds))) {
                 return false;
             }
         }
 
-        $payload = ['last_seen_at' => Carbon::now()];
+        $payload = ['last_seen_at' => $now];
         if ($ip !== null) {
             $payload['ip_address'] = $ip;
         }
@@ -242,7 +240,28 @@ class UserSession extends Model
         }
         $this->updateQuietly($payload);
 
+        if ($this->user_device_id) {
+            $devicePayload = ['last_seen_at' => $now];
+            if ($ip !== null) {
+                $devicePayload['last_ip'] = $ip;
+            }
+            UserDevice::where('id', $this->user_device_id)->update($devicePayload);
+        }
+
+        if ($this->personal_access_token_id) {
+            $patPayload = ['last_used_at' => $now];
+            if ($ip !== null) {
+                $patPayload['ip_address'] = $ip;
+            }
+            try {
+                DB::table('personal_access_tokens')
+                    ->where('id', $this->personal_access_token_id)
+                    ->update($patPayload);
+            } catch (\Throwable) {
+                // Best-effort sync
+            }
+        }
+
         return true;
     }
 }
-
