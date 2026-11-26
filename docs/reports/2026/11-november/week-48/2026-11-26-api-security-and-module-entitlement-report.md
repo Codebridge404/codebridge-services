@@ -63,7 +63,51 @@ This report documents the APIs and cross-cutting security/entitlement middleware
 
 ---
 
-## 3. Verification Summary
+## 3. Architecture & Request Flow Diagrams
+
+### 3.1 Platform IP Allowlist, Rate-Limit & WAF Rules Flow
+
+```mermaid
+flowchart LR
+    SA["Super Admin"] -->|"GET / POST / DELETE /api/v1/super-admin/security/ip-rules"| IRC["IpRuleController"]
+    IRC -->|"Persist Rule"| DB["MySQL: platform_ip_rules"]
+    IRC -->|"Invalidate / Warm"| REDIS["Redis IP Rules Cache"]
+
+    REQ["Incoming API Request"] --> WAF["ProtectAttackMiddleware"]
+    WAF -->|"Check Allowlist / Blocklist"| REDIS
+    REDIS -->|"Matched Block IP/CIDR"| R403["403 Forbidden (Blocked)"]
+    REDIS -->|"Matched Enterprise Allowlist"| RL["RateLimitAuthMiddleware (Bypass Limit)"]
+    REDIS -->|"No Match"| RL
+    RL -->|"Standard Rate Limit"| APP["Auth Service Route"]
+```
+
+### 3.2 Module Entitlement, Kill-Switch & Observability Flow
+
+```mermaid
+flowchart TD
+    REQ["Tenant API Request"] --> CMA["CheckModuleAccess (module middleware)"]
+    CMA -->|"Read Global & Tenant State"| MES["ModuleEntitlementService (Redis + DB Fallback)"]
+
+    MES -->|"Global is_active = false"| R503["503 MODULE_DISABLED"]
+    MES -->|"Tenant Not Subscribed"| R403["403 MODULE_NOT_SUBSCRIBED"]
+    MES -->|"Allowed"| R200["200 OK (Route Handler)"]
+
+    R503 --> ARL["ApiRequestLog (status 503, no SecurityEvent flood)"]
+    R200 --> ARL
+    R403 --> ARL
+    R403 --> SE["SecurityEvent (SEC_MODULE_NOT_SUBSCRIBED)"]
+    SE -->|"5+ denials in 5m (10m throttle)"| JOB["SendPlatformAlertNotificationJob"]
+
+    ADMIN["Super Admin / Tenant Admin"] -->|"PUT platform-modules / tenants/modules"| TX["DB::transaction()"]
+    TX -->|"Save Module State"| MODDB["platform_modules / tenant_modules"]
+    TX -->|"Record Change"| AUD["AuditLog (old_value, new_value, request_id, trace_id)"]
+    TX -->|"After Commit (Global Kill-Switch)"| JOB
+    JOB --> NP["NotificationProvider (Telegram Alert)"]
+```
+
+---
+
+## 4. Verification Summary
 
 | Check | Result |
 | :--- | :--- |
@@ -73,7 +117,7 @@ This report documents the APIs and cross-cutting security/entitlement middleware
 
 ---
 
-## 4. Commit Log (`codebridge-services` `demo`)
+## 5. Commit Log (`codebridge-services` `demo`)
 
 | Commit | Summary |
 | :--- | :--- |
