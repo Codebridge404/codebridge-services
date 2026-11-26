@@ -5,8 +5,11 @@ namespace App\Http\Controllers\Organization;
 use App\Http\Controllers\Controller;
 use App\Http\Controllers\Security\AuditLogController;
 use App\Http\Requests\Tenant\UpdateModulesRequest;
+use App\Services\ModuleEntitlementService;
+use App\Services\TenantAccess;
 use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -14,13 +17,19 @@ use Illuminate\Support\Facades\DB;
  * [BD-0080] Per-Tenant Module Entitlements & Subscription Tiers Controller
  *
  * @ticket BD-0080
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/TenantModuleController.php
+ *
  * @related-model DB table tenant_modules, App\Models\Organization\Tenant
+ *
  * @entry-point TenantModuleController::index(), updateModule()
+ *
  * @routes
  *  - GET /api/v1/tenants/{tenant_id}/modules
  *  - PUT /api/v1/tenants/{tenant_id}/modules
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -43,7 +52,7 @@ class TenantModuleController extends Controller
         $authUser = $request->user();
 
         // Standalone user without tenant or unauthenticated
-        if (!$authUser) {
+        if (! $authUser) {
             return response()->json([
                 'success' => true,
                 'modules' => [],
@@ -67,12 +76,12 @@ class TenantModuleController extends Controller
             }
         } else {
             // Non-super-admin is STRICTLY scoped to their own tenant
-            if (!$authUser->tenant_id) {
+            if (! $authUser->tenant_id) {
                 return response()->json([
-                    'success'     => true,
-                    'tenant_id'   => null,
+                    'success' => true,
+                    'tenant_id' => null,
                     'tenant_name' => null,
-                    'modules'     => [],
+                    'modules' => [],
                 ]);
             }
             $query->where('id', $authUser->tenant_id);
@@ -80,7 +89,7 @@ class TenantModuleController extends Controller
 
         $tenant = $query->first();
 
-        if (!$tenant) {
+        if (! $tenant) {
             return response()->json([
                 'success' => false,
                 'modules' => [],
@@ -110,14 +119,14 @@ class TenantModuleController extends Controller
         // Expand with canonical aliases so frontend checks pass seamlessly
         $expanded = [];
         $reverseAliasMap = [
-            'pos-management'       => ['pos', 'pos-management'],
-            'inventory-suite'      => ['inventory', 'inventory-suite'],
+            'pos-management' => ['pos', 'pos-management'],
+            'inventory-suite' => ['inventory', 'inventory-suite'],
             'financial-management' => ['finance', 'financial-management'],
-            'staff-hrm'            => ['hrm', 'staff-hrm'],
-            'crm-loyalty'          => ['crm', 'crm-loyalty'],
-            'meeting-management'   => ['meetings', 'meeting-management'],
-            'shop-storefront'      => ['shop', 'shop-storefront'],
-            'bill-subscription'    => ['bill-subscription'],
+            'staff-hrm' => ['hrm', 'staff-hrm'],
+            'crm-loyalty' => ['crm', 'crm-loyalty'],
+            'meeting-management' => ['meetings', 'meeting-management'],
+            'shop-storefront' => ['shop', 'shop-storefront'],
+            'bill-subscription' => ['bill-subscription'],
         ];
 
         foreach ($modules as $mod) {
@@ -131,10 +140,10 @@ class TenantModuleController extends Controller
         }
 
         return response()->json([
-            'success'     => true,
-            'tenant_id'   => $tenant->id,
+            'success' => true,
+            'tenant_id' => $tenant->id,
             'tenant_name' => $tenant->name,
-            'modules'     => array_values(array_unique($expanded)),
+            'modules' => array_values(array_unique($expanded)),
         ]);
     }
 
@@ -144,13 +153,13 @@ class TenantModuleController extends Controller
      */
     public function update(UpdateModulesRequest $request)
     {
-        abort_unless(\App\Services\TenantAccess::isAdmin($request->user()), 403);
+        abort_unless(TenantAccess::isAdmin($request->user()), 403);
 
         $tenantId = $request->input('tenant_id');
         $orgName = $request->input('org_name');
         $authUser = $request->user();
 
-        if (!$authUser) {
+        if (! $authUser) {
             return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
         }
 
@@ -170,7 +179,7 @@ class TenantModuleController extends Controller
                 ], 422);
             }
         } else {
-            if (!$authUser->tenant_id) {
+            if (! $authUser->tenant_id) {
                 return response()->json([
                     'success' => false,
                     'message' => 'No active organization to update modules.',
@@ -181,7 +190,7 @@ class TenantModuleController extends Controller
 
         $tenant = $query->first();
 
-        if (!$tenant) {
+        if (! $tenant) {
             return response()->json([
                 'success' => false,
                 'message' => 'Tenant not found to update module entitlements.',
@@ -192,29 +201,29 @@ class TenantModuleController extends Controller
 
         // Canonical alias mapping to valid platform_modules IDs
         $aliasMap = [
-            'pos'                  => 'pos-management',
-            'pos-terminal'         => 'pos-management',
-            'pos-management'       => 'pos-management',
-            'kds'                  => 'pos-management',
-            'cfd'                  => 'pos-management',
-            'inventory'            => 'inventory-suite',
-            'inventory-suite'      => 'inventory-suite',
-            'operations-service'   => 'inventory-suite',
-            'finance'              => 'financial-management',
+            'pos' => 'pos-management',
+            'pos-terminal' => 'pos-management',
+            'pos-management' => 'pos-management',
+            'kds' => 'pos-management',
+            'cfd' => 'pos-management',
+            'inventory' => 'inventory-suite',
+            'inventory-suite' => 'inventory-suite',
+            'operations-service' => 'inventory-suite',
+            'finance' => 'financial-management',
             'financial-management' => 'financial-management',
-            'accounting'           => 'financial-management',
-            'hrm'                  => 'staff-hrm',
-            'staff-hrm'            => 'staff-hrm',
-            'crm'                  => 'crm-loyalty',
-            'crm-loyalty'          => 'crm-loyalty',
-            'meetings'             => 'meeting-management',
-            'meeting'              => 'meeting-management',
-            'meeting-management'   => 'meeting-management',
-            'mms'                  => 'meeting-management',
-            'shop'                 => 'shop-storefront',
-            'shop-storefront'      => 'shop-storefront',
-            'bill-subscription'    => 'bill-subscription',
-            'subscription'         => 'bill-subscription',
+            'accounting' => 'financial-management',
+            'hrm' => 'staff-hrm',
+            'staff-hrm' => 'staff-hrm',
+            'crm' => 'crm-loyalty',
+            'crm-loyalty' => 'crm-loyalty',
+            'meetings' => 'meeting-management',
+            'meeting' => 'meeting-management',
+            'meeting-management' => 'meeting-management',
+            'mms' => 'meeting-management',
+            'shop' => 'shop-storefront',
+            'shop-storefront' => 'shop-storefront',
+            'bill-subscription' => 'bill-subscription',
+            'subscription' => 'bill-subscription',
         ];
 
         $validPlatformIds = DB::table('platform_modules')->where('is_active', true)->pluck('id')->all();
@@ -228,8 +237,8 @@ class TenantModuleController extends Controller
         }
         $modules = array_values(array_unique($modules));
 
-        if (!UserAuthorizationService::isSuperAdmin($authUser, (int) $tenant->id)) {
-            $isTrial = ($tenant->status === 'trial') || ($tenant->trial_ends_at && \Carbon\Carbon::parse($tenant->trial_ends_at)->isFuture());
+        if (! UserAuthorizationService::isSuperAdmin($authUser, (int) $tenant->id)) {
+            $isTrial = ($tenant->status === 'trial') || ($tenant->trial_ends_at && Carbon::parse($tenant->trial_ends_at)->isFuture());
 
             if ($isTrial) {
                 // Trial workspaces can access all active platform modules
@@ -239,11 +248,11 @@ class TenantModuleController extends Controller
                     ->where('tenant_id', $tenant->id)
                     ->where(function ($q) {
                         $q->where('status', 'active')
-                          ->orWhere('status', 'pending');
+                            ->orWhere('status', 'pending');
                     })
                     ->where(function ($q) {
                         $q->whereNull('expires_at')
-                          ->orWhere('expires_at', '>', now());
+                            ->orWhere('expires_at', '>', now());
                     })
                     ->orderByDesc('id')
                     ->first();
@@ -264,7 +273,7 @@ class TenantModuleController extends Controller
         DB::transaction(function () use ($tenant, $modules, $authUser) {
             DB::table('tenants')->where('id', $tenant->id)->update([
                 'enabled_modules' => json_encode($modules),
-                'updated_at'      => now(),
+                'updated_at' => now(),
             ]);
 
             if (SchemaGuard::hasTable('tenant_modules')) {
@@ -273,16 +282,20 @@ class TenantModuleController extends Controller
                     DB::table('tenant_modules')->updateOrInsert(
                         ['tenant_id' => $tenant->id, 'module_id' => $modId],
                         [
-                            'is_active'    => true,
+                            'is_active' => true,
                             'activated_by' => $authUser->id,
                             'activated_at' => now(),
-                            'created_at'   => now(),
-                            'updated_at'   => now(),
+                            'created_at' => now(),
+                            'updated_at' => now(),
                         ]
                     );
                 }
             }
         });
+
+        app(ModuleEntitlementService::class)->invalidateTenantCache((int) $tenant->id);
+
+        app(\App\Services\ModuleEntitlementService::class)->invalidateTenantCache((int) $tenant->id);
 
         // Record audit event
         if ($authUser && class_exists(AuditLogController::class)) {
@@ -293,9 +306,9 @@ class TenantModuleController extends Controller
                 'tenants',
                 $request->ip(),
                 [
-                    'tenant_id'   => $tenant->id,
+                    'tenant_id' => $tenant->id,
                     'tenant_name' => $tenant->name,
-                    'modules'     => $modules,
+                    'modules' => $modules,
                 ]
             );
         }
@@ -303,14 +316,14 @@ class TenantModuleController extends Controller
         // Expand for frontend response
         $expanded = [];
         $reverseAliasMap = [
-            'pos-management'       => ['pos', 'pos-management'],
-            'inventory-suite'      => ['inventory', 'inventory-suite'],
+            'pos-management' => ['pos', 'pos-management'],
+            'inventory-suite' => ['inventory', 'inventory-suite'],
             'financial-management' => ['finance', 'financial-management'],
-            'staff-hrm'            => ['hrm', 'staff-hrm'],
-            'crm-loyalty'          => ['crm', 'crm-loyalty'],
-            'meeting-management'   => ['meetings', 'meeting-management'],
-            'shop-storefront'      => ['shop', 'shop-storefront'],
-            'bill-subscription'    => ['bill-subscription'],
+            'staff-hrm' => ['hrm', 'staff-hrm'],
+            'crm-loyalty' => ['crm', 'crm-loyalty'],
+            'meeting-management' => ['meetings', 'meeting-management'],
+            'shop-storefront' => ['shop', 'shop-storefront'],
+            'bill-subscription' => ['bill-subscription'],
         ];
 
         foreach ($modules as $mod) {
@@ -324,11 +337,11 @@ class TenantModuleController extends Controller
         }
 
         return response()->json([
-            'success'     => true,
-            'message'     => "Successfully updated module licenses for {$tenant->name}.",
-            'tenant_id'   => $tenant->id,
+            'success' => true,
+            'message' => "Successfully updated module licenses for {$tenant->name}.",
+            'tenant_id' => $tenant->id,
             'tenant_name' => $tenant->name,
-            'modules'     => array_values(array_unique($expanded)),
+            'modules' => array_values(array_unique($expanded)),
         ]);
     }
 }

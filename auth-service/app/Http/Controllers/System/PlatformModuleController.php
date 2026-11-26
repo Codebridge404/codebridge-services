@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\Security\AuditLogController;
 use App\Http\Requests\Platform\StorePlatformModuleRequest;
 use App\Http\Requests\Platform\UpdatePlatformModuleRequest;
+use App\Services\ImageService;
+use App\Services\ModuleEntitlementService;
 use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
@@ -16,13 +18,19 @@ use Illuminate\Support\Str;
  * [BD-0076] Global Platform Microservice Modules & Features Controller
  *
  * @ticket BD-0076
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/PlatformModuleController.php
+ *
  * @related-model DB table platform_modules, App\Models\Organization\Tenant
+ *
  * @entry-point PlatformModuleController::index(), updateModuleStatus()
+ *
  * @routes
  *  - GET /api/v1/platform-modules
  *  - PUT /api/v1/platform-modules/{id}
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -46,7 +54,7 @@ class PlatformModuleController extends Controller
 
         $query = DB::table('platform_modules');
 
-        if (!$showAll) {
+        if (! $showAll) {
             $query->where('is_active', true);
         }
 
@@ -56,11 +64,11 @@ class PlatformModuleController extends Controller
 
         if ($request->filled('search')) {
             $escaped = SchemaGuard::escapeLike(trim((string) $request->query('search')));
-            $search = '%' . $escaped . '%';
+            $search = '%'.$escaped.'%';
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', $search)
-                  ->orWhere('description', 'like', $search)
-                  ->orWhere('id', 'like', $search);
+                    ->orWhere('description', 'like', $search)
+                    ->orWhere('id', 'like', $search);
             });
         }
 
@@ -85,13 +93,14 @@ class PlatformModuleController extends Controller
                     }
                 }
                 $modObj['adoption_count'] = $count;
+
                 return $modObj;
             });
         }
 
         return response()->json([
             'success' => true,
-            'data'    => $modules,
+            'data' => $modules,
         ]);
     }
 
@@ -103,7 +112,7 @@ class PlatformModuleController extends Controller
     {
         $module = DB::table('platform_modules')->where('id', $id)->first();
 
-        if (!$module) {
+        if (! $module) {
             return response()->json([
                 'success' => false,
                 'message' => 'Module not found.',
@@ -112,7 +121,7 @@ class PlatformModuleController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => $module,
+            'data' => $module,
         ]);
     }
 
@@ -124,8 +133,8 @@ class PlatformModuleController extends Controller
     {
         $validated = $request->validated();
 
-        $id = !empty($validated['id']) ? Str::slug($validated['id']) : Str::slug($validated['name']);
-        
+        $id = ! empty($validated['id']) ? Str::slug($validated['id']) : Str::slug($validated['name']);
+
         // Ensure ID is unique
         if (DB::table('platform_modules')->where('id', $id)->exists()) {
             return response()->json([
@@ -134,12 +143,12 @@ class PlatformModuleController extends Controller
             ], 422);
         }
 
-        $monogram = !empty($validated['monogram'])
+        $monogram = ! empty($validated['monogram'])
             ? strtoupper($validated['monogram'])
             : strtoupper(substr(preg_replace('/[^a-zA-Z]/', '', $validated['name']), 0, 3));
 
         $logoUrl = $validated['logo_url'] ?? null;
-        if ($logoUrl !== null && !\App\Services\ImageService::isSafeImageUrlOrDataUri($logoUrl)) {
+        if ($logoUrl !== null && ! ImageService::isSafeImageUrlOrDataUri($logoUrl)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Unsupported or unsafe module logo URL format.',
@@ -148,9 +157,9 @@ class PlatformModuleController extends Controller
 
         if ($request->hasFile('logo')) {
             try {
-                /** @var \App\Services\ImageService $imageService */
-                $imageService = app(\App\Services\ImageService::class);
-                $logoUrl = $imageService->storeLogo($request->file('logo'), 'mod_' . $id);
+                /** @var ImageService $imageService */
+                $imageService = app(ImageService::class);
+                $logoUrl = $imageService->storeLogo($request->file('logo'), 'mod_'.$id);
             } catch (\InvalidArgumentException $e) {
                 return response()->json([
                     'success' => false,
@@ -164,9 +173,9 @@ class PlatformModuleController extends Controller
             }
         } elseif ($request->filled('logo_data') && stripos((string) $request->logo_data, 'data:') === 0) {
             try {
-                /** @var \App\Services\ImageService $imageService */
-                $imageService = app(\App\Services\ImageService::class);
-                $logoUrl = $imageService->storeLogo($request->logo_data, 'mod_' . $id);
+                /** @var ImageService $imageService */
+                $imageService = app(ImageService::class);
+                $logoUrl = $imageService->storeLogo($request->logo_data, 'mod_'.$id);
             } catch (\InvalidArgumentException $e) {
                 return response()->json([
                     'success' => false,
@@ -181,21 +190,21 @@ class PlatformModuleController extends Controller
         }
 
         $record = [
-            'id'          => $id,
-            'name'        => $validated['name'],
-            'monogram'    => $monogram ?: 'MOD',
-            'category'    => $validated['category'],
+            'id' => $id,
+            'name' => $validated['name'],
+            'monogram' => $monogram ?: 'MOD',
+            'category' => $validated['category'],
             'description' => $validated['description'],
-            'icon'        => $validated['icon'] ?? 'Store',
-            'logo_url'    => $logoUrl,
-            'href'        => $validated['href'],
-            'bg_pill'     => $validated['bg_pill'] ?? 'bg-brand-subtle text-brand',
-            'card_bg'     => $validated['card_bg'] ?? 'bg-blue-50/70 border-blue-200/90 hover:border-blue-400',
-            'is_core'     => (bool) ($validated['is_core'] ?? false),
-            'is_active'   => (bool) ($validated['is_active'] ?? true),
-            'sort_order'  => (int) ($validated['sort_order'] ?? 0),
-            'created_at'  => now(),
-            'updated_at'  => now(),
+            'icon' => $validated['icon'] ?? 'Store',
+            'logo_url' => $logoUrl,
+            'href' => $validated['href'],
+            'bg_pill' => $validated['bg_pill'] ?? 'bg-brand-subtle text-brand',
+            'card_bg' => $validated['card_bg'] ?? 'bg-blue-50/70 border-blue-200/90 hover:border-blue-400',
+            'is_core' => (bool) ($validated['is_core'] ?? false),
+            'is_active' => (bool) ($validated['is_active'] ?? true),
+            'sort_order' => (int) ($validated['sort_order'] ?? 0),
+            'created_at' => now(),
+            'updated_at' => now(),
         ];
 
         DB::table('platform_modules')->insert($record);
@@ -215,7 +224,7 @@ class PlatformModuleController extends Controller
         return response()->json([
             'success' => true,
             'message' => "Successfully registered module '{$record['name']}'.",
-            'data'    => $record,
+            'data' => $record,
         ], 201);
     }
 
@@ -226,7 +235,7 @@ class PlatformModuleController extends Controller
     public function update(UpdatePlatformModuleRequest $request, $id)
     {
         $module = DB::table('platform_modules')->where('id', $id)->first();
-        if (!$module) {
+        if (! $module) {
             return response()->json([
                 'success' => false,
                 'message' => 'Module not found to update.',
@@ -244,9 +253,9 @@ class PlatformModuleController extends Controller
 
         if ($request->hasFile('logo')) {
             try {
-                /** @var \App\Services\ImageService $imageService */
-                $imageService = app(\App\Services\ImageService::class);
-                $updates['logo_url'] = $imageService->storeLogo($request->file('logo'), 'mod_' . $id, $module->logo_url ?? null);
+                /** @var ImageService $imageService */
+                $imageService = app(ImageService::class);
+                $updates['logo_url'] = $imageService->storeLogo($request->file('logo'), 'mod_'.$id, $module->logo_url ?? null);
             } catch (\InvalidArgumentException $e) {
                 return response()->json([
                     'success' => false,
@@ -260,9 +269,9 @@ class PlatformModuleController extends Controller
             }
         } elseif ($request->filled('logo_data') && stripos((string) $request->logo_data, 'data:') === 0) {
             try {
-                /** @var \App\Services\ImageService $imageService */
-                $imageService = app(\App\Services\ImageService::class);
-                $updates['logo_url'] = $imageService->storeLogo($request->logo_data, 'mod_' . $id, $module->logo_url ?? null);
+                /** @var ImageService $imageService */
+                $imageService = app(ImageService::class);
+                $updates['logo_url'] = $imageService->storeLogo($request->logo_data, 'mod_'.$id, $module->logo_url ?? null);
             } catch (\InvalidArgumentException $e) {
                 return response()->json([
                     'success' => false,
@@ -276,7 +285,7 @@ class PlatformModuleController extends Controller
             }
         } elseif ($request->has('logo_url')) {
             $candidateLogoUrl = $request->input('logo_url');
-            if ($candidateLogoUrl !== null && !\App\Services\ImageService::isSafeImageUrlOrDataUri((string) $candidateLogoUrl)) {
+            if ($candidateLogoUrl !== null && ! ImageService::isSafeImageUrlOrDataUri((string) $candidateLogoUrl)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unsupported or unsafe module logo URL format.',
@@ -288,6 +297,8 @@ class PlatformModuleController extends Controller
         $updates['updated_at'] = now();
 
         DB::table('platform_modules')->where('id', $id)->update($updates);
+        app(ModuleEntitlementService::class)->invalidateGlobalCache();
+        app(\App\Services\ModuleEntitlementService::class)->invalidateGlobalCache();
         $updatedModule = DB::table('platform_modules')->where('id', $id)->first();
 
         $authUser = $request->user();
@@ -305,7 +316,7 @@ class PlatformModuleController extends Controller
         return response()->json([
             'success' => true,
             'message' => "Module '{$updatedModule->name}' updated successfully.",
-            'data'    => $updatedModule,
+            'data' => $updatedModule,
         ]);
     }
 
@@ -316,7 +327,7 @@ class PlatformModuleController extends Controller
     public function destroy(Request $request, $id)
     {
         $module = DB::table('platform_modules')->where('id', $id)->first();
-        if (!$module) {
+        if (! $module) {
             return response()->json([
                 'success' => false,
                 'message' => 'Module not found.',
@@ -331,6 +342,8 @@ class PlatformModuleController extends Controller
         }
 
         DB::table('platform_modules')->where('id', $id)->delete();
+        app(ModuleEntitlementService::class)->invalidateGlobalCache();
+        app(\App\Services\ModuleEntitlementService::class)->invalidateGlobalCache();
 
         $authUser = $request->user();
         if ($authUser && class_exists(AuditLogController::class)) {

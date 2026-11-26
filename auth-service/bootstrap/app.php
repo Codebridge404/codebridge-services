@@ -5,6 +5,7 @@ use App\Http\Middleware\ApiKeyMiddleware;
 use App\Http\Middleware\AuthenticateJwt;
 use App\Http\Middleware\AuthorizeMeetingAccess;
 use App\Http\Middleware\CheckMaintenanceMode;
+use App\Http\Middleware\CheckModuleAccess;
 use App\Http\Middleware\EnsureApiClient;
 use App\Http\Middleware\EnsureRole;
 use App\Http\Middleware\EnsureWorkspace;
@@ -66,6 +67,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'api_client' => ApiClientMiddleware::class,
             'auth_throttle' => RateLimitAuthMiddleware::class,
             'protect_attack' => ProtectAttackMiddleware::class,
+            'module' => CheckModuleAccess::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

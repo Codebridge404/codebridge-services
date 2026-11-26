@@ -37,6 +37,7 @@ use App\Services\DeviceDetectorService;
 use App\Services\DeviceSessionService;
 use App\Services\ImageService;
 use App\Services\JwtService;
+use App\Services\ModuleEntitlementService;
 use App\Services\PinService;
 use App\Services\TwoFactorService;
 use App\Support\SchemaGuard;
@@ -1851,13 +1852,16 @@ class AuthController extends Controller
         }
 
         $isPosSession = (bool) $request->attributes->get('is_pos_session', false);
+        /** @var ModuleEntitlementService $entitlements */
+        $entitlements = app(ModuleEntitlementService::class);
+        $effectiveTenantId = $requestedTenantScope === 'all' ? null : (is_numeric($context['tenant_id']) ? (int) $context['tenant_id'] : null);
 
         return response()->json([
             'status' => 'success',
             'authorized' => true,
             'data' => [
                 'user_id' => $context['user_id'],
-                'tenant_id' => $requestedTenantScope === 'all' ? null : $context['tenant_id'],
+                'tenant_id' => $effectiveTenantId,
                 'tenant_status' => $requestedTenantScope === 'all' ? null : $context['tenant_status'],
                 'requested_tenant_scope' => $requestedTenantScope,
                 'membership_status' => $context['membership_status'],
@@ -1868,6 +1872,8 @@ class AuthController extends Controller
                 'is_super_admin' => $context['is_super_admin'],
                 'is_platform_super_admin' => $context['is_platform_super_admin'],
                 'permissions' => $context['permissions'],
+                'enabled_modules' => $entitlements->getEnabledModulesForTenant($effectiveTenantId),
+                'disabled_modules' => $entitlements->getGloballyDisabledModules(),
                 'is_pos_session' => $isPosSession,
             ],
         ], 200);
