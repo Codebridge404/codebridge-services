@@ -2,6 +2,8 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Security\SecurityEvent;
+use App\Services\IpRuleService;
 use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
@@ -12,12 +14,18 @@ use Symfony\Component\HttpFoundation\Response;
  * [BD-0085] Brute Force Protection & Sliding-Window Throttling Middleware
  *
  * @ticket BD-0085
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Middleware/RateLimitAuthMiddleware.php
+ *
  * @related-model Illuminate\Support\Facades\RateLimiter
+ *
  * @entry-point RateLimitAuthMiddleware::handle()
+ *
  * @routes
  *  - Middleware: rate_limit_auth
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -32,30 +40,32 @@ class RateLimitAuthMiddleware
     /**
      * Handle rate limiting for sensitive authentication endpoints (brute-force defense).
      *
-     * @param  \Closure(Request): (Response)  $next
-     * @param  int  $maxAttempts
-     * @param  int  $decayMinutes
+     * @param  Closure(Request): (Response)  $next
      */
     public function handle(Request $request, Closure $next, int $maxAttempts = 5, int $decayMinutes = 15): Response
     {
         $ip = $request->ip();
+        if (app(IpRuleService::class)->isAllowlisted($ip)) {
+            return $next($request);
+        }
+
         $challengeToken = $request->input('challenge_token');
         $identifier = $request->input('email')
             ?? $request->input('phone')
             ?? $request->input('login')
             ?? $request->input('pin_code')
-            ?? ($challengeToken ? 'challenge:' . sha1($challengeToken) : null)
+            ?? ($challengeToken ? 'challenge:'.sha1($challengeToken) : null)
             ?? ($request->user()?->email)
             ?? 'guest';
 
-        $throttleKey = 'auth_attempt:' . sha1($ip . '|' . $identifier);
+        $throttleKey = 'auth_attempt:'.sha1($ip.'|'.$identifier);
 
-        if (RateLimiter::tooManyAttempts($throttleKey, $maxAttempts) || ($challengeToken && RateLimiter::tooManyAttempts('2fa_attempts:' . sha1($challengeToken), $maxAttempts))) {
+        if (RateLimiter::tooManyAttempts($throttleKey, $maxAttempts) || ($challengeToken && RateLimiter::tooManyAttempts('2fa_attempts:'.sha1($challengeToken), $maxAttempts))) {
             $seconds = max(1, RateLimiter::availableIn($throttleKey));
 
             try {
                 if (SchemaGuard::hasTable('security_events')) {
-                    \App\Models\Security\SecurityEvent::record(
+                    SecurityEvent::record(
                         eventType: 'auth_rate_limit_exceeded',
                         ruleCode: 'SEC_AUTH_RATE_LIMIT',
                         summary: 'Brute-force lockout triggered on authentication endpoint',
@@ -72,7 +82,8 @@ class RateLimitAuthMiddleware
                         statusCode: 429
                     );
                 }
-            } catch (\Throwable) {}
+            } catch (\Throwable) {
+            }
 
             return response()->json([
                 'status' => 'error',
@@ -99,17 +110,17 @@ class RateLimitAuthMiddleware
             'api/v1/auth/2fa/*'
         );
 
-        if ($response->getStatusCode() === 401 
+        if ($response->getStatusCode() === 401
             || (($response->getStatusCode() === 422 || $response->getStatusCode() === 403) && $isAuthRoute)) {
             RateLimiter::hit($throttleKey, $decayMinutes * 60);
 
             if ($challengeToken) {
-                RateLimiter::hit('2fa_attempts:' . sha1($challengeToken), $decayMinutes * 60);
+                RateLimiter::hit('2fa_attempts:'.sha1($challengeToken), $decayMinutes * 60);
             }
         } elseif ($response->isSuccessful()) {
             RateLimiter::clear($throttleKey);
             if ($challengeToken) {
-                RateLimiter::clear('2fa_attempts:' . sha1($challengeToken));
+                RateLimiter::clear('2fa_attempts:'.sha1($challengeToken));
             }
         }
 

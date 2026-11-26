@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Organization\TenantController;
+use App\Http\Controllers\Security\IpRuleController;
 use App\Http\Controllers\System\MaintenanceController;
 use App\Http\Controllers\System\PlatformModuleController;
 use App\Http\Controllers\System\QueueMonitorController;
@@ -48,4 +49,9 @@ Route::middleware('role:super_admin')->prefix('super-admin')->group(function () 
     // Platform Maintenance Mode & Scheduled Downtime
     Route::get('/maintenance', [MaintenanceController::class, 'show']);
     Route::put('/maintenance', [MaintenanceController::class, 'update']);
+
+    // Platform IP Allowlist, Rate-Limit & WAF Rules
+    Route::get('/security/ip-rules', [IpRuleController::class, 'index']);
+    Route::post('/security/ip-rules', [IpRuleController::class, 'store']);
+    Route::delete('/security/ip-rules/{id}', [IpRuleController::class, 'destroy']);
 });
