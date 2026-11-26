@@ -6,12 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Http\Controllers\Security\AuditLogController;
 use App\Http\Requests\Platform\StorePlatformModuleRequest;
 use App\Http\Requests\Platform\UpdatePlatformModuleRequest;
+use App\Jobs\SendPlatformAlertNotificationJob;
 use App\Services\ImageService;
 use App\Services\ModuleEntitlementService;
 use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -296,21 +298,78 @@ class PlatformModuleController extends Controller
 
         $updates['updated_at'] = now();
 
-        DB::table('platform_modules')->where('id', $id)->update($updates);
+        $authUser = $request->user();
+        $isGlobalStatusChanged = array_key_exists('is_active', $updates)
+            && (bool) $updates['is_active'] !== (bool) $module->is_active;
+
+        DB::transaction(function () use ($id, $updates, $module, $authUser, $request, $isGlobalStatusChanged) {
+            DB::table('platform_modules')->where('id', $id)->update($updates);
+
+            if ($authUser && class_exists(AuditLogController::class)) {
+                $action = $isGlobalStatusChanged ? 'module.global_status_changed' : 'update_platform_module';
+                $payload = $isGlobalStatusChanged
+                    ? [
+                        'module' => $id,
+                        'module_id' => $id,
+                        'old_value' => ['is_globally_enabled' => (bool) $module->is_active],
+                        'new_value' => ['is_globally_enabled' => (bool) $updates['is_active']],
+                        'reason' => $request->input('reason'),
+                        'request_id' => $request->attributes->get('request_id'),
+                        'trace_id' => $request->attributes->get('trace_id'),
+                        'updates' => $updates,
+                    ]
+                    : [
+                        'module_id' => $id,
+                        'request_id' => $request->attributes->get('request_id'),
+                        'trace_id' => $request->attributes->get('trace_id'),
+                        'updates' => $updates,
+                    ];
+
+                AuditLogController::log(
+                    $authUser->id,
+                    $authUser->name,
+                    $action,
+                    'platform_modules',
+                    $request->ip(),
+                    $payload
+                );
+            }
+        });
+
         app(ModuleEntitlementService::class)->invalidateGlobalCache();
-        app(\App\Services\ModuleEntitlementService::class)->invalidateGlobalCache();
         $updatedModule = DB::table('platform_modules')->where('id', $id)->first();
 
-        $authUser = $request->user();
-        if ($authUser && class_exists(AuditLogController::class)) {
-            AuditLogController::log(
-                $authUser->id,
-                $authUser->name,
-                'update_platform_module',
-                'platform_modules',
-                $request->ip(),
-                ['module_id' => $id, 'updates' => $updates]
-            );
+        if ($isGlobalStatusChanged) {
+            $newState = (bool) $updates['is_active'] ? 'ENABLED' : 'DISABLED (Kill-Switch Active)';
+            $actor = $authUser?->email ?? $authUser?->name ?? 'super_admin';
+            $reason = $request->input('reason');
+            $message = "<b>[Platform Module Global Status Changed]</b>\n"
+                ."Module: <code>{$id}</code>\n"
+                ."Status: <b>{$newState}</b>\n"
+                ."Actor: <code>{$actor}</code>\n"
+                .($reason ? "Reason: {$reason}\n" : '')
+                .'Request ID: <code>'.($request->attributes->get('request_id') ?? 'n/a').'</code>';
+
+            try {
+                SendPlatformAlertNotificationJob::dispatch(
+                    'module.global_status_changed',
+                    'Platform Module Global Status Changed',
+                    $message,
+                    null,
+                    [
+                        'event' => 'module.global_status_changed',
+                        'module' => $id,
+                        'is_globally_enabled' => (bool) $updates['is_active'],
+                        'request_id' => $request->attributes->get('request_id'),
+                        'trace_id' => $request->attributes->get('trace_id'),
+                    ]
+                );
+            } catch (\Throwable $e) {
+                Log::error('Failed to queue module.global_status_changed alert notification', [
+                    'module_id' => $id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         return response()->json([
@@ -343,7 +402,7 @@ class PlatformModuleController extends Controller
 
         DB::table('platform_modules')->where('id', $id)->delete();
         app(ModuleEntitlementService::class)->invalidateGlobalCache();
-        app(\App\Services\ModuleEntitlementService::class)->invalidateGlobalCache();
+        app(ModuleEntitlementService::class)->invalidateGlobalCache();
 
         $authUser = $request->user();
         if ($authUser && class_exists(AuditLogController::class)) {

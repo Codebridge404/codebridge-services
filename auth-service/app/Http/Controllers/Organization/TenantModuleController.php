@@ -270,7 +270,9 @@ class TenantModuleController extends Controller
             abort_if(array_diff($modules, $allowed), 403, 'The subscription does not include these modules.');
         }
 
-        DB::transaction(function () use ($tenant, $modules, $authUser) {
+        $oldModules = json_decode($tenant->enabled_modules ?? '[]', true) ?: [];
+
+        DB::transaction(function () use ($tenant, $modules, $oldModules, $authUser, $request) {
             DB::table('tenants')->where('id', $tenant->id)->update([
                 'enabled_modules' => json_encode($modules),
                 'updated_at' => now(),
@@ -291,27 +293,29 @@ class TenantModuleController extends Controller
                     );
                 }
             }
+
+            if ($authUser && class_exists(AuditLogController::class)) {
+                AuditLogController::log(
+                    $authUser->id,
+                    $authUser->name,
+                    'tenant.module_entitlements_changed',
+                    'tenants',
+                    $request->ip(),
+                    [
+                        'tenant_id' => $tenant->id,
+                        'tenant_name' => $tenant->name,
+                        'modules' => $modules,
+                        'old_value' => ['enabled_modules' => $oldModules],
+                        'new_value' => ['enabled_modules' => $modules],
+                        'request_id' => $request->attributes->get('request_id'),
+                        'trace_id' => $request->attributes->get('trace_id'),
+                    ],
+                    $tenant->id
+                );
+            }
         });
 
         app(ModuleEntitlementService::class)->invalidateTenantCache((int) $tenant->id);
-
-        app(\App\Services\ModuleEntitlementService::class)->invalidateTenantCache((int) $tenant->id);
-
-        // Record audit event
-        if ($authUser && class_exists(AuditLogController::class)) {
-            AuditLogController::log(
-                $authUser->id,
-                $authUser->name,
-                'update_tenant_module_licenses',
-                'tenants',
-                $request->ip(),
-                [
-                    'tenant_id' => $tenant->id,
-                    'tenant_name' => $tenant->name,
-                    'modules' => $modules,
-                ]
-            );
-        }
 
         // Expand for frontend response
         $expanded = [];
