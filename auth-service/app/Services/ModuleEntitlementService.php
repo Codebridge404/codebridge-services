@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Models\Auth\User;
 use App\Support\SchemaGuard;
+use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 
@@ -102,6 +103,7 @@ class ModuleEntitlementService
 
         try {
             Cache::put($cacheKey, $modules, self::CACHE_TTL_SECONDS);
+            $this->sharedStore()?->put($cacheKey, $modules, self::CACHE_TTL_SECONDS);
         } catch (\Throwable) {
             // Safe fall-through
         }
@@ -130,14 +132,18 @@ class ModuleEntitlementService
     {
         try {
             Cache::forget(self::GLOBAL_CACHE_KEY);
+            $this->sharedStore()?->forget(self::GLOBAL_CACHE_KEY);
         } catch (\Throwable) {
         }
     }
 
     public function invalidateTenantCache(int $tenantId): void
     {
+        $cacheKey = self::TENANT_CACHE_PREFIX.$tenantId;
+
         try {
-            Cache::forget(self::TENANT_CACHE_PREFIX.$tenantId);
+            Cache::forget($cacheKey);
+            $this->sharedStore()?->forget($cacheKey);
         } catch (\Throwable) {
         }
     }
@@ -169,10 +175,24 @@ class ModuleEntitlementService
 
         try {
             Cache::put(self::GLOBAL_CACHE_KEY, $modules, self::CACHE_TTL_SECONDS);
+            $this->sharedStore()?->put(self::GLOBAL_CACHE_KEY, $modules, self::CACHE_TTL_SECONDS);
         } catch (\Throwable) {
         }
 
         return $modules;
+    }
+
+    protected function sharedStore(): ?Repository
+    {
+        if (! config('cache.stores.revocation.enabled', false) && config('cache.default') !== 'redis') {
+            return null;
+        }
+
+        try {
+            return Cache::store('revocation');
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

@@ -22,7 +22,7 @@ Route::post('/online-orders', [OnlineOrderController::class, 'store']);
 | POS Checkout, Receipts, Returns, KDS, & Tables (Protected)
 |--------------------------------------------------------------------------
 */
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'module:pos'])->group(function () {
     Route::middleware('role:organization,organization_owner,owner,cashier,supervisor,outlet_manager,admin,super_admin,accountant,inventory_clerk,employee')->group(function () {
         Route::get('/sales', [CheckoutController::class, 'index']);
         Route::post('/sales', [CheckoutController::class, 'store']);

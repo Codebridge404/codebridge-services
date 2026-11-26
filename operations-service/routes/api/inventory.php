@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Route;
 | Inventory Stock Queries (Protected)
 |--------------------------------------------------------------------------
 */
-Route::middleware('auth:sanctum')->group(function () {
+Route::middleware(['auth:sanctum', 'module:inventory'])->group(function () {
     Route::middleware('role:organization,organization_owner,owner,admin,super_admin,outlet_manager,inventory_clerk,supervisor,accountant,cashier,employee')->group(function () {
         Route::get('/inventory/balances', [InventoryController::class, 'balances']);
         Route::get('/inventory/nearby-outlets', [InventoryController::class, 'crossOutletStock']);

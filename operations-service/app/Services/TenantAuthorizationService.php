@@ -140,7 +140,7 @@ class TenantAuthorizationService
      */
     public static function normalizeTenantId(mixed $value): ?string
     {
-        if ($value === null || !is_scalar($value)) {
+        if ($value === null || ! is_scalar($value)) {
             return null;
         }
 
@@ -149,7 +149,7 @@ class TenantAuthorizationService
             return null;
         }
 
-        if (!preg_match('/^[A-Za-z0-9_-]{1,64}$/', $trimmed)) {
+        if (! preg_match('/^[A-Za-z0-9_-]{1,64}$/', $trimmed)) {
             return null;
         }
 
@@ -166,7 +166,7 @@ class TenantAuthorizationService
         $headerVal = $request->header('X-Tenant-Id');
         $queryVal = $request->query('tenant_id');
 
-        if ($queryVal !== null && !is_scalar($queryVal)) {
+        if ($queryVal !== null && ! is_scalar($queryVal)) {
             return ['raw' => null, 'scope' => null, 'invalid' => true, 'conflict' => false];
         }
 
@@ -202,11 +202,11 @@ class TenantAuthorizationService
      */
     public static function hasPlatformSuperAdminRole($user, ?string $conn = null): bool
     {
-        if (!$user || !is_object($user)) {
+        if (! $user || ! is_object($user)) {
             return false;
         }
 
-        if (isset($user->is_active) && !(bool) $user->is_active) {
+        if (isset($user->is_active) && ! (bool) $user->is_active) {
             return false;
         }
 
@@ -251,7 +251,7 @@ class TenantAuthorizationService
         }
 
         if (config('services.auth.verify_via_http', false)) {
-            return !empty($user->isPlatformSuperAdmin);
+            return ! empty($user->isPlatformSuperAdmin);
         }
 
         // Fallback strictly for schema-less SQLite test environments without RBAC tables
@@ -275,11 +275,11 @@ class TenantAuthorizationService
             return true;
         }
 
-        if (!$user || !is_object($user)) {
+        if (! $user || ! is_object($user)) {
             return false;
         }
 
-        if (isset($user->is_active) && !(bool) $user->is_active) {
+        if (isset($user->is_active) && ! (bool) $user->is_active) {
             return false;
         }
 
@@ -287,7 +287,7 @@ class TenantAuthorizationService
         $effectiveTenant = self::normalizeTenantId($tenantId ?? ($user->pendingTenantId ?? ($rawAttributes['tenant_id'] ?? null)));
         $connection = $conn ?? self::authConnectionName();
 
-        if ($effectiveTenant !== null && !empty($user->id) && self::hasRbacTables($connection)) {
+        if ($effectiveTenant !== null && ! empty($user->id) && self::hasRbacTables($connection)) {
             try {
                 $query = DB::connection($connection)
                     ->table('user_roles as ur')
@@ -318,8 +318,9 @@ class TenantAuthorizationService
             return true;
         }
 
-        if (!self::hasRbacTables($connection) && config('database.default') === 'sqlite') {
+        if (! self::hasRbacTables($connection) && config('database.default') === 'sqlite') {
             $rawRole = $rawAttributes['role'] ?? ($user->pendingRole ?? null);
+
             return $rawRole === 'super_admin';
         }
 
@@ -334,7 +335,7 @@ class TenantAuthorizationService
      */
     public static function getScopedRolesForUser($user, ?string $tenantId = null, ?string $conn = null): array
     {
-        if (!$user || !is_object($user) || empty($user->id)) {
+        if (! $user || ! is_object($user) || empty($user->id)) {
             return [];
         }
 
@@ -346,7 +347,7 @@ class TenantAuthorizationService
         }
 
         $normalizedTenant = self::normalizeTenantId($tenantId);
-        if ($normalizedTenant === null || !self::hasRbacTables($connection)) {
+        if ($normalizedTenant === null || ! self::hasRbacTables($connection)) {
             return self::sortRoleSlugs($roles);
         }
 
@@ -375,7 +376,7 @@ class TenantAuthorizationService
                     $q->where(function ($sysQ) {
                         $sysQ->whereNull('r.tenant_id')->whereNull('r.company_id');
                     })->orWhere('r.tenant_id', $normalizedTenant)
-                      ->orWhere('r.company_id', $normalizedTenant);
+                        ->orWhere('r.company_id', $normalizedTenant);
                 } elseif ($hasRoleTenant) {
                     $q->whereNull('r.tenant_id')->orWhere('r.tenant_id', $normalizedTenant);
                 } else {
@@ -421,14 +422,14 @@ class TenantAuthorizationService
 
         // Reuse verified Auth context if already attached to the request and satisfies requireTenant constraint
         $cached = $request->attributes->get('auth_context');
-        if (is_array($cached) && !empty($cached['authorized'])) {
+        if (is_array($cached) && ! empty($cached['authorized'])) {
             $cachedUserId = (string) ($cached['user_id'] ?? '');
-            $currentUserId = $user && !empty($user->id) ? (string) $user->id : ($jwtPayload['sub'] ?? '');
+            $currentUserId = $user && ! empty($user->id) ? (string) $user->id : ($jwtPayload['sub'] ?? '');
             if ($cachedUserId === $currentUserId || $currentUserId === '') {
                 $cachedScope = $cached['requested_tenant_scope'] ?? null;
                 $cachedTenant = $cached['tenant_id'] ?? null;
-                $isPlatformCached = !empty($cached['is_platform_super_admin']);
-                if (!$requireTenant || $cachedTenant !== null || $cachedScope === 'all' || $isPlatformCached) {
+                $isPlatformCached = ! empty($cached['is_platform_super_admin']);
+                if (! $requireTenant || $cachedTenant !== null || $cachedScope === 'all' || $isPlatformCached) {
                     return $cached;
                 }
 
@@ -450,8 +451,8 @@ class TenantAuthorizationService
         $verifyViaHttp = (bool) config('services.auth.verify_via_http', false);
 
         // Path A: Remote Auth-owned GET /api/v1/auth/authorize-context contract
-        if ($verifyViaHttp || (config('database.default') !== 'sqlite' && (!$hasRbac || !$hasMemberships))) {
-            if (!empty($token)) {
+        if ($verifyViaHttp || (config('database.default') !== 'sqlite' && (! $hasRbac || ! $hasMemberships))) {
+            if (! empty($token)) {
                 $contract = app(AuthServiceClient::class)->authorizeContext(
                     $token,
                     $parsedRequest['raw'],
@@ -473,7 +474,7 @@ class TenantAuthorizationService
 
                 $data = is_array($contract['data'] ?? null) ? $contract['data'] : [];
                 $contractUserId = (int) ($data['user_id'] ?? 0);
-                if ($jwtPayload !== null && !empty($jwtPayload['sub']) && $contractUserId > 0 && (int) $jwtPayload['sub'] !== $contractUserId) {
+                if ($jwtPayload !== null && ! empty($jwtPayload['sub']) && $contractUserId > 0 && (int) $jwtPayload['sub'] !== $contractUserId) {
                     return [
                         'authorized' => false,
                         'status' => 401,
@@ -490,7 +491,7 @@ class TenantAuthorizationService
                 }
 
                 $isPlatform = (bool) ($data['is_platform_super_admin'] ?? false);
-                if ($requireTenant && $tenantId === null && $scope !== 'all' && !$isPlatform) {
+                if ($requireTenant && $tenantId === null && $scope !== 'all' && ! $isPlatform) {
                     return [
                         'authorized' => false,
                         'status' => 403,
@@ -516,11 +517,13 @@ class TenantAuthorizationService
                     'is_super_admin' => (bool) ($data['is_super_admin'] ?? false),
                     'is_platform_super_admin' => (bool) ($data['is_platform_super_admin'] ?? false),
                     'permissions' => is_array($data['permissions'] ?? null) ? $data['permissions'] : [],
+                    'enabled_modules' => is_array($data['enabled_modules'] ?? null) ? $data['enabled_modules'] : null,
+                    'disabled_modules' => is_array($data['disabled_modules'] ?? null) ? $data['disabled_modules'] : null,
                     'source' => 'auth_http_contract',
                 ];
             }
 
-            if (config('database.default') !== 'sqlite' && (!$hasRbac || !$hasMemberships)) {
+            if (config('database.default') !== 'sqlite' && (! $hasRbac || ! $hasMemberships)) {
                 return [
                     'authorized' => false,
                     'status' => 401,
@@ -603,7 +606,7 @@ class TenantAuthorizationService
             ];
         }
 
-        if (!$dbUser) {
+        if (! $dbUser) {
             return [
                 'authorized' => false,
                 'status' => 401,
@@ -612,7 +615,7 @@ class TenantAuthorizationService
             ];
         }
 
-        if (property_exists($dbUser, 'is_active') && !(bool) $dbUser->is_active) {
+        if (property_exists($dbUser, 'is_active') && ! (bool) $dbUser->is_active) {
             return [
                 'authorized' => false,
                 'status' => 401,
@@ -621,7 +624,7 @@ class TenantAuthorizationService
             ];
         }
 
-        if (property_exists($dbUser, 'locked_until') && !empty($dbUser->locked_until)) {
+        if (property_exists($dbUser, 'locked_until') && ! empty($dbUser->locked_until)) {
             try {
                 if (Carbon::parse($dbUser->locked_until)->isFuture()) {
                     return [
@@ -631,7 +634,8 @@ class TenantAuthorizationService
                         'message' => 'User account is temporarily locked out.',
                     ];
                 }
-            } catch (\Throwable) {}
+            } catch (\Throwable) {
+            }
         }
 
         $subject = (object) [
@@ -643,7 +647,7 @@ class TenantAuthorizationService
         $requestedScope = $parsedRequest['scope'];
         $requestedTenantId = ($requestedScope !== null && $requestedScope !== 'all') ? $requestedScope : null;
 
-        if ($requestedScope === 'all' && !$isPlatformSuperAdmin) {
+        if ($requestedScope === 'all' && ! $isPlatformSuperAdmin) {
             return [
                 'authorized' => false,
                 'status' => 403,
@@ -699,7 +703,7 @@ class TenantAuthorizationService
 
             if ($effectiveTenantId !== null && SchemaGuard::hasTable('tenants', $connection)) {
                 $tenant = DB::connection($connection)->table('tenants')->where('id', $effectiveTenantId)->first();
-                if ($requestedTenantId !== null && !$tenant) {
+                if ($requestedTenantId !== null && ! $tenant) {
                     return [
                         'authorized' => false,
                         'status' => 404,
@@ -713,7 +717,7 @@ class TenantAuthorizationService
                 ? self::getScopedRolesForUser($subject, $effectiveTenantId, $connection)
                 : ['super_admin'];
 
-            if (!in_array('super_admin', $roles, true)) {
+            if (! in_array('super_admin', $roles, true)) {
                 $roles = self::sortRoleSlugs(array_merge(['super_admin'], $roles));
             }
 
@@ -761,7 +765,7 @@ class TenantAuthorizationService
         $effectiveTenantId = $requestedTenantId ?? $explicitUserTenant;
 
         if ($effectiveTenantId === null) {
-            if (!$requireTenant) {
+            if (! $requireTenant) {
                 return [
                     'authorized' => true,
                     'status' => 200,
@@ -796,7 +800,7 @@ class TenantAuthorizationService
         $tenant = null;
         if (SchemaGuard::hasTable('tenants', $connection)) {
             $tenant = DB::connection($connection)->table('tenants')->where('id', $effectiveTenantId)->first();
-            if (!$tenant || (property_exists($tenant, 'status') && !in_array($tenant->status, ['active', 'trial'], true))) {
+            if (! $tenant || (property_exists($tenant, 'status') && ! in_array($tenant->status, ['active', 'trial'], true))) {
                 return [
                     'authorized' => false,
                     'status' => 403,
@@ -816,7 +820,7 @@ class TenantAuthorizationService
                 ->where('status', 'active')
                 ->first();
 
-            if (!$membership) {
+            if (! $membership) {
                 return [
                     'authorized' => false,
                     'status' => 403,
@@ -877,7 +881,7 @@ class TenantAuthorizationService
     ): array {
         $rawAttributes = ($user && method_exists($user, 'getAttributes')) ? $user->getAttributes() : [];
         $rawRole = $jwtPayload['role'] ?? ($rawAttributes['role'] ?? ($user?->pendingRole ?? 'cashier'));
-        if (!is_string($rawRole) || trim($rawRole) === '') {
+        if (! is_string($rawRole) || trim($rawRole) === '') {
             $rawRole = 'user';
         }
         $rawRole = trim($rawRole);
@@ -890,7 +894,7 @@ class TenantAuthorizationService
         $requestedTenantId = ($requestedScope !== null && $requestedScope !== 'all') ? $requestedScope : null;
 
         if ($requestedScope === 'all') {
-            if (!$isPlatformSuperAdmin && !$isSuperAdmin) {
+            if (! $isPlatformSuperAdmin && ! $isSuperAdmin) {
                 return [
                     'authorized' => false,
                     'status' => 403,
@@ -920,7 +924,7 @@ class TenantAuthorizationService
             ];
         }
 
-        if ($boundTenant !== null && $requestedTenantId !== null && $requestedTenantId !== $boundTenant && !$isPlatformSuperAdmin) {
+        if ($boundTenant !== null && $requestedTenantId !== null && $requestedTenantId !== $boundTenant && ! $isPlatformSuperAdmin) {
             return [
                 'authorized' => false,
                 'status' => 403,
@@ -933,7 +937,7 @@ class TenantAuthorizationService
             ? ($requestedTenantId ?? $boundTenant)
             : ($boundTenant ?? $requestedTenantId);
 
-        if ($effectiveTenantId === null && $requireTenant && !$isPlatformSuperAdmin && !$isSuperAdmin) {
+        if ($effectiveTenantId === null && $requireTenant && ! $isPlatformSuperAdmin && ! $isSuperAdmin) {
             // Preserve legacy test harness default tenant '1' solely when schema-less SQLite tests omit tenant_id
             $effectiveTenantId = '1';
         }
@@ -978,11 +982,11 @@ class TenantAuthorizationService
 
         $effectiveRoles = self::sortRoleSlugs($scopedRoles);
 
-        if (!empty(array_intersect($effectiveRoles, self::ADMIN_ALIAS_EQUIVALENTS))) {
+        if (! empty(array_intersect($effectiveRoles, self::ADMIN_ALIAS_EQUIVALENTS))) {
             $effectiveRoles = array_values(array_unique(array_merge($effectiveRoles, self::ADMIN_ALIAS_EQUIVALENTS)));
         }
 
-        return !empty(array_intersect($effectiveRoles, $requiredRoles));
+        return ! empty(array_intersect($effectiveRoles, $requiredRoles));
     }
 
     /**
@@ -1053,7 +1057,7 @@ class TenantAuthorizationService
                     ->pluck('upp.pin_hash');
 
                 foreach ($candidates as $hash) {
-                    if (!is_string($hash) || $hash === '') {
+                    if (! is_string($hash) || $hash === '') {
                         continue;
                     }
                     if (str_starts_with($hash, '$2') || str_starts_with($hash, '$argon2')) {
@@ -1068,7 +1072,7 @@ class TenantAuthorizationService
                 return false;
             }
 
-            if (!SchemaGuard::hasColumn('users', 'pin_code', $conn)) {
+            if (! SchemaGuard::hasColumn('users', 'pin_code', $conn)) {
                 return false;
             }
 
@@ -1084,7 +1088,7 @@ class TenantAuthorizationService
                 ->exists();
         }
 
-        if (config('database.default') !== 'sqlite' || !SchemaGuard::hasColumn('users', 'pin_code')) {
+        if (config('database.default') !== 'sqlite' || ! SchemaGuard::hasColumn('users', 'pin_code')) {
             return false;
         }
 
