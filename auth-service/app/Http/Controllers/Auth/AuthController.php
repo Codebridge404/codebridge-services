@@ -1906,6 +1906,36 @@ class AuthController extends Controller
     }
 
     /**
+     * [BD-0171] Update authenticated user's preferred interface language (en / km).
+     * PATCH /api/v1/me/language
+     */
+    public function updateLanguagePreference(Request $request)
+    {
+        $user = $request->user();
+        if (! $user) {
+            return $this->unauthorizedResponse();
+        }
+
+        $validated = $request->validate([
+            'language' => 'required|string|in:en,km',
+        ]);
+
+        if (\Illuminate\Support\Facades\Schema::hasColumn('users', 'preferred_language')) {
+            $user->preferred_language = $validated['language'];
+            $user->save();
+        }
+
+        \Illuminate\Support\Facades\App::setLocale($validated['language']);
+
+        return $this->successResponse(
+            message: __('messages.language_updated'),
+            extra: [
+                'preferred_language' => $validated['language'],
+            ]
+        );
+    }
+
+    /**
      * Update user .
      * PUT|POST /api/v1/auth/profile
      */

@@ -85,6 +85,7 @@ class User extends Authenticatable implements MustVerifyEmail
         'two_factor_confirmed_at',
         'two_factor_enabled',
         'session_inactivity_days',
+        'preferred_language',
     ];
 
     /**

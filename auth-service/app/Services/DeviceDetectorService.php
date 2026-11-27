@@ -126,33 +126,174 @@ class DeviceDetectorService
      */
     public function parseLocation(Request $request): ?string
     {
-        // 1. Cloudflare headers
-        $city = $request->header('CF-IPCity');
-        $country = $request->header('CF-IPCountry');
-        if (!empty($city) && !empty($country)) {
-            return trim("{$city}, {$country}");
+        return $this->resolveDetailedLocation($request)['location'];
+    }
+
+    /**
+     * Resolve detailed area-level location (Sangkat / Khan / District / City / Country + coordinates).
+     * Priority:
+     * 1. Browser/Client GPS coordinates (reverse-geocoded via OSM Nominatim)
+     * 2. Cloudflare / Nginx GeoIP headers (district, city, region, country, lat/lon)
+     * 3. Public IP GeoIP lookup (ip-api.com cached 24h)
+     *
+     * @return array{location: ?string, latitude: ?float, longitude: ?float, source: ?string}
+     */
+    public function resolveDetailedLocation(Request $request, ?float $lat = null, ?float $lng = null): array
+    {
+        $headerLat = $request->header('X-Geo-Lat');
+        $headerLng = $request->header('X-Geo-Lng');
+        if ($lat === null && is_numeric($headerLat)) {
+            $lat = (float) $headerLat;
         }
-        if (!empty($country) && $country !== 'XX' && $country !== 'T1') {
-            return trim($country);
+        if ($lng === null && is_numeric($headerLng)) {
+            $lng = (float) $headerLng;
         }
 
-        // 2. Standard GeoIP headers passed by Nginx or load balancer
-        $geoCity = $request->header('X-Geo-City') ?? $request->header('X-City-Name');
-        $geoCountry = $request->header('X-Geo-Country') ?? $request->header('X-Country-Name') ?? $request->header('X-Country-Code');
-        if (!empty($geoCity) && !empty($geoCountry)) {
-            return trim("{$geoCity}, {$geoCountry}");
-        }
-        if (!empty($geoCountry)) {
-            return trim($geoCountry);
+        // 1. Exact GPS coordinates -> reverse-geocode to Khan / Sangkat / Area
+        if ($lat !== null && $lng !== null && $lat >= -90 && $lat <= 90 && $lng >= -180 && $lng <= 180) {
+            $area = $this->reverseGeocodeCoordinates($lat, $lng);
+
+            return [
+                'location' => $area ?? sprintf('%.5f, %.5f', $lat, $lng),
+                'latitude' => round($lat, 7),
+                'longitude' => round($lng, 7),
+                'source' => 'gps',
+            ];
         }
 
-        // 3. Fallback: If private IP or local loopback, omit (null) as requested
+        // 2. Cloudflare / Nginx GeoIP headers
+        $cfCity = $request->header('CF-IPCity');
+        $cfRegion = $request->header('CF-Region');
+        $cfCountry = $request->header('CF-IPCountry');
+        $cfLat = $request->header('CF-IPLatitude');
+        $cfLng = $request->header('CF-IPLongitude');
+
+        $geoDistrict = $request->header('X-Geo-District') ?? $request->header('X-District-Name');
+        $geoCity = $cfCity ?: ($request->header('X-Geo-City') ?? $request->header('X-City-Name'));
+        $geoRegion = $cfRegion ?: $request->header('X-Geo-Region');
+        $geoCountry = ($cfCountry && $cfCountry !== 'XX' && $cfCountry !== 'T1')
+            ? $cfCountry
+            : ($request->header('X-Geo-Country') ?? $request->header('X-Country-Name') ?? $request->header('X-Country-Code'));
+
+        $headerParts = array_values(array_unique(array_filter([
+            $geoDistrict ? trim($geoDistrict) : null,
+            $geoCity ? trim($geoCity) : null,
+            $geoRegion && $geoRegion !== $geoCity ? trim($geoRegion) : null,
+            $geoCountry ? trim($geoCountry) : null,
+        ])));
+
+        if (! empty($headerParts)) {
+            return [
+                'location' => implode(', ', $headerParts),
+                'latitude' => is_numeric($cfLat) ? round((float) $cfLat, 7) : null,
+                'longitude' => is_numeric($cfLng) ? round((float) $cfLng, 7) : null,
+                'source' => 'proxy',
+            ];
+        }
+
+        // 3. Public IP GeoIP fallback (cached 24h)
         $ip = $request->ip();
         if ($this->isPrivateIp($ip)) {
-            return null;
+            return ['location' => null, 'latitude' => null, 'longitude' => null, 'source' => null];
         }
 
-        return null;
+        return $this->lookupPublicIpLocation((string) $ip);
+    }
+
+    /**
+     * Reverse-geocode GPS coordinates to exact area (Sangkat / Khan / City / Country).
+     */
+    protected function reverseGeocodeCoordinates(float $lat, float $lng): ?string
+    {
+        $cacheKey = sprintf('geo:rev:%.4f:%.4f', $lat, $lng);
+
+        return \Illuminate\Support\Facades\Cache::remember($cacheKey, 86400, function () use ($lat, $lng) {
+            try {
+                $response = \Illuminate\Support\Facades\Http::timeout(3)
+                    ->withHeaders(['User-Agent' => 'CodeBridges-ERP/1.0'])
+                    ->get('https://nominatim.openstreetmap.org/reverse', [
+                        'format' => 'jsonv2',
+                        'lat' => $lat,
+                        'lon' => $lng,
+                        'zoom' => 18,
+                        'addressdetails' => 1,
+                        'accept-language' => 'en',
+                    ]);
+
+                if (! $response->ok()) {
+                    return null;
+                }
+
+                $addr = $response->json('address') ?? [];
+                $neighbourhood = $addr['quarter'] ?? $addr['neighbourhood'] ?? $addr['suburb'] ?? $addr['village'] ?? null;
+                $district = $addr['city_district'] ?? $addr['county'] ?? $addr['town'] ?? null;
+                $city = $addr['city'] ?? $addr['state'] ?? $addr['province'] ?? null;
+                $country = isset($addr['country_code']) ? strtoupper((string) $addr['country_code']) : ($addr['country'] ?? null);
+
+                $parts = array_values(array_unique(array_filter([
+                    $neighbourhood,
+                    $district && $district !== $neighbourhood ? $district : null,
+                    $city && $city !== $district ? $city : null,
+                    $country,
+                ])));
+
+                return ! empty($parts) ? substr(implode(', ', $parts), 0, 250) : null;
+            } catch (\Throwable) {
+                return null;
+            }
+        });
+    }
+
+    /**
+     * Resolve detailed district/city/ISP for a public IP address (cached 24h).
+     *
+     * @return array{location: ?string, latitude: ?float, longitude: ?float, source: ?string}
+     */
+    protected function lookupPublicIpLocation(string $ip): array
+    {
+        $cacheKey = 'geo:ip:'.md5($ip);
+
+        return \Illuminate\Support\Facades\Cache::remember($cacheKey, 86400, function () use ($ip) {
+            try {
+                $response = \Illuminate\Support\Facades\Http::timeout(2)
+                    ->get("http://ip-api.com/json/{$ip}", [
+                        'fields' => 'status,countryCode,regionName,city,district,isp,lat,lon',
+                    ]);
+
+                if (! $response->ok() || $response->json('status') !== 'success') {
+                    return ['location' => null, 'latitude' => null, 'longitude' => null, 'source' => null];
+                }
+
+                $district = $response->json('district');
+                $city = $response->json('city');
+                $region = $response->json('regionName');
+                $country = $response->json('countryCode');
+                $isp = $response->json('isp');
+                $lat = $response->json('lat');
+                $lon = $response->json('lon');
+
+                $parts = array_values(array_unique(array_filter([
+                    $district ?: null,
+                    $city ?: null,
+                    $region && $region !== $city ? $region : null,
+                    $country ?: null,
+                ])));
+
+                $location = ! empty($parts) ? implode(', ', $parts) : null;
+                if ($location && ! $district && $isp) {
+                    $location = "{$location} ({$isp})";
+                }
+
+                return [
+                    'location' => $location ? substr($location, 0, 250) : null,
+                    'latitude' => is_numeric($lat) ? round((float) $lat, 7) : null,
+                    'longitude' => is_numeric($lon) ? round((float) $lon, 7) : null,
+                    'source' => $location ? 'ip_geo' : null,
+                ];
+            } catch (\Throwable) {
+                return ['location' => null, 'latitude' => null, 'longitude' => null, 'source' => null];
+            }
+        });
     }
 
     /**

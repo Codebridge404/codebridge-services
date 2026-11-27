@@ -2,7 +2,7 @@ services:
 
   # 1. MinIO S3-Compatible Object Storage Service
   minio:
-    image: minio/minio:latest
+    image: pgsty/silo:latest
     container_name: codebridge-minio
     restart: unless-stopped
     user: "0:0"

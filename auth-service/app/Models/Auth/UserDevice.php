@@ -28,6 +28,9 @@ class UserDevice extends Model
         'platform',
         'last_ip',
         'last_location',
+        'latitude',
+        'longitude',
+        'location_source',
         'last_seen_at',
     ];
 

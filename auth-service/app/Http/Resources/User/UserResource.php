@@ -130,6 +130,7 @@ class UserResource extends JsonResource
             'email_verified_at' => $emailVerifiedAt !== null ? (string) $emailVerifiedAt : null,
             'is_email_verified' => !is_null($emailVerifiedAt),
             'two_factor_enabled' => (bool) data_get($this->resource, 'two_factor_enabled', false),
+            'preferred_language' => (string) (data_get($this->resource, 'preferred_language') ?: 'en'),
             'created_at' => $createdAt !== null ? (string) $createdAt : null,
             'updated_at' => $updatedAt !== null ? (string) $updatedAt : null,
         ];

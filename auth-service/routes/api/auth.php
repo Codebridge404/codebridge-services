@@ -70,6 +70,7 @@ Route::middleware(['auth:sanctum', 'pos_scope'])->group(function () {
     require __DIR__.'/sessions.php';
     Route::get('/auth/authorize-context', [AuthController::class, 'authorizeContext']);
     Route::get('/me', [AuthController::class, 'me']);
+    Route::patch('/me/language', [AuthController::class, 'updateLanguagePreference']);
     Route::match(['put', 'post'], '/auth/profile', [AuthController::class, 'update']);
     Route::post('/auth/upload-profile', [AuthController::class, 'uploadProfile']);
     Route::post('/auth/profile/avatar', [AuthController::class, 'uploadProfile']);

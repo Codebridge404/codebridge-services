@@ -5,6 +5,7 @@ use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use App\Http\Middleware\EnsureRole;
 use App\Http\Middleware\LogRequestActivity;
+use App\Http\Middleware\SetLocale;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -20,6 +21,7 @@ return Application::configure(basePath: dirname(__DIR__))
         );
         $middleware->redirectGuestsTo(fn () => null);
         $middleware->api(prepend: [\App\Http\Middleware\AuthenticateJwt::class]);
+        $middleware->api(append: [SetLocale::class]);
         $middleware->append(LogRequestActivity::class);
         $middleware->append(\App\Http\Middleware\ProtectAttackMiddleware::class);
         $middleware->alias([

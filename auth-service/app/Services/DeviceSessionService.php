@@ -132,7 +132,8 @@ class DeviceSessionService
         $deviceName = substr($explicitDeviceName ?: $this->detector->parseDeviceName($userAgent), 0, 100);
         $browser = $this->detector->parseBrowser($userAgent);
         $platform = $this->detector->parsePlatform($userAgent);
-        $location = $this->detector->parseLocation($request);
+        $geo = $this->detector->resolveDetailedLocation($request);
+        $location = $geo['location'];
         $deviceType = $this->inferDeviceType($userAgent, $deviceName);
         $ip = $request->ip();
         $now = Carbon::now();
@@ -147,6 +148,15 @@ class DeviceSessionService
         ];
         if (! empty($location)) {
             $attributes['last_location'] = $location;
+        }
+        if ($geo['latitude'] !== null && SchemaGuard::hasColumn('user_devices', 'latitude')) {
+            $attributes['latitude'] = $geo['latitude'];
+        }
+        if ($geo['longitude'] !== null && SchemaGuard::hasColumn('user_devices', 'longitude')) {
+            $attributes['longitude'] = $geo['longitude'];
+        }
+        if (! empty($geo['source']) && SchemaGuard::hasColumn('user_devices', 'location_source')) {
+            $attributes['location_source'] = $geo['source'];
         }
 
         $device = UserDevice::where('user_id', $user->id)
@@ -257,7 +267,7 @@ class DeviceSessionService
             }
         }
 
-        $userSession = UserSession::create([
+        $sessionAttributes = [
             'user_id' => $user->id,
             'api_client_id' => $client->id,
             'tenant_id' => $tenantId,
@@ -274,7 +284,18 @@ class DeviceSessionService
             'permissions' => array_values($permissions),
             'expires_at' => $now->copy()->addDays(30),
             'last_seen_at' => $now,
-        ]);
+        ];
+        if (SchemaGuard::hasColumn('user_sessions', 'latitude')) {
+            $sessionAttributes['latitude'] = $device->latitude ?? null;
+        }
+        if (SchemaGuard::hasColumn('user_sessions', 'longitude')) {
+            $sessionAttributes['longitude'] = $device->longitude ?? null;
+        }
+        if (SchemaGuard::hasColumn('user_sessions', 'location_source')) {
+            $sessionAttributes['location_source'] = $device->location_source ?? null;
+        }
+
+        $userSession = UserSession::create($sessionAttributes);
 
         $rootPair = RefreshToken::issueRoot($userSession);
 

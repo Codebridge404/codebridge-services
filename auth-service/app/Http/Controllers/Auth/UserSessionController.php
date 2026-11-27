@@ -74,12 +74,13 @@ class UserSessionController extends Controller
             }
         }
 
-        // Search device or IP
+        // Search device, IP, or location
         if ($request->filled('search')) {
             $search = '%' . trim($request->input('search')) . '%';
             $query->where(function ($q) use ($search) {
                 $q->where('device_name', 'like', $search)
                     ->orWhere('ip_address', 'like', $search)
+                    ->orWhere('location', 'like', $search)
                     ->orWhere('user_agent', 'like', $search);
             });
         }
@@ -319,6 +320,71 @@ class UserSessionController extends Controller
                 'revoked_count' => $count,
             ],
             'message' => "Successfully revoked {$count} active user sessions.",
+        ]);
+    }
+
+    /**
+     * [BD-0172] Update current active session & device with exact GPS area location.
+     * PATCH /api/v1/auth/sessions/location
+     */
+    public function updateCurrentLocation(Request $request, \App\Services\DeviceDetectorService $detector): JsonResponse
+    {
+        $user = $request->user();
+        if (! $user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated.'], 401);
+        }
+
+        $validated = $request->validate([
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+        ]);
+
+        $geo = $detector->resolveDetailedLocation(
+            $request,
+            (float) $validated['latitude'],
+            (float) $validated['longitude']
+        );
+
+        $session = UserSession::where('user_id', $user->id)
+            ->whereNull('revoked_at')
+            ->orderByDesc('last_seen_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($session) {
+            $updates = [
+                'location' => $geo['location'],
+                'last_seen_at' => Carbon::now(),
+            ];
+            if (\App\Support\SchemaGuard::hasColumn('user_sessions', 'latitude')) {
+                $updates['latitude'] = $geo['latitude'];
+            }
+            if (\App\Support\SchemaGuard::hasColumn('user_sessions', 'longitude')) {
+                $updates['longitude'] = $geo['longitude'];
+            }
+            if (\App\Support\SchemaGuard::hasColumn('user_sessions', 'location_source')) {
+                $updates['location_source'] = $geo['source'];
+            }
+            $session->update($updates);
+
+            if ($session->user_device_id) {
+                $deviceUpdates = ['last_location' => $geo['location']];
+                if (\App\Support\SchemaGuard::hasColumn('user_devices', 'latitude')) {
+                    $deviceUpdates['latitude'] = $geo['latitude'];
+                }
+                if (\App\Support\SchemaGuard::hasColumn('user_devices', 'longitude')) {
+                    $deviceUpdates['longitude'] = $geo['longitude'];
+                }
+                if (\App\Support\SchemaGuard::hasColumn('user_devices', 'location_source')) {
+                    $deviceUpdates['location_source'] = $geo['source'];
+                }
+                \App\Models\Auth\UserDevice::where('id', $session->user_device_id)->update($deviceUpdates);
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $geo,
         ]);
     }
 }

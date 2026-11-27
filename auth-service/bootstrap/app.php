@@ -13,6 +13,7 @@ use App\Http\Middleware\LogRequestActivity;
 use App\Http\Middleware\ProtectAttackMiddleware;
 use App\Http\Middleware\RateLimitAuthMiddleware;
 use App\Http\Middleware\RestrictPosSession;
+use App\Http\Middleware\SetLocale;
 use App\Http\Middleware\TenantQuotaMiddleware;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -56,6 +57,7 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
         $middleware->api(append: [
             CheckMaintenanceMode::class,
+            SetLocale::class,
         ]);
         $middleware->alias([
             'role' => EnsureRole::class,
