@@ -182,6 +182,19 @@ class DeviceSessionService
             }
         }
 
+        if ($ip !== null && $ip !== $device->last_ip && empty($location)) {
+            $attributes['last_location'] = null;
+            if (SchemaGuard::hasColumn('user_devices', 'latitude')) {
+                $attributes['latitude'] = null;
+            }
+            if (SchemaGuard::hasColumn('user_devices', 'longitude')) {
+                $attributes['longitude'] = null;
+            }
+            if (SchemaGuard::hasColumn('user_devices', 'location_source')) {
+                $attributes['location_source'] = null;
+            }
+        }
+
         $device->update($attributes);
 
         return $device;

@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Http;
 
 /**
  * High-precision User-Agent & Geolocation telemetry detector for active device sessions.
@@ -28,10 +30,11 @@ class DeviceDetectorService
         if (preg_match('/Android/i', $userAgent)) {
             if (preg_match('/Android[^;]+;(?:\s*wv\s*;)?\s*([^;)]+)\s*(?:Build|[;)])/i', $userAgent, $matches)) {
                 $model = trim($matches[1]);
-                if (strlen($model) > 2 && strlen($model) < 30 && !preg_match('/version|khtml|gecko/i', $model)) {
+                if (strlen($model) > 2 && strlen($model) < 30 && ! preg_match('/version|khtml|gecko/i', $model)) {
                     return $model;
                 }
             }
+
             return 'Android Device';
         }
         if (preg_match('/Macintosh|Mac OS X/i', $userAgent)) {
@@ -96,25 +99,25 @@ class DeviceDetectorService
         }
 
         if (preg_match('/Edg(?:e)?\/([0-9]+)/i', $userAgent, $m)) {
-            return 'Edge ' . $m[1];
+            return 'Edge '.$m[1];
         }
         if (preg_match('/OPR\/([0-9]+)/i', $userAgent, $m)) {
-            return 'Opera ' . $m[1];
+            return 'Opera '.$m[1];
         }
         if (preg_match('/Brave/i', $userAgent)) {
             return 'Brave';
         }
         if (preg_match('/Chrome\/([0-9]+)/i', $userAgent, $m) || preg_match('/CriOS\/([0-9]+)/i', $userAgent, $m)) {
-            return 'Chrome ' . $m[1];
+            return 'Chrome '.$m[1];
         }
         if (preg_match('/Version\/([0-9]+).*Safari/i', $userAgent, $m)) {
-            return 'Safari ' . $m[1];
+            return 'Safari '.$m[1];
         }
-        if (preg_match('/Safari/i', $userAgent) && !preg_match('/Chrome|CriOS/i', $userAgent)) {
+        if (preg_match('/Safari/i', $userAgent) && ! preg_match('/Chrome|CriOS/i', $userAgent)) {
             return 'Safari';
         }
         if (preg_match('/Firefox\/([0-9]+)/i', $userAgent, $m) || preg_match('/FxiOS\/([0-9]+)/i', $userAgent, $m)) {
-            return 'Firefox ' . $m[1];
+            return 'Firefox '.$m[1];
         }
 
         return 'Web Browser';
@@ -207,9 +210,9 @@ class DeviceDetectorService
     {
         $cacheKey = sprintf('geo:rev:%.4f:%.4f', $lat, $lng);
 
-        return \Illuminate\Support\Facades\Cache::remember($cacheKey, 86400, function () use ($lat, $lng) {
+        return Cache::remember($cacheKey, 86400, function () use ($lat, $lng) {
             try {
-                $response = \Illuminate\Support\Facades\Http::timeout(3)
+                $response = Http::timeout(3)
                     ->withHeaders(['User-Agent' => 'CodeBridges-ERP/1.0'])
                     ->get('https://nominatim.openstreetmap.org/reverse', [
                         'format' => 'jsonv2',
@@ -252,48 +255,56 @@ class DeviceDetectorService
     protected function lookupPublicIpLocation(string $ip): array
     {
         $cacheKey = 'geo:ip:'.md5($ip);
+        $cached = Cache::get($cacheKey);
+        if (is_array($cached) && ! empty($cached['location'])) {
+            return $cached;
+        }
 
-        return \Illuminate\Support\Facades\Cache::remember($cacheKey, 86400, function () use ($ip) {
-            try {
-                $response = \Illuminate\Support\Facades\Http::timeout(2)
-                    ->get("http://ip-api.com/json/{$ip}", [
-                        'fields' => 'status,countryCode,regionName,city,district,isp,lat,lon',
-                    ]);
+        try {
+            $response = Http::timeout(2)
+                ->get("http://ip-api.com/json/{$ip}", [
+                    'fields' => 'status,countryCode,regionName,city,district,isp,lat,lon',
+                ]);
 
-                if (! $response->ok() || $response->json('status') !== 'success') {
-                    return ['location' => null, 'latitude' => null, 'longitude' => null, 'source' => null];
-                }
-
-                $district = $response->json('district');
-                $city = $response->json('city');
-                $region = $response->json('regionName');
-                $country = $response->json('countryCode');
-                $isp = $response->json('isp');
-                $lat = $response->json('lat');
-                $lon = $response->json('lon');
-
-                $parts = array_values(array_unique(array_filter([
-                    $district ?: null,
-                    $city ?: null,
-                    $region && $region !== $city ? $region : null,
-                    $country ?: null,
-                ])));
-
-                $location = ! empty($parts) ? implode(', ', $parts) : null;
-                if ($location && ! $district && $isp) {
-                    $location = "{$location} ({$isp})";
-                }
-
-                return [
-                    'location' => $location ? substr($location, 0, 250) : null,
-                    'latitude' => is_numeric($lat) ? round((float) $lat, 7) : null,
-                    'longitude' => is_numeric($lon) ? round((float) $lon, 7) : null,
-                    'source' => $location ? 'ip_geo' : null,
-                ];
-            } catch (\Throwable) {
+            if (! $response->ok() || $response->json('status') !== 'success') {
                 return ['location' => null, 'latitude' => null, 'longitude' => null, 'source' => null];
             }
-        });
+
+            $district = $response->json('district');
+            $city = $response->json('city');
+            $region = $response->json('regionName');
+            $country = $response->json('countryCode');
+            $isp = $response->json('isp');
+            $lat = $response->json('lat');
+            $lon = $response->json('lon');
+
+            $parts = array_values(array_unique(array_filter([
+                $district ?: null,
+                $city ?: null,
+                $region && $region !== $city ? $region : null,
+                $country ?: null,
+            ])));
+
+            $location = ! empty($parts) ? implode(', ', $parts) : null;
+            if ($location && ! $district && $isp) {
+                $location = "{$location} ({$isp})";
+            }
+
+            $result = [
+                'location' => $location ? substr($location, 0, 250) : null,
+                'latitude' => is_numeric($lat) ? round((float) $lat, 7) : null,
+                'longitude' => is_numeric($lon) ? round((float) $lon, 7) : null,
+                'source' => $location ? 'ip_geo' : null,
+            ];
+
+            if (! empty($result['location'])) {
+                Cache::put($cacheKey, $result, 3600);
+            }
+
+            return $result;
+        } catch (\Throwable) {
+            return ['location' => null, 'latitude' => null, 'longitude' => null, 'source' => null];
+        }
     }
 
     /**
