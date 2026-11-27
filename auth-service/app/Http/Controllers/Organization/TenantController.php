@@ -9,13 +9,22 @@
 namespace App\Http\Controllers\Organization;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Security\AuditLogController;
 use App\Http\Requests\Tenant\RegisterTenantRequest;
 use App\Http\Requests\Tenant\UpdateSubscriptionRequest;
 use App\Http\Requests\Tenant\UpdateTenantModulesRequest;
 use App\Http\Requests\Tenant\UpdateTenantProfileRequest;
 use App\Http\Requests\Tenant\UpdateTenantRequest;
 use App\Http\Resources\Tenant\TenantResource;
+use App\Http\Resources\User\UserResource;
+use App\Models\Auth\User;
 use App\Models\Organization\Tenant;
+use App\Services\ImageService;
+use App\Services\JwtService;
+use App\Services\PosBusinessProfileService;
+use App\Services\SharedSecurityStateService;
+use App\Services\TenantAccess;
+use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -27,10 +36,15 @@ use Illuminate\Support\Str;
  * [BD-0003] Multi-Tenant Organization Provisioning & Management Controller.
  *
  * @ticket BD-0003
+ *
  * @component auth-service
+ *
  * @file codebridge-services/auth-service/app/Http/Controllers/Api/V1/TenantController.php
+ *
  * @related-model App\Models\Organization\Tenant, App\Models\Organization\TenantSubscription, App\Models\Organization\Outlet
+ *
  * @entry-point POST /api/v1/tenants/register, GET /api/v1/tenants/my, GET /api/v1/tenants/{id}/settings
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -50,7 +64,7 @@ class TenantController extends Controller
         $authUser = auth('sanctum')->user() ?? $request->user();
         abort_unless($authUser, 401, 'Authentication required to register a tenant workspace.');
 
-        if (!$authUser->is_active) {
+        if (! $authUser->is_active) {
             return response()->json([
                 'status' => 'error',
                 'code' => 'ACCOUNT_DEACTIVATED',
@@ -69,8 +83,8 @@ class TenantController extends Controller
         $token = method_exists($authUser, 'currentAccessToken') ? $authUser->currentAccessToken() : null;
         $abilities = is_array($token?->abilities ?? null) ? $token->abilities : [];
         $isPos = $request->attributes->get('is_pos_session', false)
-            || (in_array('pos:access', $abilities, true) && !in_array('*', $abilities, true))
-            || ($token && method_exists($token, 'can') && $token->can('pos:access') && !$token->can('*'));
+            || (in_array('pos:access', $abilities, true) && ! in_array('*', $abilities, true))
+            || ($token && method_exists($token, 'can') && $token->can('pos:access') && ! $token->can('*'));
         if ($isPos) {
             abort(403, 'This endpoint requires a full account session.');
         }
@@ -86,18 +100,18 @@ class TenantController extends Controller
         }
 
         $clientTier = $request->client_tier ?? 'business_runner';
-        $baseSlug = Str::slug($request->name) ?: ('tenant-' . Str::lower(Str::random(6)));
+        $baseSlug = Str::slug($request->name) ?: ('tenant-'.Str::lower(Str::random(6)));
 
         $limits = match ($clientTier) {
-            'enterprise_org'  => ['max_outlets' => 50, 'max_registers' => 200, 'max_users' => 500],
+            'enterprise_org' => ['max_outlets' => 50, 'max_registers' => 200, 'max_users' => 500],
             'business_runner' => ['max_outlets' => 5,  'max_registers' => 15,  'max_users' => 50],
-            default           => ['max_outlets' => 1,  'max_registers' => 2,   'max_users' => 5],
+            default => ['max_outlets' => 1,  'max_registers' => 2,   'max_users' => 5],
         };
 
         $planMap = [
-            'free_personal'   => ['plan' => 'Personal Solopreneur Free', 'price' => 0],
+            'free_personal' => ['plan' => 'Personal Solopreneur Free', 'price' => 0],
             'business_runner' => ['plan' => 'Business Runner Pro',       'price' => 49.00],
-            'enterprise_org'  => ['plan' => 'Enterprise Organization',   'price' => 199.00],
+            'enterprise_org' => ['plan' => 'Enterprise Organization',   'price' => 199.00],
         ];
 
         $planInfo = $planMap[$clientTier];
@@ -105,72 +119,72 @@ class TenantController extends Controller
         $result = DB::transaction(function () use ($request, $authUser, $clientTier, $baseSlug, $limits, $planInfo) {
             $slug = $baseSlug;
             while (DB::table('tenants')->where('slug', $slug)->exists()) {
-                $slug = $baseSlug . '-' . Str::lower(Str::random(4));
+                $slug = $baseSlug.'-'.Str::lower(Str::random(4));
             }
 
             // Store organization contact email; owner is derived strictly from the authenticated user
-            $contactEmail = $request->email ?: ($authUser->email ?? ($slug . '@codebridges.app'));
+            $contactEmail = $request->email ?: ($authUser->email ?? ($slug.'@codebridges.app'));
             $tenantUuid = (string) Str::uuid();
 
             $id = DB::table('tenants')->insertGetId([
-                'uuid'          => $tenantUuid,
+                'uuid' => $tenantUuid,
                 'owner_user_id' => $authUser->id,
-                'name'          => $request->name,
-                'slug'          => $slug,
-                'company_code'  => 'CB-' . strtoupper(Str::random(6)),
-                'client_tier'   => $clientTier,
-                'status'        => 'trial',
-                'email'         => $contactEmail,
-                'phone'         => $request->phone,
-                'address'       => $request->address,
-                'country'       => $request->country ?? 'KH',
-                'currency'      => 'USD',
+                'name' => $request->name,
+                'slug' => $slug,
+                'company_code' => 'CB-'.strtoupper(Str::random(6)),
+                'client_tier' => $clientTier,
+                'status' => 'trial',
+                'email' => $contactEmail,
+                'phone' => $request->phone,
+                'address' => $request->address,
+                'country' => $request->country ?? 'KH',
+                'currency' => 'USD',
                 'enabled_modules' => json_encode([]),
-                'max_outlets'   => $limits['max_outlets'],
+                'max_outlets' => $limits['max_outlets'],
                 'max_registers' => $limits['max_registers'],
-                'max_users'     => $limits['max_users'],
+                'max_users' => $limits['max_users'],
                 'trial_ends_at' => now()->addDays(14),
-                'created_at'    => now(),
-                'updated_at'    => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
 
             DB::table('tenant_subscriptions')->insert([
-                'tenant_id'     => $id,
-                'plan_name'     => $planInfo['plan'],
+                'tenant_id' => $id,
+                'plan_name' => $planInfo['plan'],
                 'billing_cycle' => 'monthly',
-                'price'         => $planInfo['price'],
-                'currency'      => 'USD',
-                'status'        => 'pending',
-                'starts_at'     => now(),
-                'expires_at'    => now()->addDays(14),
-                'notes'         => '14-day free trial period.',
-                'created_at'    => now(),
-                'updated_at'    => now(),
+                'price' => $planInfo['price'],
+                'currency' => 'USD',
+                'status' => 'pending',
+                'starts_at' => now(),
+                'expires_at' => now()->addDays(14),
+                'notes' => '14-day free trial period.',
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
 
             // Automatically provision Default Primary Store Outlet & Register for this tenant
-            $outletCode = 'STR-' . strtoupper(Str::random(4));
+            $outletCode = 'STR-'.strtoupper(Str::random(4));
             $outletUuid = (string) Str::uuid();
             $outletId = DB::table('outlets')->insertGetId([
-                'uuid'           => $outletUuid,
-                'tenant_id'      => $id,
-                'name'           => $request->name . ' - Main Store',
-                'code'           => $outletCode,
-                'phone'          => $request->phone,
-                'address'        => $request->address,
-                'receipt_header' => 'Welcome to ' . $request->name,
+                'uuid' => $outletUuid,
+                'tenant_id' => $id,
+                'name' => $request->name.' - Main Store',
+                'code' => $outletCode,
+                'phone' => $request->phone,
+                'address' => $request->address,
+                'receipt_header' => 'Welcome to '.$request->name,
                 'receipt_footer' => 'Thank you for shopping with us!',
-                'is_active'      => true,
-                'created_at'     => now(),
-                'updated_at'     => now(),
+                'is_active' => true,
+                'created_at' => now(),
+                'updated_at' => now(),
             ]);
 
             if (SchemaGuard::hasTable('registers')) {
                 DB::table('registers')->insert([
-                    'outlet_id'  => $outletId,
-                    'name'       => 'Register #1 (Main)',
-                    'code'       => 'REG-01',
-                    'is_active'  => true,
+                    'outlet_id' => $outletId,
+                    'name' => 'Register #1 (Main)',
+                    'code' => 'REG-01',
+                    'is_active' => true,
                     'created_at' => now(),
                     'updated_at' => now(),
                 ]);
@@ -204,10 +218,10 @@ class TenantController extends Controller
             // Link organization role scoped strictly to this tenant without touching roles in other tenants or super_admin
             if (SchemaGuard::hasTable('user_roles')) {
                 $roleId = DB::table('roles')->where('slug', 'organization')->value('id');
-                if (!$roleId) {
+                if (! $roleId) {
                     $roleId = DB::table('roles')->whereIn('slug', ['admin', 'owner', 'tenant_admin'])->value('id');
                 }
-                if (!$roleId) {
+                if (! $roleId) {
                     $roleId = DB::table('roles')->insertGetId([
                         'uuid' => (string) Str::uuid(),
                         'name' => 'Organization Owner',
@@ -234,20 +248,20 @@ class TenantController extends Controller
             if (SchemaGuard::hasColumn('users', 'outlet_id')) {
                 $legacyUpdates['outlet_id'] = $outletId;
             }
-            if (SchemaGuard::hasColumn('users', 'role') && !\App\Services\UserAuthorizationService::isSuperAdmin($authUser)) {
+            if (SchemaGuard::hasColumn('users', 'role') && ! UserAuthorizationService::isSuperAdmin($authUser)) {
                 $legacyUpdates['role'] = 'organization';
             }
             if (count($legacyUpdates) > 1) {
                 DB::table('users')->where('id', $authUser->id)->update($legacyUpdates);
             }
 
-            $userModel = \App\Models\Auth\User::findOrFail($authUser->id);
+            $userModel = User::findOrFail($authUser->id);
             $userModel->pendingTenantId = $id;
             $userModel->pendingOutletUuid = $outletUuid;
-            $updatedUser = (new \App\Http\Resources\User\UserResource($userModel))->toArray($request);
+            $updatedUser = (new UserResource($userModel))->toArray($request);
 
-            /** @var \App\Services\JwtService $jwtService */
-            $jwtService = app(\App\Services\JwtService::class);
+            /** @var JwtService $jwtService */
+            $jwtService = app(JwtService::class);
             $deviceName = $request->device_name ?? 'web_session';
             $tokenResult = $userModel->createToken($deviceName, ['*'], now()->addSeconds($jwtService->getRefreshTtlSeconds()));
             $jwtService->bindSession($tokenResult->accessToken);
@@ -280,7 +294,7 @@ class TenantController extends Controller
                     [
                         'outlet_id' => $outletId,
                         'outlet_uuid' => $outletUuid,
-                        'outlet_name' => $request->name . ' - Main Store',
+                        'outlet_name' => $request->name.' - Main Store',
                         'outlet_code' => $outletCode,
                     ]
                 ),
@@ -342,7 +356,7 @@ class TenantController extends Controller
                 ->groupBy('tenant_id');
 
         $usersCountByTenant = collect();
-        if (!empty($tenantIds)) {
+        if (! empty($tenantIds)) {
             try {
                 $usersCountByTenant = DB::table('tenant_users')
                     ->whereIn('tenant_id', $tenantIds)
@@ -356,7 +370,7 @@ class TenantController extends Controller
         }
 
         $outletsCountByTenant = collect();
-        if (!empty($tenantIds)) {
+        if (! empty($tenantIds)) {
             try {
                 $outletsCountByTenant = DB::table('outlets')
                     ->whereIn('tenant_id', $tenantIds)
@@ -421,7 +435,7 @@ class TenantController extends Controller
             $tenant->subscription = $subscriptionsByTenant->get($tenant->id)?->first();
             $tenant->subscriptions = $tenant->subscription ? [$tenant->subscription] : [];
 
-            if (!empty($tenant->owner_user_id)) {
+            if (! empty($tenant->owner_user_id)) {
                 $candidates = $explicitOwnersByUser->get($tenant->owner_user_id, collect());
                 $matched = $candidates->firstWhere('role_tenant_id', $tenant->id) ?? $candidates->first();
                 if ($matched) {
@@ -431,7 +445,7 @@ class TenantController extends Controller
                 }
             }
 
-            if (!$tenant->owner) {
+            if (! $tenant->owner) {
                 $members = $memberOwnersByTenant->get($tenant->id, collect());
                 $adminMember = $members->first(fn ($m) => in_array($m->role, ['organization', 'admin', 'administrator', 'owner'], true));
                 $chosen = $adminMember ?? $members->first();
@@ -451,25 +465,25 @@ class TenantController extends Controller
             ->first();
 
         $stats = [
-            'total'          => (int) ($statsRow->total ?? 0),
-            'active'         => (int) ($statsRow->active_count ?? 0),
-            'trial'          => (int) ($statsRow->trial_count ?? 0),
-            'suspended'      => (int) ($statsRow->suspended_count ?? 0),
+            'total' => (int) ($statsRow->total ?? 0),
+            'active' => (int) ($statsRow->active_count ?? 0),
+            'trial' => (int) ($statsRow->trial_count ?? 0),
+            'suspended' => (int) ($statsRow->suspended_count ?? 0),
             'enterprise_org' => (int) ($statsRow->enterprise_org_count ?? 0),
-            'business_runner'=> (int) ($statsRow->business_runner_count ?? 0),
-            'free_personal'  => (int) ($statsRow->free_personal_count ?? 0),
+            'business_runner' => (int) ($statsRow->business_runner_count ?? 0),
+            'free_personal' => (int) ($statsRow->free_personal_count ?? 0),
         ];
 
         return response()->json([
             'success' => true,
-            'data'    => TenantResource::collection($tenants),
+            'data' => TenantResource::collection($tenants),
             'pagination' => [
                 'current_page' => $paginator->currentPage(),
                 'last_page' => $paginator->lastPage(),
                 'per_page' => $paginator->perPage(),
                 'total' => $paginator->total(),
             ],
-            'stats'   => $stats,
+            'stats' => $stats,
         ]);
     }
 
@@ -480,7 +494,7 @@ class TenantController extends Controller
     public function show($id)
     {
         $tenantModel = Tenant::find($id);
-        if (!$tenantModel) {
+        if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('view', $tenantModel);
@@ -493,7 +507,7 @@ class TenantController extends Controller
             ->get();
 
         $tenant->owner = null;
-        if (!empty($tenant->owner_user_id)) {
+        if (! empty($tenant->owner_user_id)) {
             $tenant->owner = DB::table('users as u')
                 ->leftJoin('user_roles as ur', function ($j) use ($id) {
                     $j->on('u.id', '=', 'ur.user_id')->where('ur.is_active', true)->where('ur.tenant_id', $id);
@@ -504,7 +518,7 @@ class TenantController extends Controller
                 ->first();
         }
 
-        if (!$tenant->owner) {
+        if (! $tenant->owner) {
             $tenant->owner = DB::table('users as u')
                 ->join('tenant_users as tu', function ($j) use ($id) {
                     $j->on('u.id', '=', 'tu.user_id')->where('tu.tenant_id', $id)->where('tu.status', 'active');
@@ -539,7 +553,7 @@ class TenantController extends Controller
 
         return response()->json([
             'success' => true,
-            'data'    => new TenantResource($tenant),
+            'data' => new TenantResource($tenant),
         ]);
     }
 
@@ -550,7 +564,7 @@ class TenantController extends Controller
     public function update(UpdateTenantRequest $request, $id)
     {
         $tenantModel = Tenant::find($id);
-        if (!$tenantModel) {
+        if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('update', $tenantModel);
@@ -591,20 +605,26 @@ class TenantController extends Controller
 
             if ($owner) {
                 $ownerUpdates = [];
-                if ($request->filled('owner_name')) $ownerUpdates['name'] = $request->owner_name;
-                if ($request->filled('owner_email')) $ownerUpdates['email'] = $request->owner_email;
-                if ($request->filled('owner_phone')) $ownerUpdates['phone'] = $request->owner_phone;
+                if ($request->filled('owner_name')) {
+                    $ownerUpdates['name'] = $request->owner_name;
+                }
+                if ($request->filled('owner_email')) {
+                    $ownerUpdates['email'] = $request->owner_email;
+                }
+                if ($request->filled('owner_phone')) {
+                    $ownerUpdates['phone'] = $request->owner_phone;
+                }
                 $ownerUpdates['updated_at'] = now();
 
                 DB::table('users')->where('id', $owner->id)->update($ownerUpdates);
-            } else if ($request->filled('owner_email')) {
+            } elseif ($request->filled('owner_email')) {
                 $orgRoleId = DB::table('roles')->whereIn('slug', ['organization', 'admin'])->value('id');
                 $existingUser = DB::table('users')->where('email', $request->owner_email)->first();
                 if ($existingUser) {
                     $ownerUpdate = [
-                        'name'      => $request->owner_name ?? $existingUser->name,
-                        'phone'     => $request->owner_phone ?? $existingUser->phone,
-                        'updated_at'=> now(),
+                        'name' => $request->owner_name ?? $existingUser->name,
+                        'phone' => $request->owner_phone ?? $existingUser->phone,
+                        'updated_at' => now(),
                     ];
                     if (SchemaGuard::hasColumn('users', 'tenant_id')) {
                         $ownerUpdate['tenant_id'] = $id;
@@ -616,12 +636,12 @@ class TenantController extends Controller
                     $ownerId = $existingUser->id;
                 } else {
                     $ownerInsert = [
-                        'uuid'       => (string) \Illuminate\Support\Str::uuid(),
-                        'name'       => $request->owner_name ?? 'Store Owner',
-                        'email'      => $request->owner_email,
-                        'phone'      => $request->owner_phone,
-                        'password'   => Hash::make('password'),
-                        'is_active'  => true,
+                        'uuid' => (string) Str::uuid(),
+                        'name' => $request->owner_name ?? 'Store Owner',
+                        'email' => $request->owner_email,
+                        'phone' => $request->owner_phone,
+                        'password' => Hash::make('password'),
+                        'is_active' => true,
                         'created_at' => now(),
                         'updated_at' => now(),
                     ];
@@ -657,7 +677,7 @@ class TenantController extends Controller
             module: 'tenant',
             entityType: 'tenant',
             entityId: (string) $id,
-            details: "Super admin updated tenant {$id} organization details" . ($request->filled('owner_id') || $request->filled('owner_email') ? ' and assigned owner' : ''),
+            details: "Super admin updated tenant {$id} organization details".($request->filled('owner_id') || $request->filled('owner_email') ? ' and assigned owner' : ''),
             userId: $request->user()?->id,
             userName: $request->user()?->name,
             tenantId: (int) $id
@@ -666,7 +686,7 @@ class TenantController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Tenant organization and owner details updated successfully.',
-            'data'    => DB::table('tenants')->where('id', $id)->first(),
+            'data' => DB::table('tenants')->where('id', $id)->first(),
         ]);
     }
 
@@ -677,7 +697,7 @@ class TenantController extends Controller
     public function destroy($id)
     {
         $tenantModel = Tenant::find($id);
-        if (!$tenantModel) {
+        if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('delete', $tenantModel);
@@ -704,7 +724,7 @@ class TenantController extends Controller
     public function updateSubscription(UpdateSubscriptionRequest $request, $id)
     {
         $tenantModel = Tenant::find($id);
-        if (!$tenantModel) {
+        if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('manageSubscriptions', $tenantModel);
@@ -712,25 +732,25 @@ class TenantController extends Controller
         $tenant = DB::table('tenants')->where('id', $id)->first();
 
         DB::table('tenant_subscriptions')->insert([
-            'tenant_id'     => $id,
-            'plan_name'     => $request->plan_name,
+            'tenant_id' => $id,
+            'plan_name' => $request->plan_name,
             'billing_cycle' => $request->billing_cycle,
-            'price'         => $request->price,
-            'currency'      => 'USD',
-            'status'        => 'active',
-            'starts_at'     => now(),
-            'expires_at'    => $request->expires_at ?? now()->addMonth(),
-            'notes'         => $request->notes,
-            'created_at'    => now(),
-            'updated_at'    => now(),
+            'price' => $request->price,
+            'currency' => 'USD',
+            'status' => 'active',
+            'starts_at' => now(),
+            'expires_at' => $request->expires_at ?? now()->addMonth(),
+            'notes' => $request->notes,
+            'created_at' => now(),
+            'updated_at' => now(),
         ]);
 
         $updateData = ['status' => 'active', 'updated_at' => now()];
         if ($request->filled('client_tier')) {
             $limits = match ($request->client_tier) {
-                'enterprise_org'  => ['max_outlets' => 50, 'max_registers' => 200, 'max_users' => 500],
+                'enterprise_org' => ['max_outlets' => 50, 'max_registers' => 200, 'max_users' => 500],
                 'business_runner' => ['max_outlets' => 5,  'max_registers' => 15,  'max_users' => 50],
-                default           => ['max_outlets' => 1,  'max_registers' => 2,   'max_users' => 5],
+                default => ['max_outlets' => 1,  'max_registers' => 2,   'max_users' => 5],
             };
             $updateData = array_merge($updateData, $limits, ['client_tier' => $request->client_tier]);
         }
@@ -750,7 +770,7 @@ class TenantController extends Controller
     public function suspend(Request $request, $id)
     {
         $tenantModel = Tenant::find($id);
-        if (!$tenantModel) {
+        if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('suspend', $tenantModel);
@@ -758,16 +778,38 @@ class TenantController extends Controller
         $tenant = DB::table('tenants')->where('id', $id)->first();
 
         $newStatus = $tenant->status === 'suspended' ? 'active' : 'suspended';
+        $actor = $request->user();
 
-        DB::table('tenants')->where('id', $id)->update([
-            'status'     => $newStatus,
-            'updated_at' => now(),
-        ]);
+        DB::transaction(function () use ($id, $newStatus, $tenant, $actor, $request) {
+            DB::table('tenants')->where('id', $id)->update([
+                'status' => $newStatus,
+                'updated_at' => now(),
+            ]);
+
+            if ($actor && class_exists(AuditLogController::class)) {
+                AuditLogController::log(
+                    $actor->id,
+                    $actor->name ?? 'super_admin',
+                    'tenant.status_changed',
+                    'tenants',
+                    $request->ip(),
+                    [
+                        'tenant_id' => (int) $id,
+                        'old_status' => $tenant->status,
+                        'new_status' => $newStatus,
+                        'request_id' => $request->attributes->get('request_id') ?? $request->header('X-Request-ID'),
+                    ],
+                    (int) $id
+                );
+            }
+        });
+
+        SharedSecurityStateService::publishTenantStatus((int) $id, $newStatus);
 
         return response()->json([
             'success' => true,
-            'message' => "Tenant account has been " . ($newStatus === 'suspended' ? 'suspended' : 'reactivated') . " successfully.",
-            'status'  => $newStatus,
+            'message' => 'Tenant account has been '.($newStatus === 'suspended' ? 'suspended' : 'reactivated').' successfully.',
+            'status' => $newStatus,
         ]);
     }
 
@@ -784,7 +826,7 @@ class TenantController extends Controller
         $tenantQuery = DB::table('tenants');
         if ($tenantId) {
             $tenantQuery->where('id', $tenantId);
-        } elseif (!empty($activeWorkspace) && $activeWorkspace !== 'No Organization Yet! Please Create') {
+        } elseif (! empty($activeWorkspace) && $activeWorkspace !== 'No Organization Yet! Please Create') {
             $tenantQuery->where('name', $activeWorkspace)->orWhere('slug', $activeWorkspace);
         }
 
@@ -853,7 +895,7 @@ class TenantController extends Controller
     public function getModules(Request $request)
     {
         $tenant = $this->resolveTenant($request);
-        if (!$tenant) {
+        if (! $tenant) {
             return response()->json([
                 'success' => true,
                 'modules' => [],
@@ -863,15 +905,15 @@ class TenantController extends Controller
         $rawModules = $tenant->enabled_modules ?? null;
         $modules = is_string($rawModules) ? json_decode($rawModules, true) : (is_array($rawModules) ? $rawModules : []);
 
-        if (!is_array($modules)) {
+        if (! is_array($modules)) {
             $modules = [];
         }
 
         return response()->json([
-            'success'     => true,
-            'tenant_id'   => $tenant->id,
+            'success' => true,
+            'tenant_id' => $tenant->id,
             'tenant_name' => $tenant->name,
-            'modules'     => $modules,
+            'modules' => $modules,
         ]);
     }
 
@@ -883,7 +925,7 @@ class TenantController extends Controller
     {
 
         $tenant = $this->resolveTenant($request);
-        if (!$tenant) {
+        if (! $tenant) {
             return response()->json([
                 'success' => false,
                 'message' => 'Organization workspace not found.',
@@ -892,15 +934,15 @@ class TenantController extends Controller
 
         DB::table('tenants')->where('id', $tenant->id)->update([
             'enabled_modules' => json_encode($request->modules),
-            'updated_at'      => now(),
+            'updated_at' => now(),
         ]);
 
         return response()->json([
-            'success'     => true,
-            'message'     => 'Organization modules saved to cloud database successfully!',
-            'tenant_id'   => $tenant->id,
+            'success' => true,
+            'message' => 'Organization modules saved to cloud database successfully!',
+            'tenant_id' => $tenant->id,
             'tenant_name' => $tenant->name,
-            'modules'     => $request->modules,
+            'modules' => $request->modules,
         ]);
     }
 
@@ -911,7 +953,7 @@ class TenantController extends Controller
     public function getProfile(Request $request)
     {
         $tenant = $this->resolveTenant($request);
-        if (!$tenant) {
+        if (! $tenant) {
             return response()->json([
                 'success' => false,
                 'message' => 'Workspace not found.',
@@ -926,23 +968,23 @@ class TenantController extends Controller
         return response()->json([
             'success' => true,
             'data' => [
-                'id'             => $tenant->id,
-                'name'           => $tenant->name,
-                'legal_name'     => $tenant->legal_name ?? null,
-                'slug'           => $tenant->slug,
-                'company_code'   => $tenant->company_code ?? null,
-                'logo_url'       => $tenant->logo_url ?? null,
+                'id' => $tenant->id,
+                'name' => $tenant->name,
+                'legal_name' => $tenant->legal_name ?? null,
+                'slug' => $tenant->slug,
+                'company_code' => $tenant->company_code ?? null,
+                'logo_url' => $tenant->logo_url ?? null,
                 'receipt_footer' => $tenant->receipt_footer ?? null,
-                'email'          => $tenant->email ?? null,
-                'phone'          => $tenant->phone ?? null,
-                'address'        => $tenant->address ?? null,
-                'country'        => $tenant->country ?? 'KH',
-                'currency'       => $tenant->currency ?? 'USD',
-                'client_tier'    => $tenant->client_tier ?? 'free_personal',
-                'status'         => $tenant->status ?? 'active',
-                'business_type'  => $tenant->business_type ?? 'retail_mart',
-                'business_profile' => \App\Services\PosBusinessProfileService::getProfile($tenant->business_type ?? 'retail_mart'),
-                'enabled_modules'=> is_string($tenant->enabled_modules) ? json_decode($tenant->enabled_modules, true) : ($tenant->enabled_modules ?? []),
+                'email' => $tenant->email ?? null,
+                'phone' => $tenant->phone ?? null,
+                'address' => $tenant->address ?? null,
+                'country' => $tenant->country ?? 'KH',
+                'currency' => $tenant->currency ?? 'USD',
+                'client_tier' => $tenant->client_tier ?? 'free_personal',
+                'status' => $tenant->status ?? 'active',
+                'business_type' => $tenant->business_type ?? 'retail_mart',
+                'business_profile' => PosBusinessProfileService::getProfile($tenant->business_type ?? 'retail_mart'),
+                'enabled_modules' => is_string($tenant->enabled_modules) ? json_decode($tenant->enabled_modules, true) : ($tenant->enabled_modules ?? []),
                 'payment_settings' => is_string($tenant->payment_settings ?? null) ? json_decode($tenant->payment_settings, true) : ($tenant->payment_settings ?? null),
             ],
         ]);
@@ -954,9 +996,9 @@ class TenantController extends Controller
      */
     public function updateProfile(UpdateTenantProfileRequest $request)
     {
-        abort_unless(\App\Services\TenantAccess::isAdmin($request->user()), 403);
+        abort_unless(TenantAccess::isAdmin($request->user()), 403);
         $tenant = $this->resolveTenant($request);
-        if (!$tenant) {
+        if (! $tenant) {
             return response()->json([
                 'success' => false,
                 'message' => 'Workspace not found.',
@@ -1007,8 +1049,8 @@ class TenantController extends Controller
         // Handle uploaded file or direct logo URL / Base64 Data URL (stored to MinIO S3 WebP)
         if ($request->hasFile('logo')) {
             try {
-                /** @var \App\Services\ImageService $imageService */
-                $imageService = app(\App\Services\ImageService::class);
+                /** @var ImageService $imageService */
+                $imageService = app(ImageService::class);
                 $updateData['logo_url'] = $imageService->storeLogo($request->file('logo'), $tenant->id, $tenant->logo_url ?? null);
             } catch (\InvalidArgumentException $e) {
                 return response()->json([
@@ -1016,15 +1058,16 @@ class TenantController extends Controller
                     'message' => $e->getMessage(),
                 ], 422);
             } catch (\Throwable $e) {
-                Log::warning('[TenantController] Logo upload failed: ' . $e->getMessage());
+                Log::warning('[TenantController] Logo upload failed: '.$e->getMessage());
+
                 return response()->json([
                     'success' => false,
                     'message' => 'Failed to store organization logo.',
                 ], 500);
             }
-        } elseif ($request->has('logo_url') && !empty($request->logo_url)) {
+        } elseif ($request->has('logo_url') && ! empty($request->logo_url)) {
             $logoUrlInput = (string) $request->logo_url;
-            if (!\App\Services\ImageService::isSafeImageUrlOrDataUri($logoUrlInput)) {
+            if (! ImageService::isSafeImageUrlOrDataUri($logoUrlInput)) {
                 return response()->json([
                     'success' => false,
                     'message' => 'Unsupported or unsafe organization logo URL/data URI format.',
@@ -1032,8 +1075,8 @@ class TenantController extends Controller
             }
             if (stripos(trim($logoUrlInput), 'data:') === 0) {
                 try {
-                    /** @var \App\Services\ImageService $imageService */
-                    $imageService = app(\App\Services\ImageService::class);
+                    /** @var ImageService $imageService */
+                    $imageService = app(ImageService::class);
                     $updateData['logo_url'] = $imageService->storeLogo($logoUrlInput, $tenant->id, $tenant->logo_url ?? null);
                 } catch (\InvalidArgumentException $e) {
                     return response()->json([
@@ -1041,7 +1084,8 @@ class TenantController extends Controller
                         'message' => $e->getMessage(),
                     ], 422);
                 } catch (\Throwable $e) {
-                    Log::warning('[TenantController] Base64 logo upload failed: ' . $e->getMessage());
+                    Log::warning('[TenantController] Base64 logo upload failed: '.$e->getMessage());
+
                     return response()->json([
                         'success' => false,
                         'message' => 'Failed to process organization logo data.',
@@ -1052,7 +1096,7 @@ class TenantController extends Controller
             }
         }
 
-        if (!empty($updateData)) {
+        if (! empty($updateData)) {
             $updateData['updated_at'] = now();
             DB::table('tenants')->where('id', $tenant->id)->update($updateData);
         }
@@ -1062,20 +1106,20 @@ class TenantController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Organization branding & profile updated successfully.',
-            'data'    => [
-                'id'             => $updatedTenant->id,
-                'name'           => $updatedTenant->name,
-                'legal_name'     => $updatedTenant->legal_name ?? null,
-                'slug'           => $updatedTenant->slug,
-                'logo_url'       => $updatedTenant->logo_url ?? null,
+            'data' => [
+                'id' => $updatedTenant->id,
+                'name' => $updatedTenant->name,
+                'legal_name' => $updatedTenant->legal_name ?? null,
+                'slug' => $updatedTenant->slug,
+                'logo_url' => $updatedTenant->logo_url ?? null,
                 'receipt_footer' => $updatedTenant->receipt_footer ?? null,
-                'email'          => $updatedTenant->email ?? null,
-                'phone'          => $updatedTenant->phone ?? null,
-                'address'        => $updatedTenant->address ?? null,
-                'country'        => $updatedTenant->country ?? 'KH',
-                'currency'       => $updatedTenant->currency ?? 'USD',
-                'client_tier'    => $updatedTenant->client_tier ?? 'free_personal',
-                'status'         => $updatedTenant->status ?? 'active',
+                'email' => $updatedTenant->email ?? null,
+                'phone' => $updatedTenant->phone ?? null,
+                'address' => $updatedTenant->address ?? null,
+                'country' => $updatedTenant->country ?? 'KH',
+                'currency' => $updatedTenant->currency ?? 'USD',
+                'client_tier' => $updatedTenant->client_tier ?? 'free_personal',
+                'status' => $updatedTenant->status ?? 'active',
                 'payment_settings' => is_string($updatedTenant->payment_settings ?? null) ? json_decode($updatedTenant->payment_settings, true) : ($updatedTenant->payment_settings ?? null),
             ],
         ]);
@@ -1087,9 +1131,9 @@ class TenantController extends Controller
     protected function resolveTenant(Request $request)
     {
         $user = $request->user();
-        if ($user && !\App\Services\UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
+        if ($user && ! UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
             $tenantId = $user->tenant_id;
-            if (!$tenantId && $request->filled('tenant_id')) {
+            if (! $tenantId && $request->filled('tenant_id')) {
                 $requestedId = (int) $request->tenant_id;
                 $isPermitted = DB::table('tenant_users')
                     ->where('tenant_id', $requestedId)
@@ -1104,13 +1148,16 @@ class TenantController extends Controller
                 abort_unless((int) $request->tenant_id === (int) $tenantId, 403, 'Unauthorized tenant access.');
             }
             abort_unless($tenantId, 403, 'An active workspace membership is required.');
+
             return DB::table('tenants')->where('id', $tenantId)->first();
         }
 
         // 1. By direct tenant_id parameter
         if ($request->filled('tenant_id')) {
             $t = DB::table('tenants')->where('id', $request->tenant_id)->first();
-            if ($t) return $t;
+            if ($t) {
+                return $t;
+            }
         }
 
         // 2. By X-Tenant-Workspace header or org_name parameter
@@ -1120,13 +1167,17 @@ class TenantController extends Controller
                 ->where('name', $orgName)
                 ->orWhere('slug', Str::slug($orgName))
                 ->first();
-            if ($t) return $t;
+            if ($t) {
+                return $t;
+            }
         }
 
         // 3. By authenticated user's tenant_id
         if ($request->user() && $request->user()->tenant_id) {
             $t = DB::table('tenants')->where('id', $request->user()->tenant_id)->first();
-            if ($t) return $t;
+            if ($t) {
+                return $t;
+            }
         }
 
         // 4. Fallback to primary enterprise tenant
@@ -1140,9 +1191,9 @@ class TenantController extends Controller
     public function subscriptionPlans()
     {
         $stats = [
-            'enterprise_org'  => DB::table('tenants')->where('client_tier', 'enterprise_org')->count(),
+            'enterprise_org' => DB::table('tenants')->where('client_tier', 'enterprise_org')->count(),
             'business_runner' => DB::table('tenants')->where('client_tier', 'business_runner')->count(),
-            'free_personal'   => DB::table('tenants')->where('client_tier', 'free_personal')->count(),
+            'free_personal' => DB::table('tenants')->where('client_tier', 'free_personal')->count(),
         ];
 
         $plans = [
@@ -1203,5 +1254,3 @@ class TenantController extends Controller
         ]);
     }
 }
-
-

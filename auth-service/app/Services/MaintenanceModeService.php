@@ -53,6 +53,7 @@ class MaintenanceModeService
             $raw = $this->loadFromDatabase();
             try {
                 Cache::put(self::CACHE_KEY, $raw, self::CACHE_TTL_SECONDS);
+                SharedSecurityStateService::sharedStore()?->put(self::CACHE_KEY, $raw, self::CACHE_TTL_SECONDS);
             } catch (\Throwable) {
                 // Safe fall-through
             }
@@ -94,6 +95,7 @@ class MaintenanceModeService
 
         try {
             Cache::put(self::CACHE_KEY, $raw, self::CACHE_TTL_SECONDS);
+            SharedSecurityStateService::sharedStore()?->put(self::CACHE_KEY, $raw, self::CACHE_TTL_SECONDS);
         } catch (\Throwable) {
             // Safe fall-through if Redis is unavailable
         }

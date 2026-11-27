@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Middleware\AuthenticateJwt;
+use App\Http\Middleware\CheckMaintenanceMode;
 use App\Http\Middleware\CheckModuleAccess;
 use App\Http\Middleware\EnsureRole;
 use App\Http\Middleware\LogRequestActivity;
@@ -28,6 +29,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->api(prepend: [AuthenticateJwt::class]);
         $middleware->api(append: [
             SwitchSuperAdminTenantContext::class,
+            CheckMaintenanceMode::class,
             SetLocale::class,
         ]);
         $middleware->append(LogRequestActivity::class);

@@ -8,6 +8,7 @@ use App\Services\TenantAuthorizationService;
 use App\Support\SchemaGuard;
 use Carbon\Carbon;
 use Closure;
+use Illuminate\Contracts\Cache\Repository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -19,12 +20,18 @@ use Symfony\Component\HttpFoundation\Response;
  * [BD-0111] Operations Distributed JWT Authentication & Verification Middleware
  *
  * @ticket BD-0111
+ *
  * @component operations-service
+ *
  * @file codebridge-services/operations-service/app/Http/Middleware/AuthenticateJwt.php
+ *
  * @related-model App\Services\JwtService, App\Services\AuthServiceClient
+ *
  * @entry-point AuthenticateJwt::handle()
+ *
  * @routes
  *  - Middleware: jwt.auth
+ *
  * @date-time 2026-10-23T15:40:00+07:00
  *
  * Process Capabilities:
@@ -50,7 +57,7 @@ class AuthenticateJwt
         if ($token && substr_count($token, '.') === 2) {
             $payload = $this->jwtService->verify($token);
 
-            if ($payload && !empty($payload['sub'])) {
+            if ($payload && ! empty($payload['sub'])) {
                 // 1. Strictly enforce Token Purpose: require explicit token_use=access
                 $tokenUse = $payload['token_use'] ?? null;
                 if ($tokenUse !== 'access') {
@@ -108,7 +115,7 @@ class AuthenticateJwt
                         ], 401);
                     }
 
-                    if (Str::isUuid($sid) && !config('services.auth.verify_via_http', false)) {
+                    if (Str::isUuid($sid) && ! config('services.auth.verify_via_http', false)) {
                         if ($this->isSessionRevokedInAuthDb($sid, (string) $userId)) {
                             return response()->json([
                                 'status' => 'error',
@@ -125,7 +132,7 @@ class AuthenticateJwt
                 $userOutletId = isset($payload['outlet_id']) && is_numeric($payload['outlet_id']) ? (int) $payload['outlet_id'] : null;
 
                 // Construct lightweight candidate user subject before resolving authoritative tenant-scoped Auth context
-                $probeUser = new User();
+                $probeUser = new User;
                 $probeUser->forceFill([
                     'name' => $payload['name'] ?? 'Authorized User',
                     'email' => $payload['email'] ?? '',
@@ -159,8 +166,19 @@ class AuthenticateJwt
                 $resolvedTenantId = $context['tenant_id'] ?? null;
                 $resolvedOutletId = $context['outlet_id'] ?? $userOutletId;
 
+                if ($resolvedTenantId !== null
+                    && empty($context['is_platform_super_admin'])
+                    && $this->isTenantSuspendedInSharedCache((int) $resolvedTenantId, $revocationCache)
+                ) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'TENANT_SUSPENDED',
+                        'message' => 'Your organization account is currently suspended.',
+                    ], 403);
+                }
+
                 // Construct authenticated user with verified tenant-scoped credentials
-                $user = new User();
+                $user = new User;
                 $user->forceFill([
                     'name' => $dbUser->name ?? ($payload['name'] ?? 'Authorized User'),
                     'email' => $dbUser->email ?? ($payload['email'] ?? ''),
@@ -190,9 +208,9 @@ class AuthenticateJwt
         return $next($request);
     }
 
-    protected function sharedRevocationCache(): ?\Illuminate\Contracts\Cache\Repository
+    protected function sharedRevocationCache(): ?Repository
     {
-        if (!config('cache.stores.revocation.enabled', false) && config('cache.default') !== 'redis') {
+        if (! config('cache.stores.revocation.enabled', false) && config('cache.default') !== 'redis') {
             return null;
         }
 
@@ -203,7 +221,7 @@ class AuthenticateJwt
         }
     }
 
-    protected function isJtiRevoked(string $jti, ?\Illuminate\Contracts\Cache\Repository $revocationCache): bool
+    protected function isJtiRevoked(string $jti, ?Repository $revocationCache): bool
     {
         if (Cache::get("revoked_jwt:{$jti}")) {
             return true;
@@ -220,7 +238,7 @@ class AuthenticateJwt
         return false;
     }
 
-    protected function isSidRevoked(string $sid, ?\Illuminate\Contracts\Cache\Repository $revocationCache): bool
+    protected function isSidRevoked(string $sid, ?Repository $revocationCache): bool
     {
         if (Cache::get("revoked_sid:{$sid}")) {
             return true;
@@ -237,7 +255,25 @@ class AuthenticateJwt
         return false;
     }
 
-    protected function getMaxNumericCacheValue(string $key, ?\Illuminate\Contracts\Cache\Repository $revocationCache): ?int
+    protected function isTenantSuspendedInSharedCache(int $tenantId, ?Repository $revocationCache): bool
+    {
+        $key = "tenant_status:{$tenantId}";
+        if (Cache::get($key) === 'suspended') {
+            return true;
+        }
+
+        if ($revocationCache) {
+            try {
+                return $revocationCache->get($key) === 'suspended';
+            } catch (\Throwable) {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    protected function getMaxNumericCacheValue(string $key, ?Repository $revocationCache): ?int
     {
         $local = Cache::get($key);
         $remote = null;
@@ -267,8 +303,8 @@ class AuthenticateJwt
             || (config("database.connections.{$conn}.driver") === 'sqlite');
 
         try {
-            if (!SchemaGuard::hasTable('user_sessions', $conn)) {
-                return !$isSqlite;
+            if (! SchemaGuard::hasTable('user_sessions', $conn)) {
+                return ! $isSqlite;
             }
 
             $session = DB::connection($conn)
@@ -277,21 +313,21 @@ class AuthenticateJwt
                 ->where('user_id', $userId)
                 ->first(['id', 'revoked_at', 'expires_at']);
 
-            if (!$session) {
+            if (! $session) {
                 return true;
             }
 
-            if (!empty($session->revoked_at)) {
+            if (! empty($session->revoked_at)) {
                 return true;
             }
 
-            if (!empty($session->expires_at) && Carbon::parse($session->expires_at)->isPast()) {
+            if (! empty($session->expires_at) && Carbon::parse($session->expires_at)->isPast()) {
                 return true;
             }
 
             return false;
         } catch (\Throwable) {
-            return !$isSqlite;
+            return ! $isSqlite;
         }
     }
 }

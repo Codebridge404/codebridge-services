@@ -6,6 +6,8 @@ use App\Models\Auth\User;
 use App\Models\Auth\UserSession;
 use App\Models\Security\SecurityEvent;
 use App\Services\JwtService;
+use App\Services\SharedSecurityStateService;
+use App\Services\UserAuthorizationService;
 use App\Support\SchemaGuard;
 use Closure;
 use Illuminate\Http\Request;
@@ -121,6 +123,17 @@ class AuthenticateJwt
                         'code' => 'ACCOUNT_LOCKED_OUT',
                         'message' => 'User account is temporarily locked out.',
                     ], 401);
+                }
+
+                if ($user->tenant_id
+                    && ! UserAuthorizationService::hasPlatformSuperAdminRole($user)
+                    && SharedSecurityStateService::isTenantSuspended((int) $user->tenant_id)
+                ) {
+                    return response()->json([
+                        'status' => 'error',
+                        'code' => 'TENANT_SUSPENDED',
+                        'message' => 'Your organization account is currently suspended.',
+                    ], 403);
                 }
 
                 if (! empty($payload['sid'])) {
