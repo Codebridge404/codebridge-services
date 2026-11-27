@@ -368,4 +368,55 @@ class DeviceSessionGroupingTest extends TestCase
         $this->assertDatabaseCount('user_devices', 1);
         $this->assertNull(UserDevice::find($d1->id)->toArray()['identifier_hash'] ?? null);
     }
+
+    public function test_ip_change_updates_current_ip_and_re_resolves_location_while_preserving_login_ip(): void
+    {
+        $user = User::factory()->create([
+            'password' => bcrypt('Password123!'),
+        ]);
+
+        // 1. Login from London VPN
+        $loginResponse = $this->withHeaders([
+            'User-Agent' => $this->macUa,
+            'X-Device-Id' => 'vpn-switch-device-1111',
+            'CF-IPCity' => 'London',
+            'CF-Region' => 'England',
+            'CF-IPCountry' => 'GB',
+        ])->withServerVariables(['REMOTE_ADDR' => '187.13.136.64'])
+            ->postJson('/api/v1/auth/login', [
+                'email' => $user->email,
+                'password' => 'Password123!',
+            ])->assertOk();
+
+        $token = $loginResponse->json('access_token') ?? $loginResponse->json('data.access_token');
+
+        // Verify initial London location
+        $this->withToken($token)
+            ->withHeaders([
+                'X-Device-Id' => 'vpn-switch-device-1111',
+                'CF-IPCity' => 'London',
+                'CF-Region' => 'England',
+                'CF-IPCountry' => 'GB',
+            ])->withServerVariables(['REMOTE_ADDR' => '187.13.136.64'])
+            ->getJson('/api/v1/auth/sessions')
+            ->assertOk()
+            ->assertJsonPath('data.0.last_ip', '187.13.136.64')
+            ->assertJsonPath('data.0.location', 'London, England, GB')
+            ->assertJsonPath('data.0.sessions.0.login_ip', '187.13.136.64');
+
+        // 2. Disconnect VPN and send next request from Cambodia IP
+        $this->withToken($token)
+            ->withHeaders([
+                'X-Device-Id' => 'vpn-switch-device-1111',
+                'CF-IPCity' => 'Phnom Penh',
+                'CF-Region' => 'Phnom Penh',
+                'CF-IPCountry' => 'KH',
+            ])->withServerVariables(['REMOTE_ADDR' => '103.10.10.10'])
+            ->getJson('/api/v1/auth/sessions')
+            ->assertOk()
+            ->assertJsonPath('data.0.last_ip', '103.10.10.10')
+            ->assertJsonPath('data.0.location', 'Phnom Penh, KH')
+            ->assertJsonPath('data.0.sessions.0.login_ip', '187.13.136.64')
+            ->assertJsonPath('data.0.sessions.0.ip_address', '103.10.10.10');
+    }
 }

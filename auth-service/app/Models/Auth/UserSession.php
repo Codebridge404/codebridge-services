@@ -5,12 +5,15 @@ namespace App\Models\Auth;
 use App\Models\Organization\Tenant;
 use App\Models\Organization\TenantUser;
 use App\Models\Security\ApiClient;
+use App\Services\DeviceDetectorService;
 use App\Services\JwtService;
+use App\Support\SchemaGuard;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -223,7 +226,7 @@ class UserSession extends Model
      * Touch session last seen timestamp and client telemetry (throttled to at most once every 60s unless forced or IP changed).
      * Never mutates login_ip (preserved as login history).
      */
-    public function touchLastSeen(?string $ip = null, ?string $userAgent = null, bool $force = false, int $throttleSeconds = 60): bool
+    public function touchLastSeen(?string $ip = null, ?string $userAgent = null, bool $force = false, int $throttleSeconds = 60, ?Request $request = null): bool
     {
         $now = Carbon::now();
         $ipChanged = $ip !== null && $ip !== $this->ip_address;
@@ -234,6 +237,18 @@ class UserSession extends Model
             }
         }
 
+        $geo = null;
+        if ($ipChanged || ($force && $ip !== null)) {
+            try {
+                $effectiveRequest = $request ?? (app()->bound('request') ? request() : null);
+                if ($effectiveRequest instanceof Request) {
+                    $geo = app(DeviceDetectorService::class)->resolveDetailedLocation($effectiveRequest);
+                }
+            } catch (\Throwable) {
+                $geo = null;
+            }
+        }
+
         $payload = ['last_seen_at' => $now];
         if ($ip !== null) {
             $payload['ip_address'] = $ip;
@@ -241,12 +256,34 @@ class UserSession extends Model
         if ($userAgent !== null) {
             $payload['user_agent'] = substr($userAgent, 0, 512);
         }
+        if ($geo !== null) {
+            if (! empty($geo['location']) || $ipChanged) {
+                $payload['location'] = $geo['location'] ?? null;
+            }
+            if (SchemaGuard::hasColumn('user_sessions', 'location_source') && (! empty($geo['source']) || $ipChanged)) {
+                $payload['location_source'] = $geo['source'] ?? null;
+            }
+        }
         $this->updateQuietly($payload);
 
         if ($this->user_device_id) {
             $devicePayload = ['last_seen_at' => $now];
             if ($ip !== null) {
                 $devicePayload['last_ip'] = $ip;
+            }
+            if ($geo !== null) {
+                if (! empty($geo['location']) || $ipChanged) {
+                    $devicePayload['last_location'] = $geo['location'] ?? null;
+                }
+                if (SchemaGuard::hasColumn('user_devices', 'latitude') && ($geo['latitude'] !== null || $ipChanged)) {
+                    $devicePayload['latitude'] = $geo['latitude'] ?? null;
+                }
+                if (SchemaGuard::hasColumn('user_devices', 'longitude') && ($geo['longitude'] !== null || $ipChanged)) {
+                    $devicePayload['longitude'] = $geo['longitude'] ?? null;
+                }
+                if (SchemaGuard::hasColumn('user_devices', 'location_source') && (! empty($geo['source']) || $ipChanged)) {
+                    $devicePayload['location_source'] = $geo['source'] ?? null;
+                }
             }
             UserDevice::where('id', $this->user_device_id)->update($devicePayload);
         }
