@@ -9,6 +9,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
@@ -57,25 +58,44 @@ class SwitchSuperAdminTenantContext
         }
 
         $trimmed = trim((string) $rawHeader);
-        if (! ctype_digit($trimmed) || (int) $trimmed <= 0) {
+        $isIntId = ctype_digit($trimmed) && (int) $trimmed > 0;
+        $isUuid = Str::isUuid($trimmed);
+
+        if (! $isIntId && ! $isUuid) {
             return response()->json([
                 'status' => 'error',
                 'code' => 'INVALID_TARGET_TENANT_ID',
-                'message' => 'X-Target-Tenant-ID must be a positive integer.',
+                'message' => 'X-Target-Tenant-ID must be a positive integer or valid UUID.',
             ], 422);
         }
 
-        $targetTenantId = (int) $trimmed;
+        $targetTenantId = $isIntId ? (int) $trimmed : null;
         $authConn = TenantAuthorizationService::authConnectionName();
         $authContext = $request->attributes->get('auth_context');
         $authContext = is_array($authContext) ? $authContext : [];
 
         if (($authContext['source'] ?? null) !== 'auth_http_contract' && SchemaGuard::hasTable('tenants', $authConn)) {
-            if (! DB::connection($authConn)->table('tenants')->where('id', $targetTenantId)->exists()) {
+            $tenantRow = $isIntId
+                ? DB::connection($authConn)->table('tenants')->where('id', $targetTenantId)->first(['id'])
+                : DB::connection($authConn)->table('tenants')->where('uuid', $trimmed)->first(['id']);
+
+            if (! $tenantRow) {
                 return response()->json([
                     'status' => 'error',
                     'code' => 'TARGET_TENANT_NOT_FOUND',
-                    'message' => "Target tenant #{$targetTenantId} does not exist.",
+                    'message' => "Target tenant '{$trimmed}' does not exist.",
+                ], 404);
+            }
+
+            $targetTenantId = (int) $tenantRow->id;
+        } elseif ($targetTenantId === null) {
+            // Remote auth_http_contract mode: numeric tenant_id is resolved on auth_context, or reject unresolvable UUID
+            $targetTenantId = is_numeric($authContext['tenant_id'] ?? null) ? (int) $authContext['tenant_id'] : null;
+            if ($targetTenantId === null) {
+                return response()->json([
+                    'status' => 'error',
+                    'code' => 'TARGET_TENANT_NOT_FOUND',
+                    'message' => "Target tenant '{$trimmed}' could not be resolved.",
                 ], 404);
             }
         }

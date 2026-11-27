@@ -38,7 +38,7 @@ class SuperAdminTenantSwitchTest extends TestCase
 
     public function test_super_admin_can_scope_queries_with_x_target_tenant_id_and_records_audit_log(): void
     {
-        $tenantA = Tenant::create(['name' => 'Tenant Alpha', 'slug' => 'tenant-alpha-sw']);
+        $tenantA = Tenant::create(['name' => 'Tenant Alpha', 'slug' => 'tenant-alpha-sw', 'uuid' => '550e8400-e29b-41d4-a716-446655440000']);
         $tenantB = Tenant::create(['name' => 'Tenant Beta', 'slug' => 'tenant-beta-sw']);
 
         DB::table('outlets')->insert([
@@ -69,6 +69,14 @@ class SuperAdminTenantSwitchTest extends TestCase
             'user_id' => $superAdmin->id,
             'tenant_id' => $tenantB->id,
         ]);
+
+        // Also supports UUID in X-Target-Tenant-ID
+        $this->withHeader('X-Target-Tenant-ID', (string) $tenantA->uuid)
+            ->getJson('/api/v1/_test/tenant-switch-outlets')
+            ->assertOk()
+            ->assertHeader('X-Active-Tenant-ID', (string) $tenantA->id)
+            ->assertJsonPath('tenant_id', $tenantA->id)
+            ->assertJsonPath('outlets', ['Alpha Main']);
     }
 
     public function test_non_super_admin_cannot_use_x_target_tenant_id(): void
