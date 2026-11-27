@@ -14,6 +14,7 @@ use App\Http\Middleware\ProtectAttackMiddleware;
 use App\Http\Middleware\RateLimitAuthMiddleware;
 use App\Http\Middleware\RestrictPosSession;
 use App\Http\Middleware\SetLocale;
+use App\Http\Middleware\SwitchSuperAdminTenantContext;
 use App\Http\Middleware\TenantQuotaMiddleware;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Auth\AuthenticationException;
@@ -56,6 +57,7 @@ return Application::configure(basePath: dirname(__DIR__))
             AuthenticateJwt::class,
         ]);
         $middleware->api(append: [
+            SwitchSuperAdminTenantContext::class,
             CheckMaintenanceMode::class,
             SetLocale::class,
         ]);
@@ -70,6 +72,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'auth_throttle' => RateLimitAuthMiddleware::class,
             'protect_attack' => ProtectAttackMiddleware::class,
             'module' => CheckModuleAccess::class,
+            'tenant_switch' => SwitchSuperAdminTenantContext::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

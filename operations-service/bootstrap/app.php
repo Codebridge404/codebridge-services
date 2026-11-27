@@ -6,6 +6,7 @@ use App\Http\Middleware\EnsureRole;
 use App\Http\Middleware\LogRequestActivity;
 use App\Http\Middleware\ProtectAttackMiddleware;
 use App\Http\Middleware\SetLocale;
+use App\Http\Middleware\SwitchSuperAdminTenantContext;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -25,13 +26,17 @@ return Application::configure(basePath: dirname(__DIR__))
         );
         $middleware->redirectGuestsTo(fn () => null);
         $middleware->api(prepend: [AuthenticateJwt::class]);
-        $middleware->api(append: [SetLocale::class]);
+        $middleware->api(append: [
+            SwitchSuperAdminTenantContext::class,
+            SetLocale::class,
+        ]);
         $middleware->append(LogRequestActivity::class);
         $middleware->append(ProtectAttackMiddleware::class);
         $middleware->alias([
             'role' => EnsureRole::class,
             'protect_attack' => ProtectAttackMiddleware::class,
             'module' => CheckModuleAccess::class,
+            'tenant_switch' => SwitchSuperAdminTenantContext::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

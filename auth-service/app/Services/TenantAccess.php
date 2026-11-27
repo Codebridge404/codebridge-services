@@ -26,7 +26,15 @@ class TenantAccess
     {
         $user = $request->user();
         abort_unless($user, 401);
-        if (!UserAuthorizationService::isSuperAdmin($user)) {
+
+        $switchedTenantId = $request->attributes->get('target_tenant_id');
+        if ($switchedTenantId !== null && UserAuthorizationService::hasPlatformSuperAdminRole($user)) {
+            $query->where($column, (int) $switchedTenantId);
+
+            return $query;
+        }
+
+        if (! UserAuthorizationService::isSuperAdmin($user)) {
             $context = UserAuthorizationService::resolveAuthorizationContext(
                 $user,
                 null,
@@ -36,6 +44,7 @@ class TenantAccess
             abort_unless($context['authorized'], $context['status'], $context['message']);
             $query->where($column, $context['tenant_id']);
         }
+
         return $query;
     }
 
@@ -43,6 +52,7 @@ class TenantAccess
     {
         $row = self::scope(DB::table($table)->where('id', $id), $request ?? request())->first();
         abort_unless($row, 404, 'Resource not found in this workspace.');
+
         return $row;
     }
 }
