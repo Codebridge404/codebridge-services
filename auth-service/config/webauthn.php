@@ -36,7 +36,7 @@ return [
     */
     'allowed_origins' => array_filter(array_map('trim', explode(',', env(
         'WEBAUTHN_ALLOWED_ORIGINS',
-        'http://localhost,http://localhost:3000,http://localhost:8080,http://127.0.0.1:3000,http://127.0.0.1:8080,https://staging-codebridge-api.servicefixit.me,https://codebridges.io'
+        'http://localhost,http://localhost:3000,http://localhost:5173,http://localhost:8080,http://127.0.0.1:3000,http://127.0.0.1:8080,https://codebridgesfront.codebridge2026.workers.dev,https://staging-codebridge-api.servicefixit.me,https://codebridges.io'
     )))),
 
     /*
