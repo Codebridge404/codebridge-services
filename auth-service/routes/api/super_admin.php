@@ -19,7 +19,7 @@ Route::middleware('role:super_admin')->prefix('super-admin')->group(function () 
     Route::get('/subscription-plans', [TenantController::class, 'subscriptionPlans']);
     Route::post('/tenants', [TenantController::class, 'register']);
     Route::get('/tenants/{id}', [TenantController::class, 'show']);
-    Route::put('/tenants/{id}', [TenantController::class, 'update']);
+    Route::match(['put', 'patch'], '/tenants/{id}', [TenantController::class, 'update']);
     Route::put('/tenants/{id}/subscription', [TenantController::class, 'updateSubscription']);
     Route::post('/tenants/{id}/suspend', [TenantController::class, 'suspend']);
     Route::delete('/tenants/{id}', [TenantController::class, 'destroy']);

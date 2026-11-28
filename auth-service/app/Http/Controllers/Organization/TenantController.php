@@ -487,17 +487,36 @@ class TenantController extends Controller
         ]);
     }
 
+    protected function findTenantByIdentifier($identifier): ?Tenant
+    {
+        $raw = trim((string) $identifier);
+        if ($raw === '') {
+            return null;
+        }
+
+        if (Str::isUuid($raw)) {
+            return Tenant::where('uuid', $raw)->first();
+        }
+
+        if (ctype_digit($raw) && (int) $raw > 0) {
+            return Tenant::find((int) $raw);
+        }
+
+        return null;
+    }
+
     /**
      * Super Admin: View single tenant detail.
      * GET /api/v1/super-admin/tenants/{id}
      */
     public function show($id)
     {
-        $tenantModel = Tenant::find($id);
+        $tenantModel = $this->findTenantByIdentifier($id);
         if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('view', $tenantModel);
+        $id = $tenantModel->id;
 
         $tenant = DB::table('tenants')->where('id', $id)->first();
 
@@ -563,11 +582,12 @@ class TenantController extends Controller
      */
     public function update(UpdateTenantRequest $request, $id)
     {
-        $tenantModel = Tenant::find($id);
+        $tenantModel = $this->findTenantByIdentifier($id);
         if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('update', $tenantModel);
+        $id = $tenantModel->id;
 
         $tenant = DB::table('tenants')->where('id', $id)->first();
 
@@ -696,20 +716,23 @@ class TenantController extends Controller
      */
     public function destroy($id)
     {
-        $tenantModel = Tenant::find($id);
+        $tenantModel = $this->findTenantByIdentifier($id);
         if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('delete', $tenantModel);
+        $id = $tenantModel->id;
 
         $tenant = DB::table('tenants')->where('id', $id)->first();
 
-        if (SchemaGuard::hasColumn('users', 'tenant_id')) {
-            DB::table('users')->where('tenant_id', $id)->update(['tenant_id' => null]);
-        }
-        DB::table('tenant_users')->where('tenant_id', $id)->delete();
-        DB::table('tenant_subscriptions')->where('tenant_id', $id)->delete();
-        DB::table('tenants')->where('id', $id)->delete();
+        DB::transaction(function () use ($id) {
+            if (SchemaGuard::hasColumn('users', 'tenant_id')) {
+                DB::table('users')->where('tenant_id', $id)->update(['tenant_id' => null]);
+            }
+            DB::table('tenant_users')->where('tenant_id', $id)->delete();
+            DB::table('tenant_subscriptions')->where('tenant_id', $id)->delete();
+            DB::table('tenants')->where('id', $id)->delete();
+        });
 
         return response()->json([
             'success' => true,
@@ -723,11 +746,12 @@ class TenantController extends Controller
      */
     public function updateSubscription(UpdateSubscriptionRequest $request, $id)
     {
-        $tenantModel = Tenant::find($id);
+        $tenantModel = $this->findTenantByIdentifier($id);
         if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('manageSubscriptions', $tenantModel);
+        $id = $tenantModel->id;
 
         $tenant = DB::table('tenants')->where('id', $id)->first();
 
@@ -769,11 +793,12 @@ class TenantController extends Controller
      */
     public function suspend(Request $request, $id)
     {
-        $tenantModel = Tenant::find($id);
+        $tenantModel = $this->findTenantByIdentifier($id);
         if (! $tenantModel) {
             return response()->json(['success' => false, 'message' => 'Tenant not found.'], 404);
         }
         $this->authorize('suspend', $tenantModel);
+        $id = $tenantModel->id;
 
         $tenant = DB::table('tenants')->where('id', $id)->first();
 
